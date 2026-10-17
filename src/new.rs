@@ -90,6 +90,7 @@ post:                               # or get, put, patch, delete; others: `http:
   insecure: false                   # true skips TLS certificate checks
   follow_redirects: true            # false returns a 3xx response itself
 timeout: 10                         # seconds (default 30)
+capture_body: true                  # false reads the body without keeping it in memory
 allow_failure: false                # true continues after a 4xx/5xx, a timeout or a network error
 ";
 

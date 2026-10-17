@@ -278,7 +278,10 @@ async fn perform(
 ) -> Result<TaskResult, Error> {
     let find = |var: &str| lookup(var, values, env);
     match (request, &task.cmd) {
-        (Some(spec), None) => send(spec, task.timeout, &find, clients).await,
+        (Some(spec), None) => {
+            let capture_body = task.capture_body.unwrap_or(true);
+            send(spec, task.timeout, capture_body, &find, clients).await
+        }
         (None, Some(argv)) => execute(argv, task, &find).await,
         _ => Err(Error::InvalidTask(
             "must have exactly one of `http` or `cmd`".to_string(),
@@ -290,11 +293,12 @@ async fn perform(
 async fn send(
     spec: RequestSpec,
     timeout: Option<u64>,
+    capture_body: bool,
     find: &(dyn Fn(&str) -> Option<Value> + Sync),
     clients: &mut http::Clients,
 ) -> Result<TaskResult, Error> {
     let spec = vars::apply_with(spec, find)?;
-    let response = http::send(clients, &spec, timeout).await?;
+    let response = http::send(clients, &spec, timeout, capture_body).await?;
     Ok(TaskResult::Http(response))
 }
 

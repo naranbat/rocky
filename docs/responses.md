@@ -22,6 +22,7 @@ Every HTTP task produces the same JSON shape. It is what `rocky exec` prints whe
 - If the response `Content-Type` is JSON (`application/json` or any `*+json`, such as `application/problem+json`) **and** the body parses as JSON, it is embedded as JSON. Key order and number precision are preserved exactly (`1.10` stays `1.10`, large integers are not rounded).
 - Any other content type, or a JSON content type with invalid JSON, is embedded as a string.
 - If the body isn't valid UTF-8 (images and other binary data), it is base64-encoded and the result includes `"body_encoding": "base64"`.
+- With `capture_body: false` on the task, the body is read but not kept, and `body` is `null`. See [HTTP tasks](http-tasks.md#behaviour).
 
 ## Reading parts of it
 

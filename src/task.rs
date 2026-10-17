@@ -51,6 +51,9 @@ pub struct Task {
     /// `false` sends a `cmd` command's stdout to /dev/null instead of keeping it in memory;
     /// the result's `stdout` is then `null`. Default `true`.
     pub capture_stdout: Option<bool>,
+    /// `false` reads an `http` response's body without keeping it in memory; the result's
+    /// `body` is then `null`. Default `true`.
+    pub capture_body: Option<bool>,
     #[serde(default)]
     pub allow_failure: bool,
     /// Makes this a branch: runs `then` if the condition holds, else `else`.
@@ -203,6 +206,7 @@ impl Task {
             || self.stdin.is_some()
             || !self.env.is_empty()
             || self.capture_stdout.is_some()
+            || self.capture_body.is_some()
             || self.condition.is_some()
             || !self.then.is_empty()
             || !self.otherwise.is_empty()
@@ -261,6 +265,11 @@ fn resolve_one(task: &mut Task, dir: &Path, stack: &mut Vec<PathBuf>) -> Result<
                 "`{name}` has `{field}`, which only works with `cmd`"
             )));
         }
+    }
+    if task.capture_body.is_some() && task.http.is_none() {
+        return Err(Error::InvalidTask(format!(
+            "`{name}` has `capture_body`, which only works with `http`"
+        )));
     }
     task.dir = dir.to_path_buf();
     if task.for_each.is_some() {
@@ -627,6 +636,16 @@ mod tests {
                 "{yaml}: {msg}"
             );
         }
+    }
+
+    #[test]
+    fn http_options_need_http() {
+        let msg = invalid_task("a:\n  cmd: [echo]\n  capture_body: false\n");
+        assert!(
+            msg.contains("`a` has `capture_body`, which only works with `http`"),
+            "{msg}"
+        );
+        resolve_here("a:\n  get: x\n  capture_body: false\n").unwrap();
     }
 
     #[test]

@@ -77,4 +77,5 @@ A task has only one of `http`, `get`, `post`, `put`, `patch` and `delete`. A met
 - **Bodies are JSON only** (`json`). There is no form or multipart support yet.
 - **Independent requests:** each task has its own `insecure` and `follow_redirects`, and no cookies are shared between tasks. Connections are reused within a run by tasks with the same `insecure` and `follow_redirects`. Pass cookies yourself: `Cookie: ${tasks.login.headers.set-cookie}`.
 - **`timeout` is set on the task,** not the request (default 30s): `{get: ..., timeout: 5}`. Exceeding it fails with `request timed out after 5s`.
+- **`capture_body: false`** on the task reads the body without keeping it in memory, and the result's `body` is `null`. Use it for large responses you don't need. `status` and `headers` are still kept.
 - **Network errors** (connection refused, DNS failure, TLS errors) fail the task with `request failed`, followed by the cause. Unless `allow_failure` is set, they stop the job.

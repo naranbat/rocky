@@ -83,6 +83,7 @@ Each entry in `tasks` (and in `then`, `else`, `do`, each switch case and `defaul
 | `http` / `cmd` | HTTP and cmd tasks | Exactly one of them. `cmd` must not be empty. `get`, `post`, `put`, `patch` and `delete` [count as `http`](http-tasks.md#method-keys). |
 | `timeout` | HTTP and cmd tasks | Seconds before the task is stopped and fails. On an HTTP task the default is 30s; cmd tasks have no default. |
 | `cwd`, `stdin`, `env`, `capture_stdout` | cmd tasks | Working directory, standard input, environment variables, and whether stdout is kept. See [Cmd tasks](cmd-tasks.md#options). |
+| `capture_body` | HTTP tasks | `false` reads the response body without keeping it; `body` is `null`. See [HTTP tasks](http-tasks.md#behaviour). |
 | `allow_failure` | HTTP and cmd tasks | `true` to continue when the task fails. |
 | `if`, `then`, `else` | branches | A branch has no `http`, `cmd`, `timeout` or `allow_failure`. |
 | `switch`, `cases`, `default` | switches | Like a branch: no `http`, `cmd`, `timeout` or `allow_failure`, and no `if`, `then` or `else`. |
@@ -112,7 +113,7 @@ Each HTTP or cmd task's result is saved as `tasks.<key>`, and later tasks read i
 |---|---|
 | `${tasks.login.status}` | an HTTP task's status code |
 | `${tasks.login.headers.x-token}` | a response header (lowercase name) |
-| `${tasks.login.body.user.id}` | a field of the response body |
+| `${tasks.login.body.user.id}` | a field of the response body (`null` with `capture_body: false`) |
 | `${tasks.today.stdout}` | a command's output (parsed JSON if it is valid JSON, otherwise text; `null` with `capture_stdout: false`) |
 | `${tasks.check.exit_code}`, `${tasks.check.stderr}` | a command's exit code and error output |
 
@@ -145,7 +146,7 @@ The whole project, every job including nested branches and loops, is checked whe
 - no `jobs`, an empty `tasks`, an empty `cmd`, `do`, `cases`, or `then` *and* `else`
 - `tasks`, `then`, `else`, `do` or `default` written as a list instead of a map, or two tasks with the same key in one map
 - a task with none, or both, of `http` and `cmd`
-- `cwd`, `stdin`, `env` or `capture_stdout` without `cmd`; `timeout` on a branch, switch or loop; `then`/`else` without `if`; `cases`/`default` without `switch`; `do`/`as` without `for_each`
+- `cwd`, `stdin`, `env` or `capture_stdout` without `cmd`; `capture_body` without `http`; `timeout` on a branch, switch or loop; `then`/`else` without `if`; `cases`/`default` without `switch`; `do`/`as` without `for_each`
 - a missing task or job file, a task file with a `name` field, or a task file that uses itself, directly or through other files
 - a name that appears twice in `jobs`, `schedules`, `states`, a `set`, a request's `headers` or `query`, a cmd task's `env`, or a switch's `cases`; a `schedules` entry for a job that doesn't exist
 - a [variable name](env.md#names) in `as` that isn't uppercase (`A-Z`, `0-9`, `_`), or a task key or name under `states` that isn't an identifier or is `tasks` or `states`

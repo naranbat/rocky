@@ -5,6 +5,7 @@ use std::time::Duration;
 use reqwest::header::{CONTENT_TYPE, HeaderName, HeaderValue};
 use reqwest::redirect::Policy;
 use reqwest::{Client, Method, Request};
+use serde_json::Value;
 
 use crate::error::Error;
 use crate::request::RequestSpec;
@@ -66,6 +67,7 @@ pub async fn send(
     clients: &mut Clients,
     spec: &RequestSpec,
     timeout: Option<u64>,
+    capture_body: bool,
 ) -> Result<Response, Error> {
     let client = clients.get(spec)?;
     let request = build(client, spec, timeout)?;
@@ -77,9 +79,19 @@ pub async fn send(
         }
     };
 
-    let response = client.execute(request).await.map_err(map_err)?;
+    let mut response = client.execute(request).await.map_err(map_err)?;
     let status = response.status().as_u16();
     let headers = headers_map(response.headers());
+    if !capture_body {
+        // Read to the end, so the timeout covers the transfer and the connection is reused.
+        while response.chunk().await.map_err(map_err)?.is_some() {}
+        return Ok(Response {
+            status,
+            headers,
+            body: Value::Null,
+            body_encoding: None,
+        });
+    }
     let bytes = response.bytes().await.map_err(map_err)?;
     let content_type = headers.get(CONTENT_TYPE.as_str()).map(String::as_str);
     let (body, body_encoding) = body_value(content_type, &bytes);
@@ -134,7 +146,9 @@ mod tests {
         req.headers
             .insert("Authorization".into(), "Bearer abc".into());
 
-        let res = send(&mut Clients::default(), &req, None).await.unwrap();
+        let res = send(&mut Clients::default(), &req, None, true)
+            .await
+            .unwrap();
         assert_eq!(res.status, 200);
         assert_eq!(res.headers["x-request-id"], "r1");
         assert_eq!(res.body, json!({"users": []}));
@@ -153,7 +167,9 @@ mod tests {
         let mut req = RequestSpec::new("POST", &server.uri());
         req.json = Some(json!({"name": "alice"}));
 
-        let res = send(&mut Clients::default(), &req, None).await.unwrap();
+        let res = send(&mut Clients::default(), &req, None, true)
+            .await
+            .unwrap();
         assert_eq!(res.status, 201);
         assert_eq!(res.body, json!(""));
     }
@@ -172,7 +188,7 @@ mod tests {
         req.json = Some(json!({}));
 
         assert_eq!(
-            send(&mut Clients::default(), &req, None)
+            send(&mut Clients::default(), &req, None, true)
                 .await
                 .unwrap()
                 .status,
@@ -194,7 +210,7 @@ mod tests {
         req.json = Some(json!("hello"));
 
         assert_eq!(
-            send(&mut Clients::default(), &req, None)
+            send(&mut Clients::default(), &req, None, true)
                 .await
                 .unwrap()
                 .status,
@@ -214,11 +230,34 @@ mod tests {
             &mut Clients::default(),
             &RequestSpec::new("GET", &server.uri()),
             None,
+            true,
         )
         .await
         .unwrap();
         assert_eq!(res.status, 404);
         assert_eq!(res.body, json!("not found"));
+    }
+
+    #[tokio::test]
+    async fn uncaptured_body_is_null() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("x-request-id", "r1")
+                    .set_body_string("big"),
+            )
+            .mount(&server)
+            .await;
+
+        let req = RequestSpec::new("GET", &server.uri());
+        let res = send(&mut Clients::default(), &req, None, false)
+            .await
+            .unwrap();
+        assert_eq!(res.status, 200);
+        assert_eq!(res.headers["x-request-id"], "r1");
+        assert_eq!(res.body, Value::Null);
+        assert_eq!(res.body_encoding, None);
     }
 
     #[test]
@@ -254,7 +293,7 @@ mod tests {
             .await;
 
         let req = RequestSpec::new("GET", &server.uri());
-        let err = send(&mut Clients::default(), &req, Some(1))
+        let err = send(&mut Clients::default(), &req, Some(1), true)
             .await
             .unwrap_err();
         assert!(matches!(err, Error::Timeout(1)));
@@ -274,10 +313,13 @@ mod tests {
 
         let mut clients = Clients::default();
         let mut req = RequestSpec::new("GET", &format!("{}/old", server.uri()));
-        assert_eq!(send(&mut clients, &req, None).await.unwrap().status, 200);
+        assert_eq!(
+            send(&mut clients, &req, None, true).await.unwrap().status,
+            200
+        );
 
         req.follow_redirects = false;
-        let res = send(&mut clients, &req, None).await.unwrap();
+        let res = send(&mut clients, &req, None, true).await.unwrap();
         assert_eq!(res.status, 302);
         assert_eq!(res.headers["location"], "/new");
     }
@@ -292,12 +334,12 @@ mod tests {
 
         let mut clients = Clients::default();
         let mut req = RequestSpec::new("GET", &server.uri());
-        send(&mut clients, &req, None).await.unwrap();
-        send(&mut clients, &req, Some(5)).await.unwrap();
+        send(&mut clients, &req, None, true).await.unwrap();
+        send(&mut clients, &req, Some(5), true).await.unwrap();
         assert_eq!(clients.0.len(), 1);
 
         req.insecure = true;
-        send(&mut clients, &req, None).await.unwrap();
+        send(&mut clients, &req, None, true).await.unwrap();
         assert_eq!(clients.0.len(), 2);
     }
 }
