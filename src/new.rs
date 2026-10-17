@@ -95,7 +95,9 @@ allow_failure: false                # true continues after a 4xx/5xx, a timeout 
 ";
 
 const FULL_CMD_TASK: &str = "\
-cmd: [sh, -c, 'printf \"%s, \" \"$GREETING\"; tr a-z A-Z']     # program + arguments; no shell unless you call one
+cmd: [sh, -c, 'printf \"%s, \" \"$GREETING\"; cat']        # program + arguments; no shell unless you call one
+pipe:                               # more commands, like `cmd | tr a-z A-Z`: each gets the previous one's stdout
+  - [tr, a-z, A-Z]
 stdin: ${USER}                      # standard input; a non-string is written as compact JSON
 env:                                # added to the command's environment, read as $GREETING; a non-string as compact JSON
   GREETING: hello
@@ -323,6 +325,7 @@ mod tests {
         }
         let a = project.take("a").unwrap();
         assert!(a.tasks[0].cmd.is_some() && a.tasks[1].http.is_some());
+        assert_eq!(a.tasks[0].pipe.is_empty(), matches!(level, Level::Basic));
         assert_eq!(a.tasks[0].name, "sh");
         assert_eq!(a.tasks[1].name, "web");
     }
