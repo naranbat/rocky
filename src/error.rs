@@ -84,6 +84,13 @@ pub enum Error {
     Timeout(u64),
     #[error("request failed")]
     Http(#[from] reqwest::Error),
+    #[error("socket {}", .path.display())]
+    Socket {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("socket {} is in use by another process", .0.display())]
+    SocketInUse(PathBuf),
 }
 
 impl Error {

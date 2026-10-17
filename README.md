@@ -54,7 +54,7 @@ Each feature has its own page in [`docs/`](docs/README.md):
 - [Conditions](docs/conditions.md): `if` / `then` / `else`, `switch`
 - [Loops](docs/loops.md): `for_each` / `as` / `do`
 - [Debugging](docs/debugging.md): `run` log lines
-- [Run](docs/run.md) and [schedules](docs/schedules.md): running jobs on a schedule
+- [Run](docs/run.md) and [schedules](docs/schedules.md): running jobs on a schedule, or when a client of a Unix socket asks
 
 ## Limitations
 

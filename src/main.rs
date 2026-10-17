@@ -27,7 +27,12 @@ enum Command {
     /// Run a project's scheduled jobs.
     ///
     /// Runs until stopped. Prints one JSON line per task, branch, switch, loop, state update and run, also appended to `logs/<date>.log`.
-    Run { file: PathBuf },
+    Run {
+        file: PathBuf,
+        /// Also run any job of the project when a client of this Unix socket sends `{"job": "NAME"}`.
+        #[arg(long)]
+        socket: Option<PathBuf>,
+    },
     /// Check a project for errors without running it.
     ///
     /// Loads the project and its job and task files, and reports whether they are valid. Sends no requests and runs no commands.
@@ -69,7 +74,7 @@ async fn main() -> anyhow::Result<()> {
                 anyhow::bail!("task `{task}` {reason}");
             }
         }
-        Command::Run { file } => until_stopped(run::run(&file)).await?,
+        Command::Run { file, socket } => until_stopped(run::run(&file, socket.as_deref())).await?,
         Command::Validate { file } => {
             let project = project::load(&file)?;
             let names: Vec<_> = project.jobs.keys().map(|n| format!("`{n}`")).collect();

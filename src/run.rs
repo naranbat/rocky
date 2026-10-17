@@ -8,8 +8,9 @@ use tokio::task::JoinSet;
 use tokio::time::MissedTickBehavior;
 
 use crate::error::Error;
+use crate::job_lock::JobLocks;
 use crate::schedule::{Clock, Schedule};
-use crate::{exec, progress, project};
+use crate::{exec, progress, project, socket};
 
 /// Runs every job listed in the project's `schedules` until all schedules are done (only `at`
 /// jobs ever finish). Every log line is one JSON object on stdout (also appended to
@@ -19,13 +20,22 @@ use crate::{exec, progress, project};
 /// runs still happen. An `at` job whose time has passed (without `run_on_start`) prints a
 /// `skipped` line instead of running. A job whose schedule fails prints a `stopped` line and stops;
 /// the other jobs keep running.
-pub async fn run(path: &Path) -> Result<(), Error> {
+///
+/// With a `socket`, `run` also runs the jobs that clients of it trigger (see [`socket`]),
+/// doesn't need `schedules`, and runs until stopped. A job's runs, scheduled or triggered,
+/// never overlap: each waits for the one before it.
+pub async fn run(path: &Path, socket: Option<&Path>) -> Result<(), Error> {
     let project = project::load(path)?;
-    if project.schedules.is_empty() {
+    if project.schedules.is_empty() && socket.is_none() {
         return Err(Error::InvalidProject(
             "project has no `schedules`".to_string(),
         ));
     }
+    let listener = match socket {
+        Some(socket) => Some((socket::bind(socket).await?, socket)),
+        None => None,
+    };
+    let locks = JobLocks::default();
     let now = Zoned::now();
     let mut jobs = JoinSet::new();
     let mut names = HashMap::new();
@@ -46,22 +56,38 @@ pub async fn run(path: &Path) -> Result<(), Error> {
         let path = path.to_path_buf();
         let job = name.clone();
         let started = now.clone();
-        let task = jobs.spawn(async move { run_job(&path, &job, schedule, started).await });
+        let locks = locks.clone();
+        let task = jobs.spawn(async move { run_job(&path, &job, schedule, started, &locks).await });
         names.insert(task.id(), name);
     }
-    while let Some(joined) = jobs.join_next_with_id().await {
-        let (id, error) = match joined {
-            Ok((_, Ok(()))) => continue,
-            Ok((id, Err(err))) => (id, err.chain()),
-            Err(err) => (err.id(), err.to_string()),
-        };
-        let name = names.get(&id).map_or("", String::as_str);
-        progress::emit(name, json!({"event": "stopped", "error": error})).await;
+    let schedules = async {
+        while let Some(joined) = jobs.join_next_with_id().await {
+            let (id, error) = match joined {
+                Ok((_, Ok(()))) => continue,
+                Ok((id, Err(err))) => (id, err.chain()),
+                Err(err) => (err.id(), err.to_string()),
+            };
+            let name = names.get(&id).map_or("", String::as_str);
+            progress::emit(name, json!({"event": "stopped", "error": error})).await;
+        }
+        Ok(())
+    };
+    match listener {
+        Some((listener, socket)) => {
+            tokio::try_join!(schedules, socket::serve(listener, socket, path, locks))?;
+            Ok(())
+        }
+        None => schedules.await,
     }
-    Ok(())
 }
 
-async fn run_job(path: &Path, name: &str, schedule: Schedule, started: Zoned) -> Result<(), Error> {
+async fn run_job(
+    path: &Path,
+    name: &str,
+    schedule: Schedule,
+    started: Zoned,
+    locks: &JobLocks,
+) -> Result<(), Error> {
     match &schedule {
         Schedule::Every { interval, delay } => {
             tokio::time::sleep(*delay).await;
@@ -69,7 +95,7 @@ async fn run_job(path: &Path, name: &str, schedule: Schedule, started: Zoned) ->
             ticks.set_missed_tick_behavior(MissedTickBehavior::Skip);
             loop {
                 ticks.tick().await;
-                run_once(path, name).await;
+                run_once(path, name, locks).await;
             }
         }
         Schedule::Clock {
@@ -79,7 +105,7 @@ async fn run_job(path: &Path, name: &str, schedule: Schedule, started: Zoned) ->
             // `started` is the time the past-`at` check used, so an `at` it let through isn't
             // lost if that time passes before this task starts.
             if *run_on_start {
-                run_once(path, name).await;
+                run_once(path, name, locks).await;
             }
             // An `at` time passed during the start run still runs, late: it's the only one.
             let mut after = match clock {
@@ -90,7 +116,7 @@ async fn run_job(path: &Path, name: &str, schedule: Schedule, started: Zoned) ->
                 // Negative when a slot was reached late: run now.
                 let wait = Zoned::now().duration_until(&next);
                 tokio::time::sleep(Duration::try_from(wait).unwrap_or_default()).await;
-                run_once(path, name).await;
+                run_once(path, name, locks).await;
                 // Slots that passed during a long run are skipped.
                 after = Zoned::now().max(next);
             }
@@ -99,9 +125,11 @@ async fn run_job(path: &Path, name: &str, schedule: Schedule, started: Zoned) ->
     }
 }
 
-/// Runs the job once in its own task, so even a panic is logged as an `error` line
-/// and the schedule carries on.
-async fn run_once(path: &Path, name: &str) {
+/// Runs the job once, after any run of it already going, in its own task, so even a panic
+/// is logged as an `error` line and the schedule carries on.
+pub(crate) async fn run_once(path: &Path, name: &str, locks: &JobLocks) {
+    let lock = locks.get(name).await;
+    let _turn = lock.lock().await;
     let (path, job) = (path.to_path_buf(), name.to_string());
     let outcome = tokio::spawn(async move {
         let project = tokio::task::spawn_blocking(move || project::load(&path)).await??;

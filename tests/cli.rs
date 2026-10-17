@@ -1,4 +1,6 @@
 use std::io::{BufRead, BufReader, Read, Write};
+use std::os::unix::fs::PermissionsExt;
+use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::mpsc;
@@ -801,4 +803,118 @@ fn run_skips_an_at_schedule_in_the_past_and_runs_the_others() {
     );
     assert!(!dir.path().join("old").exists());
     assert!(dir.path().join("new").exists());
+}
+
+/// Connects to the socket `run` listens on at `path`, waiting up to `DEADLINE` for it.
+fn connect(path: &Path) -> UnixStream {
+    let deadline = Instant::now() + DEADLINE;
+    loop {
+        match UnixStream::connect(path) {
+            Ok(stream) => return stream,
+            Err(err) if Instant::now() > deadline => panic!("cannot connect: {err}"),
+            Err(_) => std::thread::sleep(Duration::from_millis(20)),
+        }
+    }
+}
+
+/// Sends each request line on `stream` and returns the replies.
+fn requests(stream: &UnixStream, lines: &[&str]) -> Vec<Value> {
+    let mut reader = BufReader::new(stream.try_clone().unwrap());
+    lines
+        .iter()
+        .map(|line| {
+            writeln!(&*stream, "{line}").unwrap();
+            let mut reply = String::new();
+            reader.read_line(&mut reply).unwrap();
+            serde_json::from_str(&reply).unwrap()
+        })
+        .collect()
+}
+
+#[test]
+fn run_socket_triggers_jobs_one_run_at_a_time() {
+    let dir = tempfile::tempdir().unwrap();
+    // Fails if two runs overlap.
+    let project = write(
+        dir.path(),
+        "project.yaml",
+        "jobs:\n  slow:\n    tasks:\n      t:\n        \
+         cmd: [sh, -c, 'test ! -e busy && touch busy && sleep 0.3 && rm busy']\n        cwd: .\n",
+    );
+    let socket = dir.path().join("rocky.sock");
+    let child = spawn_rocky(
+        &["run", path_str(&project), "--socket", path_str(&socket)],
+        dir.path(),
+    );
+    let stream = connect(&socket);
+    let mode = std::fs::metadata(&socket).unwrap().permissions().mode();
+    assert_eq!(mode & 0o777, 0o600);
+    let replies = requests(
+        &stream,
+        &[
+            r#"{"job": "slow"}"#,
+            r#"{"job": "slow"}"#,
+            r#"{"job": "nope"}"#,
+            "not json",
+        ],
+    );
+    assert_eq!(replies[0], json!({"ok": true}));
+    assert_eq!(replies[1], json!({"ok": true}));
+    assert_eq!(
+        replies[2],
+        json!({"error": "no job `nope` (available: `slow`)"})
+    );
+    assert!(
+        replies[3]["error"]
+            .as_str()
+            .unwrap()
+            .starts_with("invalid request:"),
+        "{}",
+        replies[3]
+    );
+    let lines = lines_until(child, |lines| {
+        lines.iter().filter(|line| line["event"] == "done").count() == 2
+    });
+    let events: Vec<_> = lines.iter().map(|line| line["event"].clone()).collect();
+    assert_eq!(
+        events,
+        ["triggered", "triggered", "task", "done", "task", "done"]
+    );
+    for line in &lines {
+        assert_eq!(line["job"], "slow", "{line}");
+        assert_ne!(line["ok"], false, "{line}");
+    }
+}
+
+#[test]
+fn run_socket_replaces_a_stale_socket_but_not_a_live_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = write(
+        dir.path(),
+        "project.yaml",
+        "jobs:\n  a:\n    tasks: {e: {cmd: [echo]}}\n",
+    );
+    let socket = dir.path().join("rocky.sock");
+    let args = ["run", path_str(&project), "--socket", path_str(&socket)];
+    let mut first = spawn_rocky(&args, dir.path());
+    connect(&socket);
+
+    let second = wait_with_deadline(spawn_rocky(&args, dir.path()));
+    assert_eq!(second.status.code(), Some(1));
+    assert_stderr_contains(&second, "is in use by another process");
+
+    // A stopped `run` leaves its socket file behind.
+    kill(
+        Pid::from_raw(i32::try_from(first.id()).unwrap()),
+        Signal::SIGTERM,
+    )
+    .unwrap();
+    first.wait().unwrap();
+    assert!(socket.exists());
+    let third = spawn_rocky(&args, dir.path());
+    let replies = requests(&connect(&socket), &[r#"{"job": "a"}"#]);
+    assert_eq!(replies, [json!({"ok": true})]);
+    lines_until(third, |lines| {
+        lines.iter().any(|line| line["event"] == "done")
+    });
 }

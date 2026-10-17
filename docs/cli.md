@@ -5,6 +5,7 @@
 ```sh
 rocky exec <PROJECT> <JOB>
 rocky run <PROJECT>
+rocky run <PROJECT> --socket <PATH>
 rocky validate <PROJECT>
 rocky new project <PATH>
 rocky new job <PATH>
@@ -28,6 +29,8 @@ Error: no job `deploy` (available: `login`, `report`)
 ## `rocky run <PROJECT>`
 
 Runs every job listed in the project's [`schedules`](schedules.md), until stopped with Ctrl-C, SIGTERM, SIGHUP or SIGQUIT, or until only finished `at` schedules are left. Each run writes [JSON log lines](run.md#output) to stdout. See [Run](run.md).
+
+`--socket <PATH>` also listens on a Unix domain socket, so clients can run any job by sending `{"job": "NAME"}`. With it, `schedules` are optional and `run` runs until stopped. See [Triggering jobs over a socket](run.md#triggering-jobs-over-a-socket).
 
 ## `rocky validate <PROJECT>`
 
