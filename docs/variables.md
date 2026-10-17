@@ -99,7 +99,7 @@ jobs:
         cwd: ${BACKEND_DIR}
 ```
 
-- **Project `vars`** are expanded once, when the run starts, from the other project vars (with any values `set` has given them), the env file and the process environment. Two project vars that refer to each other (`A: ${B}`, `B: ${A}`) stop the run before any step: ``variable `A` refers to itself through its own value``. So does a project var that uses an undefined name, even if nothing uses that var.
+- **Project `vars`** are expanded from the other project vars (with any values `set` has given them), the env file and the process environment. They're expanded again for every step, so after `set: {vars: {B: new}}`, a var `A: prefix-${B}` is `prefix-new`. Each value is checked when the run starts: two project vars that refer to each other (`A: ${B}`, `B: ${A}`) stop the run before any step: ``variable `A` refers to itself through its own value``. So does a project var that uses an undefined name, even if nothing uses that var.
 - **Job and step `vars`** are not expanded: `IMAGE: backend:${TAG}` is the literal text `backend:${TAG}`. Use the `${...}` directly where the value is needed instead.
 - A project var can't build on itself: `DIR: ${DIR}/sub` refers to itself.
 - The result is always a string. Write `$${` for a literal `${` in a project var value.

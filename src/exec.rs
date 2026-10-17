@@ -102,15 +102,8 @@ pub async fn exec(
         Some(path) => tokio::task::spawn_blocking(move || env_file::load(&path)).await??,
         None => BTreeMap::new(),
     };
-    let mut declared: Map<String, Value> = env
-        .iter()
-        .map(|(name, value)| (name.clone(), Value::String(value.clone())))
-        .collect();
-    let updated = project_vars.snapshot();
-    for name in project.vars.keys() {
-        let value = expand_project_var(name, &project.vars, &updated, &env, &[])?;
-        declared.insert(name.clone(), Value::String(value));
-    }
+    // Checks every project var expands before any step runs.
+    outer_vars(&project.vars, &project_vars.snapshot(), &env)?;
 
     let mut values = Map::new();
     let state_path = project.dir.join("states").join(format!("{job}.json"));
@@ -143,7 +136,7 @@ pub async fn exec(
             }
         };
         // Other jobs may have updated project `vars` since the last step.
-        let outer = outer_vars(&declared, &project_vars.snapshot(), &project.vars);
+        let outer = outer_vars(&project.vars, &project_vars.snapshot(), &env)?;
         scope.extend(std::mem::take(&mut step.vars));
         let to_step_error = |source| Error::Step {
             name: name.clone(),
@@ -154,7 +147,7 @@ pub async fn exec(
             // Worked out from the current project `vars` and applied under one lock, so a
             // concurrent `set` of the same var isn't lost.
             let (states, set_vars) = project_vars.update_with(|current| {
-                let outer = outer_vars(&declared, current, &project.vars);
+                let outer = outer_vars(&project.vars, current, &env)?;
                 let substitute = |updates: BTreeMap<String, Value>| {
                     let mut set = Map::new();
                     for (var, mut value) in updates {
@@ -384,19 +377,25 @@ fn lookup(
     extract::lookup(outer, var).or_else(|| std::env::var(var).ok().map(Value::String))
 }
 
-/// The project `vars`: `declared` with the names `set` has updated replaced.
+/// The project `vars` over `env` (the env_file): each var's `updated` value if `set` has
+/// changed it, else its declared value expanded from the current values of the others.
 fn outer_vars(
-    declared: &Map<String, Value>,
+    declared: &BTreeMap<String, String>,
     updated: &Map<String, Value>,
-    names: &BTreeMap<String, String>,
-) -> Map<String, Value> {
-    let mut outer = declared.clone();
-    for (name, value) in updated {
-        if names.contains_key(name) {
-            outer.insert(name.clone(), value.clone());
-        }
+    env: &BTreeMap<String, String>,
+) -> Result<Map<String, Value>, Error> {
+    let mut outer: Map<String, Value> = env
+        .iter()
+        .map(|(name, value)| (name.clone(), Value::String(value.clone())))
+        .collect();
+    for name in declared.keys() {
+        let value = match updated.get(name) {
+            Some(value) => value.clone(),
+            None => Value::String(expand_project_var(name, declared, updated, env, &[])?),
+        };
+        outer.insert(name.clone(), value);
     }
-    outer
+    Ok(outer)
 }
 
 /// The project var `name` with `${NAME}` in its value expanded from the other project vars
@@ -1078,6 +1077,16 @@ mod tests {
         project.vars = BTreeMap::from([("ACC".to_string(), String::new())]);
         let outcome = exec(project, false).await.unwrap();
         assert_eq!(stdout(&outcome), &json!("-1-2+3+4"));
+    }
+
+    #[tokio::test]
+    async fn project_vars_using_a_set_var_see_its_new_value() {
+        let yaml = "steps:\n\
+                    \x20 bump:\n    set: {vars: {B: new}}\n\
+                    \x20 print:\n    cmd: [echo, '${A} ${B}']\n";
+        let project = project_with_vars(yaml, &[("A", "prefix-${B}"), ("B", "old")]);
+        let outcome = exec(project, false).await.unwrap();
+        assert_eq!(stdout(&outcome), &json!("prefix-new new"));
     }
 
     #[tokio::test]

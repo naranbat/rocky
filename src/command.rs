@@ -8,7 +8,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
 use crate::error::Error;
-use crate::process_group::Group;
+use crate::process_group;
 
 /// A finished command with its output parts kept separate for independent use.
 #[derive(Debug, Serialize, PartialEq)]
@@ -59,16 +59,11 @@ pub async fn run(
     if let Some(dir) = cwd {
         command.current_dir(dir);
     }
-    let mut child = command.spawn().map_err(|source| match cwd {
+    // `group` is dropped unfinished on timeout, which kills the group.
+    let (mut child, group) = process_group::spawn(&mut command).map_err(|source| match cwd {
         Some(dir) if !dir.is_dir() => Error::Cwd(dir.to_path_buf()),
         _ => spawn_error(source),
     })?;
-    let id = child
-        .id()
-        .and_then(|id| i32::try_from(id).ok())
-        .ok_or_else(|| spawn_error(std::io::Error::other("no process id")))?;
-    // Dropped unfinished on timeout, which kills the group.
-    let group = Group::new(id);
     let pipe = child.stdin.take();
     let write = async move {
         if let (Some(mut pipe), Some(text)) = (pipe, stdin) {
