@@ -24,13 +24,13 @@ jobs:
           REGION: ${REGION}
 ```
 
-Examples: [`examples/vars-env.yaml`](../examples/vars-env.yaml) and [`examples/cmd-env.yaml`](../examples/cmd-env.yaml) with [`examples/example.env`](../examples/example.env).
+Examples: [`examples/env-file.yaml`](../examples/env-file.yaml) and [`examples/cmd-env.yaml`](../examples/cmd-env.yaml) with [`examples/example.env`](../examples/example.env).
 
 ## Where it can go
 
 Only at the top level of a project, with a path relative to the project file. It applies to every step of every job. Job files, step files and HTTP requests can't have one: `env_file` there is an unknown field.
 
-See [Variables](variables.md#lookup-order) for how it ranks against other sources. In short: step, job and project `vars` all beat the project `env_file`.
+See [Variables](variables.md#lookup-order) for how it ranks against other sources. In short: loop variables, `steps` and `states` beat it, and it beats the process environment.
 
 ## Format
 

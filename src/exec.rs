@@ -1,4 +1,3 @@
-use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::time::Instant;
 
@@ -8,7 +7,6 @@ use serde_json::{Map, Value, json};
 use crate::command::{self, CommandResult};
 use crate::error::Error;
 use crate::project::Project;
-use crate::project_vars::ProjectVars;
 use crate::request::RequestSpec;
 use crate::response::Response;
 use crate::step::Step;
@@ -69,64 +67,45 @@ pub struct Outcome {
     pub failed_step: Option<String>,
 }
 
-/// Queued work: a step to run with its label and the `vars` in scope around it, or a
-/// loop's remaining items.
+/// Queued work: a step to run with its label, or a loop's remaining items.
 enum Work {
-    Step {
-        step: Box<Step>,
-        name: String,
-        scope: Scope,
-    },
+    Step { step: Box<Step>, name: String },
     Loop(Box<Loop>),
 }
-
-/// `vars` in scope, innermost already merged over outer: step, job.
-type Scope = BTreeMap<String, String>;
 
 /// Per remaining item, bind `var` to it and run `body`; then restore `var` to `previous`
 /// (`None` unbinds it). Expanded one item at a time, so memory stays O(`body`).
 struct Loop {
     body: Vec<Step>,
-    scope: Scope,
     var: String,
     items: std::vec::IntoIter<Value>,
     previous: Option<Value>,
 }
 
-/// `steps` as work, in order, each inside `scope`.
-fn queued(steps: Vec<Step>, scope: &Scope) -> impl DoubleEndedIterator<Item = Work> + '_ {
-    steps.into_iter().map(move |step| Work::Step {
+/// `steps` as work, in order.
+fn queued(steps: Vec<Step>) -> impl DoubleEndedIterator<Item = Work> {
+    steps.into_iter().map(|step| Work::Step {
         name: step.name.clone(),
         step: Box::new(step),
-        scope: scope.clone(),
     })
 }
 
 /// Runs the project's `job` steps in order; later steps read earlier results as
 /// `steps.NAME`. A branch's chosen `then`/`else` steps, or a switch's matching case or
 /// `default`, run in its place; a loop's `do` steps run once per list element, with the
-/// element bound to its `as` variable. A step's `vars` apply to it and the steps nested in it.
+/// element bound to its `as` variable.
 /// The job's `states` defaults are read from `states/<job>.json` next to the project (created from
 /// the defaults if missing) as `states.NAME`, and each `set.states` writes it back right away.
-/// Each `set.vars` sets project `vars` in `project_vars`; runs given the same `project_vars`
-/// see each other's updates.
 /// With `log`, one JSON line per step, branch or switch decision, and loop is printed to stdout.
-pub async fn exec(
-    mut project: Project,
-    job: &str,
-    log: bool,
-    project_vars: &ProjectVars,
-) -> Result<Outcome, Error> {
+pub async fn exec(mut project: Project, job: &str, log: bool) -> Result<Outcome, Error> {
     let steps = project.take(job)?;
-    let base: Scope = steps.vars;
-    // Below `scope`: the project `vars` over the env_file.
-    let env = match project.env_file.clone() {
+    let env: Map<String, Value> = match project.env_file.clone() {
         Some(path) => tokio::task::spawn_blocking(move || env_file::load(&path)).await??,
         None => BTreeMap::new(),
-    };
-    // Also checks every project var expands before any step runs.
-    let (mut outer_version, updated) = project_vars.snapshot();
-    let mut outer = outer_vars(&project.vars, &updated, &env)?;
+    }
+    .into_iter()
+    .map(|(name, value)| (name, Value::String(value)))
+    .collect();
 
     let mut values = Map::new();
     let state_path = project.dir.join("states").join(format!("{job}.json"));
@@ -139,14 +118,14 @@ pub async fn exec(
     let mut last = None;
     let mut clients = http::Clients::default();
     // Next work last, so nested steps are pushed in reverse to run in place.
-    let mut stack: Vec<Work> = queued(steps.steps, &base).rev().collect();
+    let mut stack: Vec<Work> = queued(steps.steps).rev().collect();
     while let Some(work) = stack.pop() {
-        let (mut step, name, mut scope) = match work {
-            Work::Step { step, name, scope } => (*step, name, scope),
+        let (mut step, name) = match work {
+            Work::Step { step, name } => (*step, name),
             Work::Loop(mut each) => {
                 if let Some(item) = each.items.next() {
                     values.insert(each.var.clone(), item);
-                    let body: Vec<Work> = queued(each.body.clone(), &each.scope).collect();
+                    let body: Vec<Work> = queued(each.body.clone()).collect();
                     stack.push(Work::Loop(each));
                     stack.extend(body.into_iter().rev());
                 } else {
@@ -158,73 +137,44 @@ pub async fn exec(
                 continue;
             }
         };
-        // Other jobs may have updated project `vars` since the last step.
-        if let Some((version, updated)) = project_vars.changed_since(outer_version) {
-            outer = outer_vars(&project.vars, &updated, &env)?;
-            outer_version = version;
-        }
-        scope.extend(std::mem::take(&mut step.vars));
         let to_step_error = |source| Error::Step {
             name: name.clone(),
             source: Box::new(source),
         };
 
         if let Some(set) = step.set.take() {
-            // Worked out from the current project `vars` and applied under one lock, so a
-            // concurrent `set` of the same var isn't lost. The states are saved first, under the
-            // lock too, so a failed save leaves the project `vars` unchanged.
-            let (states, set_vars) = project_vars.update_with(|version, current| {
-                let rebuilt;
-                let outer = if version == outer_version {
-                    &outer
-                } else {
-                    rebuilt = outer_vars(&project.vars, current, &env)?;
-                    &rebuilt
-                };
-                let substitute = |updates: BTreeMap<String, Value>| {
-                    let mut set = Map::new();
-                    for (var, mut value) in updates {
-                        vars::substitute_value(&mut value, &|var| {
-                            lookup(var, &values, &scope, outer)
-                        })
-                        .map_err(to_step_error)?;
-                        set.insert(var, value);
-                    }
-                    Ok::<_, Error>(set)
-                };
-                let (states, set_vars) = (substitute(set.states)?, substitute(set.vars)?);
-                if !states.is_empty() {
-                    let mut saved = state.clone();
-                    saved.extend(states.clone());
-                    state::save(&state_path, &saved).map_err(to_step_error)?;
-                }
-                Ok(((states, set_vars.clone()), set_vars))
-            })?;
-            if !states.is_empty() {
-                state.extend(states.clone());
-                values.insert("states".to_string(), Value::Object(state.clone()));
+            let mut states = Map::new();
+            for (var, mut value) in set.states {
+                vars::substitute_value(&mut value, &|var| lookup(var, &values, &env))
+                    .map_err(to_step_error)?;
+                states.insert(var, value);
             }
+            let mut saved = state.clone();
+            saved.extend(states.clone());
+            state::save(&state_path, &saved).map_err(to_step_error)?;
+            state = saved;
+            values.insert("states".to_string(), Value::Object(state.clone()));
             // Logged once the states are saved, so a failed save isn't logged as set.
             if log {
-                progress::emit(job, progress::set(&name, &states, &set_vars)).await;
+                progress::emit(job, progress::set(&name, &states)).await;
             }
             continue;
         }
 
         if let Some(condition) = step.condition.take() {
             let taken = condition
-                .evaluate(&|var| lookup(var, &values, &scope, &outer))
+                .evaluate(&|var| lookup(var, &values, &env))
                 .map_err(to_step_error)?;
             let chosen = if taken { step.then } else { step.otherwise };
             if log {
                 progress::emit(job, progress::branch(&name, taken, chosen.len())).await;
             }
-            stack.extend(queued(chosen, &scope).rev());
+            stack.extend(queued(chosen).rev());
             continue;
         }
 
         if let Some(var) = step.switch.take() {
-            let value = lookup(&var, &values, &scope, &outer)
+            let value = lookup(&var, &values, &env)
                 .ok_or_else(|| to_step_error(Error::UndefinedVar(var)))?;
             let matched = step
                 .cases
@@ -238,12 +188,12 @@ pub async fn exec(
             if log {
                 progress::emit(job, progress::switch(&name, case, chosen.len())).await;
             }
-            stack.extend(queued(chosen, &scope).rev());
+            stack.extend(queued(chosen).rev());
             continue;
         }
 
         if let Some(list_var) = step.for_each.take() {
-            let items = match lookup(&list_var, &values, &scope, &outer) {
+            let items = match lookup(&list_var, &values, &env) {
                 Some(Value::Array(items)) => items,
                 Some(other) => {
                     return Err(to_step_error(Error::Loop(format!(
@@ -258,7 +208,6 @@ pub async fn exec(
             let var = step.item_var.unwrap_or_else(|| "ITEM".to_string());
             stack.push(Work::Loop(Box::new(Loop {
                 body: step.body,
-                scope,
                 previous: values.get(&var).cloned(),
                 var,
                 items: items.into_iter(),
@@ -268,7 +217,7 @@ pub async fn exec(
 
         let allow_failure = step.allow_failure;
         let started = Instant::now();
-        let result = run_step(step, &mut values, &scope, &outer, &mut clients)
+        let result = run_step(step, &mut values, &env, &mut clients)
             .await
             .map_err(to_step_error)?;
         if log {
@@ -297,12 +246,11 @@ pub async fn exec(
 async fn run_step(
     mut step: Step,
     values: &mut Map<String, Value>,
-    scope: &Scope,
-    outer: &Map<String, Value>,
+    env: &Map<String, Value>,
     clients: &mut http::Clients,
 ) -> Result<StepResult, Error> {
     let request = step.http.take();
-    let result = match perform(&step, request, values, scope, outer, clients).await {
+    let result = match perform(&step, request, values, env, clients).await {
         // A request that couldn't be built (a bad URL or header) is a mistake in the step,
         // not a network error.
         Err(err @ (Error::Timeout(_) | Error::CommandTimeout { .. }))
@@ -324,11 +272,10 @@ async fn perform(
     step: &Step,
     request: Option<RequestSpec>,
     values: &Map<String, Value>,
-    scope: &Scope,
-    outer: &Map<String, Value>,
+    env: &Map<String, Value>,
     clients: &mut http::Clients,
 ) -> Result<StepResult, Error> {
-    let find = |var: &str| lookup(var, values, scope, outer);
+    let find = |var: &str| lookup(var, values, env);
     match (request, &step.cmd) {
         (Some(spec), None) => send(spec, step.timeout, &find, clients).await,
         (None, Some(argv)) => execute(argv, step, &find).await,
@@ -398,99 +345,11 @@ fn render(
 }
 
 /// Looks `var` up in `steps`, `states` and loop items (dot paths such as `steps.login.body.token`
-/// included), then the `vars` in `scope`, then the project `vars` and env_file in `outer`
-/// (dot paths included), then the process environment.
-fn lookup(
-    var: &str,
-    values: &Map<String, Value>,
-    scope: &Scope,
-    outer: &Map<String, Value>,
-) -> Option<Value> {
-    if let Some(value) = extract::lookup(values, var) {
-        return Some(value);
-    }
-    if let Some(text) = scope.get(var) {
-        return Some(Value::String(text.clone()));
-    }
-    extract::lookup(outer, var).or_else(|| std::env::var(var).ok().map(Value::String))
-}
-
-/// The project `vars` over `env` (the env_file): each var's `updated` value if `set` has
-/// changed it, else its declared value expanded from the current values of the others.
-fn outer_vars(
-    declared: &BTreeMap<String, String>,
-    updated: &Map<String, Value>,
-    env: &BTreeMap<String, String>,
-) -> Result<Map<String, Value>, Error> {
-    let mut outer: Map<String, Value> = env
-        .iter()
-        .map(|(name, value)| (name.clone(), Value::String(value.clone())))
-        .collect();
-    let done = RefCell::new(BTreeMap::new());
-    for name in declared.keys() {
-        let value = match updated.get(name) {
-            Some(value) => value.clone(),
-            None => Value::String(expand_project_var(
-                name,
-                declared,
-                updated,
-                env,
-                &[],
-                &done,
-            )?),
-        };
-        outer.insert(name.clone(), value);
-    }
-    Ok(outer)
-}
-
-/// The project var `name` with `${NAME}` in its value expanded from the other project vars
-/// (their `updated` value if `set` has changed them), then `env` (the env_file), then the
-/// process environment. `seen` holds the project vars being expanded, to catch a value that
-/// refers back to itself; `done` the ones already expanded, so each is expanded once.
-fn expand_project_var(
-    name: &str,
-    declared: &BTreeMap<String, String>,
-    updated: &Map<String, Value>,
-    env: &BTreeMap<String, String>,
-    seen: &[&str],
-    done: &RefCell<BTreeMap<String, String>>,
-) -> Result<String, Error> {
-    if let Some(value) = done.borrow().get(name) {
-        return Ok(value.clone());
-    }
-    if seen.contains(&name) {
-        return Err(Error::CyclicVar(name.to_string()));
-    }
-    let text = declared
-        .get(name)
-        .ok_or_else(|| Error::UndefinedVar(name.to_string()))?;
-    let seen = [seen, &[name]].concat();
-    // `substitute` only learns that a lookup failed, so keep the nested error to return it.
-    let nested = RefCell::new(None);
-    let find = |var: &str| {
-        if !declared.contains_key(var) {
-            let value = env.get(var).cloned().or_else(|| std::env::var(var).ok());
-            return value.map(Value::String);
-        }
-        if let Some(value) = updated.get(var) {
-            return Some(value.clone());
-        }
-        match expand_project_var(var, declared, updated, env, &seen, done) {
-            Ok(value) => Some(Value::String(value)),
-            Err(err) => {
-                nested.replace(Some(err));
-                None
-            }
-        }
-    };
-    let expanded = vars::substitute(text, &find);
-    let value = match nested.into_inner() {
-        Some(err) => return Err(err),
-        None => expanded?,
-    };
-    done.borrow_mut().insert(name.to_string(), value.clone());
-    Ok(value)
+/// included), then the env_file in `env`, then the process environment.
+fn lookup(var: &str, values: &Map<String, Value>, env: &Map<String, Value>) -> Option<Value> {
+    extract::lookup(values, var)
+        .or_else(|| env.get(var).cloned())
+        .or_else(|| std::env::var(var).ok().map(Value::String))
 }
 
 #[cfg(test)]
@@ -514,7 +373,6 @@ mod tests {
         crate::step::resolve(&mut job.steps, dir).unwrap();
         Project {
             dir: dir.to_path_buf(),
-            vars: BTreeMap::new(),
             env_file: None,
             schedules: BTreeMap::new(),
             jobs: BTreeMap::from([("w".to_string(), job)]),
@@ -522,12 +380,7 @@ mod tests {
     }
 
     async fn exec(project: Project) -> Result<Outcome, Error> {
-        exec_with(project, &ProjectVars::default()).await
-    }
-
-    /// Runs job `w` with shared project `vars`.
-    async fn exec_with(project: Project, vars: &ProjectVars) -> Result<Outcome, Error> {
-        super::exec(project, "w", false, vars).await
+        super::exec(project, "w", false).await
     }
 
     /// The failing step's name and its error, for a run that must fail in a step.
@@ -539,18 +392,19 @@ mod tests {
         }
     }
 
-    /// `project` with its project `vars` set to `vars`.
-    fn with_vars(mut project: Project, vars: &[(&str, &str)]) -> Project {
-        project.vars = vars
+    /// Like [`project`], with an env_file in a temporary dir (kept alive by the returned
+    /// guard) holding `env`, each value single-quoted so it is read literally.
+    fn project_with_env(yaml: &str, env: &[(&str, &str)]) -> (Project, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".env");
+        let text: String = env
             .iter()
-            .map(|(name, value)| (name.to_string(), value.to_string()))
+            .map(|(name, value)| format!("{name}='{value}'\n"))
             .collect();
-        project
-    }
-
-    /// Like [`project`], with `vars` set.
-    fn project_with_vars(yaml: &str, vars: &[(&str, &str)]) -> Project {
-        with_vars(project(yaml), vars)
+        std::fs::write(&path, text).unwrap();
+        let mut project = project(yaml);
+        project.env_file = Some(path);
+        (project, dir)
     }
 
     /// Makes `dir` writable again when dropped, so a test that took write access away
@@ -579,90 +433,18 @@ mod tests {
 
     #[tokio::test]
     async fn substituted_values_stay_one_argument() {
-        let outcome = exec(project_with_vars(
+        let (project, _dir) = project_with_env(
             "steps:\n  e:\n    cmd: [echo, '${X}']\n",
             &[("X", "a; echo injected  b")],
-        ))
-        .await
-        .unwrap();
+        );
+        let outcome = exec(project).await.unwrap();
         assert_eq!(stdout(&outcome), &json!("a; echo injected  b"));
-    }
-
-    #[tokio::test]
-    async fn step_vars_beat_job_vars_beat_project_vars() {
-        let project = project_with_vars(
-            "vars: {B: job, C: job}\nsteps:\n\
-             \x20 print:\n    cmd: [echo, '${B}-${C}-${D}']\n    vars: {C: step}\n",
-            &[("B", "project"), ("D", "project")],
-        );
-        let outcome = exec(project).await.unwrap();
-        assert_eq!(stdout(&outcome), &json!("job-step-project"));
-    }
-
-    #[tokio::test]
-    async fn job_and_step_vars_values_are_literal() {
-        let project = project_with_vars(
-            &format!(
-                "vars: {{BACKEND: '${{PROJECTS}}/backend'}}\n{}\
-                 \x20 print:\n    cmd: [echo, '${{SRC}} ${{BACKEND}}']\n    cwd: '${{ROOT}}'\n\
-                 \x20   vars: {{SRC: '${{steps.seed.stdout.ID}}/src'}}\n",
-                seed(json!({"ID": 7}))
-            ),
-            &[("ROOT", "${PROJECTS}"), ("PROJECTS", "/")],
-        );
-        let outcome = exec(project).await.unwrap();
-        assert_eq!(
-            stdout(&outcome),
-            &json!("${steps.seed.stdout.ID}/src ${PROJECTS}/backend")
-        );
-    }
-
-    #[tokio::test]
-    async fn project_vars_referring_to_themselves_error() {
-        let err = exec(project_with_vars(
-            "steps:\n  e:\n    cmd: [echo, '${A}']\n",
-            &[("A", "x${B}"), ("B", "${A}")],
-        ))
-        .await
-        .err()
-        .unwrap();
-        assert!(matches!(err, Error::CyclicVar(ref v) if v == "A"), "{err}");
-    }
-
-    #[tokio::test]
-    async fn step_vars_reach_nested_steps_but_not_siblings() {
-        let yaml = format!(
-            "{}\
-             \x20 each:\n    for_each: steps.seed.stdout.IDS\n    vars: {{IDS_SEP: '+', NOPE_P: outer}}\n    do:\n\
-             \x20     check:\n        if: {{this: NOPE_P, eq: inner}}\n        vars: {{NOPE_P: inner}}\n        then:\n\
-             \x20         add:\n            set: {{vars: {{ACC: '${{ACC}}${{IDS_SEP}}${{NOPE_P}}${{ITEM}}'}}}}\n\
-             \x20 print:\n    cmd: [echo, '${{ACC}}']\n",
-            seed(json!({"IDS": [1, 2]}))
-        );
-        let outcome = exec(project_with_vars(&yaml, &[("ACC", "")]))
-            .await
-            .unwrap();
-        assert_eq!(stdout(&outcome), &json!("+inner1+inner2"));
-
-        let (_, err) = step_error(project_with_vars(
-            &format!("{yaml}  after:\n    cmd: [echo, '${{NOPE_P}}']\n"),
-            &[("ACC", "")],
-        ))
-        .await;
-        assert!(
-            matches!(err, Error::UndefinedVar(ref v) if v == "NOPE_P"),
-            "{err}"
-        );
     }
 
     #[tokio::test]
     async fn step_files_are_recorded_under_their_key() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(
-            dir.path().join("greet.yaml"),
-            "vars: {WHO: file}\ncmd: [echo, 'hi ${WHO}']\n",
-        )
-        .unwrap();
+        std::fs::write(dir.path().join("greet.yaml"), "cmd: [echo, 'hi file']\n").unwrap();
         let project = project_in(
             dir.path(),
             "steps:\n  hello: greet.yaml\n  print:\n    cmd: [echo, '${steps.hello.stdout}!']\n",
@@ -673,12 +455,11 @@ mod tests {
 
     #[tokio::test]
     async fn skipped_branch_with_no_step_run_succeeds_without_result() {
-        let outcome = exec(project_with_vars(
+        let (project, _dir) = project_with_env(
             "steps:\n  r:\n    if: {this: X, eq: 1}\n    then: {a: {cmd: [echo, hi]}}\n",
             &[("X", "2")],
-        ))
-        .await
-        .unwrap();
+        );
+        let outcome = exec(project).await.unwrap();
         assert!(outcome.result.is_none());
         assert_eq!(outcome.failed_step, None);
     }
@@ -720,40 +501,35 @@ mod tests {
         assert_eq!(stdout(&outcome), &json!("big"));
     }
 
-    /// A job seeded with `N`, then a switch on it that sets project var `PICK` (default
-    /// `none`; cases 200, "404" and a duplicate 404, plus a default if `default`), then echoes
-    /// `after ${PICK}`.
+    /// A job seeded with `N`, then a switch on it that echoes the case it took (cases 200,
+    /// "404" and a duplicate 404, plus a default if `default`).
     fn switch_project(n: Value, default: bool) -> Project {
-        let pick = |word: &str| format!("{{pick: {{set: {{vars: {{PICK: {word}}}}}}}}}");
+        let pick = |word: &str| format!("{{pick: {{cmd: [echo, {word}]}}}}");
         let default = if default {
             format!("    default: {}\n", pick("other"))
         } else {
             String::new()
         };
-        project_with_vars(
-            &format!(
-                "{}\
+        project(&format!(
+            "{}\
              \x20 route:\n    switch: steps.seed.stdout.N\n    cases:\n\
              \x20     200: {}\n\
              \x20     \"404\": {}\n\
              \x20     404: {}\n\
-             {default}\
-             \x20 after:\n    cmd: [echo, 'after ${{PICK}}']\n",
-                seed(json!({ "N": n })),
-                pick("ok"),
-                pick("missing"),
-                pick("second"),
-            ),
-            &[("PICK", "none")],
-        )
+             {default}",
+            seed(json!({ "N": n })),
+            pick("ok"),
+            pick("missing"),
+            pick("second"),
+        ))
     }
 
     #[tokio::test]
     async fn switch_runs_first_matching_case() {
         for (n, expected) in [
-            (json!(200), "after ok"),
-            (json!("200"), "after ok"),
-            (json!(404), "after missing"),
+            (json!(200), "ok"),
+            (json!("200"), "ok"),
+            (json!(404), "missing"),
         ] {
             let outcome = exec(switch_project(n.clone(), true)).await.unwrap();
             assert_eq!(stdout(&outcome), &json!(expected), "{n}");
@@ -763,9 +539,9 @@ mod tests {
     #[tokio::test]
     async fn switch_falls_back_to_default_or_runs_nothing() {
         let outcome = exec(switch_project(json!(500), true)).await.unwrap();
-        assert_eq!(stdout(&outcome), &json!("after other"));
+        assert_eq!(stdout(&outcome), &json!("other"));
         let outcome = exec(switch_project(json!(500), false)).await.unwrap();
-        assert_eq!(stdout(&outcome), &json!("after none"));
+        assert_eq!(stdout(&outcome), &json!({"N": 500}));
     }
 
     #[tokio::test]
@@ -780,15 +556,16 @@ mod tests {
 
     #[tokio::test]
     async fn for_each_runs_body_per_item_in_order() {
-        let outcome = exec(project_with_vars(
+        let dir = tempfile::tempdir().unwrap();
+        let outcome = exec(project_in(
+            dir.path(),
             &format!(
-                "{}\
+                "states: {{ACC: start}}\n{}\
                      \x20 each:\n    for_each: steps.seed.stdout.IDS\n    as: ID\n    do:\n\
-                     \x20     add:\n        set: {{vars: {{ACC: '${{ACC}}-${{ID}}'}}}}\n\
-                     \x20 print:\n    cmd: [echo, '${{ACC}}']\n",
+                     \x20     add:\n        set: {{states: {{ACC: '${{states.ACC}}-${{ID}}'}}}}\n\
+                     \x20 print:\n    cmd: [echo, '${{states.ACC}}']\n",
                 seed(json!({"IDS": [1, 2, 3]}))
             ),
-            &[("ACC", "start")],
         ))
         .await
         .unwrap();
@@ -797,17 +574,17 @@ mod tests {
 
     #[tokio::test]
     async fn for_each_default_item_with_paths_and_nested_branch() {
-        let outcome = exec(
-            project_with_vars(
-                "steps:\n\
-                 \x20 list:\n    cmd: [echo, '[{\"id\": 1, \"ok\": true}, {\"id\": 2, \"ok\": false}]']\n\
-                 \x20 each:\n    for_each: steps.list.stdout\n    do:\n\
-                 \x20     check:\n        if: {this: ITEM.ok, eq: true}\n        then:\n\
-                 \x20         plus:\n            set: {vars: {ACC: '${ACC}+${ITEM.id}'}}\n        else:\n\
-                 \x20         minus:\n            set: {vars: {ACC: '${ACC}-${ITEM.id}'}}\n\
-                 \x20 print:\n    cmd: [echo, '${ACC}']\n",
-                &[("ACC", "")],
-            ))
+        let dir = tempfile::tempdir().unwrap();
+        let outcome = exec(project_in(
+            dir.path(),
+            "states: {ACC: ''}\nsteps:\n\
+             \x20 list:\n    cmd: [echo, '[{\"id\": 1, \"ok\": true}, {\"id\": 2, \"ok\": false}]']\n\
+             \x20 each:\n    for_each: steps.list.stdout\n    do:\n\
+             \x20     check:\n        if: {this: ITEM.ok, eq: true}\n        then:\n\
+             \x20         plus:\n            set: {states: {ACC: '${states.ACC}+${ITEM.id}'}}\n        else:\n\
+             \x20         minus:\n            set: {states: {ACC: '${states.ACC}-${ITEM.id}'}}\n\
+             \x20 print:\n    cmd: [echo, '${states.ACC}']\n",
+        ))
         .await
         .unwrap();
         assert_eq!(stdout(&outcome), &json!("+1-2"));
@@ -815,19 +592,19 @@ mod tests {
 
     #[tokio::test]
     async fn nested_loops_inside_branch() {
-        let outcome = exec(
-            project_with_vars(
-                &format!(
-                    "{}\
-                     \x20 go:\n    if: {{this: steps.seed.stdout.GO, eq: true}}\n    then:\n\
-                     \x20     rows:\n        for_each: steps.seed.stdout.ROWS\n        as: ROW\n        do:\n\
-                     \x20         cells:\n            for_each: ROW\n            as: CELL\n            do:\n\
-                     \x20             add:\n                set: {{vars: {{ACC: '${{ACC}}${{CELL}}'}}}}\n\
-                     \x20 print:\n    cmd: [echo, '${{ACC}}']\n",
-                    seed(json!({"GO": true, "ROWS": [["a", "b"], ["c"]]}))
-                ),
-                &[("ACC", "")],
-            ))
+        let dir = tempfile::tempdir().unwrap();
+        let outcome = exec(project_in(
+            dir.path(),
+            &format!(
+                "states: {{ACC: ''}}\n{}\
+                 \x20 go:\n    if: {{this: steps.seed.stdout.GO, eq: true}}\n    then:\n\
+                 \x20     rows:\n        for_each: steps.seed.stdout.ROWS\n        as: ROW\n        do:\n\
+                 \x20         cells:\n            for_each: ROW\n            as: CELL\n            do:\n\
+                 \x20             add:\n                set: {{states: {{ACC: '${{states.ACC}}${{CELL}}'}}}}\n\
+                 \x20 print:\n    cmd: [echo, '${{states.ACC}}']\n",
+                seed(json!({"GO": true, "ROWS": [["a", "b"], ["c"]]}))
+            ),
+        ))
         .await
         .unwrap();
         assert_eq!(stdout(&outcome), &json!("abc"));
@@ -864,7 +641,8 @@ mod tests {
     #[tokio::test]
     async fn for_each_needs_a_defined_list() {
         let yaml = "steps:\n  each:\n    for_each: NOPE_L\n    do: {e: {cmd: [echo]}}\n";
-        let (name, err) = step_error(project_with_vars(yaml, &[("NOPE_L", "a,b")])).await;
+        let (strings, _dir) = project_with_env(yaml, &[("NOPE_L", "a,b")]);
+        let (name, err) = step_error(strings).await;
         assert_eq!(name, "each");
         assert!(matches!(err, Error::Loop(_)), "{err}");
         let (name, err) = step_error(project(yaml)).await;
@@ -1066,41 +844,16 @@ mod tests {
     async fn condition_compares_loop_item_with_state() {
         let dir = tempfile::tempdir().unwrap();
         let yaml = format!(
-            "states: {{LATEST: 2}}\n{}\
+            "states: {{LATEST: 2, ACC: ''}}\n{}\
              \x20 each:\n    for_each: steps.seed.stdout.IDS\n    as: ID\n    do:\n\
              \x20     check:\n        if: {{this: ID, gt: '${{states.LATEST}}'}}\n        then:\n\
-             \x20         plus:\n            set: {{vars: {{ACC: '${{ACC}}+${{ID}}'}}}}\n        else:\n\
-             \x20         minus:\n            set: {{vars: {{ACC: '${{ACC}}-${{ID}}'}}}}\n\
-             \x20 print:\n    cmd: [echo, '${{ACC}}']\n",
+             \x20         plus:\n            set: {{states: {{ACC: '${{states.ACC}}+${{ID}}'}}}}\n        else:\n\
+             \x20         minus:\n            set: {{states: {{ACC: '${{states.ACC}}-${{ID}}'}}}}\n\
+             \x20 print:\n    cmd: [echo, '${{states.ACC}}']\n",
             seed(json!({"IDS": [1, 2, 3, 4]}))
         );
-        let outcome = exec(with_vars(project_in(dir.path(), &yaml), &[("ACC", "")]))
-            .await
-            .unwrap();
+        let outcome = exec(project_in(dir.path(), &yaml)).await.unwrap();
         assert_eq!(stdout(&outcome), &json!("-1-2+3+4"));
-    }
-
-    #[tokio::test]
-    async fn project_vars_using_a_set_var_see_its_new_value() {
-        let yaml = "steps:\n\
-                    \x20 bump:\n    set: {vars: {B: new}}\n\
-                    \x20 print:\n    cmd: [echo, '${A} ${B}']\n";
-        let project = project_with_vars(yaml, &[("A", "prefix-${B}"), ("B", "old")]);
-        let outcome = exec(project).await.unwrap();
-        assert_eq!(stdout(&outcome), &json!("prefix-new new"));
-    }
-
-    /// Each var uses the one before twice, so expanding without reuse takes 2^30 lookups.
-    #[tokio::test]
-    async fn project_vars_used_many_times_are_expanded_once() {
-        let mut vars = vec![("V0".to_string(), String::new())];
-        for i in 1..=30 {
-            vars.push((format!("V{i}"), format!("${{V{0}}}${{V{0}}}", i - 1)));
-        }
-        let vars: Vec<(&str, &str)> = vars.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect();
-        let project = project_with_vars("steps:\n  e:\n    cmd: [echo, 'x${V30}x']\n", &vars);
-        let outcome = exec(project).await.unwrap();
-        assert_eq!(stdout(&outcome), &json!("xx"));
     }
 
     #[tokio::test]
@@ -1113,120 +866,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn set_leaves_vars_unchanged_when_its_states_cannot_be_saved() {
+    async fn set_fails_when_its_states_cannot_be_saved() {
         let dir = tempfile::tempdir().unwrap();
         let states = dir.path().join("states");
         let yaml = format!(
             "states: {{N: 0}}\nsteps:\n\
              \x20 lock:\n    cmd: [chmod, '555', '{}']\n\
-             \x20 save:\n    set: {{states: {{N: 1}}, vars: {{V: new}}}}\n",
+             \x20 save:\n    set: {{states: {{N: 1}}}}\n",
             states.display()
         );
-        let project = with_vars(project_in(dir.path(), &yaml), &[("V", "old")]);
-        let project_vars = ProjectVars::default();
+        let project = project_in(dir.path(), &yaml);
         let _writable = Writable(&states);
-        assert!(exec_with(project, &project_vars).await.is_err());
-        assert_eq!(project_vars.snapshot(), (0, Map::new()));
+        assert!(exec(project).await.is_err());
         assert_eq!(state_file(dir.path()), json!({"N": 0}));
-    }
-
-    #[tokio::test]
-    async fn set_vars_is_seen_by_later_steps_and_keeps_its_type() {
-        let yaml = "steps:\n\
-                    \x20 seed:\n    cmd: [echo, '[1, 2]']\n\
-                    \x20 keep:\n    set: {vars: {L: '${steps.seed.stdout}', N: 'n=${N}'}}\n\
-                    \x20 check:\n    for_each: L\n    do: {e: {cmd: [echo, '${N} ${L.1} ${ITEM}']}}\n";
-        let project_vars = ProjectVars::default();
-        let project = project_with_vars(yaml, &[("L", "none"), ("N", "0")]);
-        let outcome = exec_with(project, &project_vars).await.unwrap();
-        assert_eq!(stdout(&outcome), &json!("n=0 2 2"));
-        assert_eq!(
-            Value::Object(project_vars.snapshot().1),
-            json!({"L": [1, 2], "N": "n=0"})
-        );
-    }
-
-    #[tokio::test]
-    async fn runs_with_the_same_project_vars_see_each_others_updates() {
-        let project_vars = ProjectVars::default();
-        let vars = [("TOKEN", "none")];
-        let writer = project_with_vars(
-            "steps:\n  keep:\n    set: {vars: {TOKEN: abc}}\n  e:\n    cmd: [echo]\n",
-            &vars,
-        );
-        let reader = || project_with_vars("steps:\n  e:\n    cmd: [echo, '${TOKEN}']\n", &vars);
-        let outcome = exec_with(reader(), &project_vars).await.unwrap();
-        assert_eq!(stdout(&outcome), &json!("none"));
-        exec_with(writer, &project_vars).await.unwrap();
-        let outcome = exec_with(reader(), &project_vars).await.unwrap();
-        assert_eq!(stdout(&outcome), &json!("abc"));
-        let outcome = exec(reader()).await.unwrap();
-        assert_eq!(stdout(&outcome), &json!("none"));
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-    async fn concurrent_set_vars_lose_no_updates() {
-        let project_vars = ProjectVars::default();
-        let project = |letter: &str| {
-            project_with_vars(
-                &format!(
-                    "{}\
-                     \x20 each:\n    for_each: steps.seed.stdout\n    do:\n\
-                     \x20     add:\n        set: {{vars: {{N: '${{N}}{letter}'}}}}\n",
-                    seed(json!(vec![0; 200]))
-                ),
-                &[("N", "")],
-            )
-        };
-        let spawn = |project: Project| {
-            let project_vars = project_vars.clone();
-            tokio::spawn(async move { exec_with(project, &project_vars).await })
-        };
-        let (a, b) = tokio::join!(spawn(project("a")), spawn(project("b")));
-        a.unwrap().unwrap();
-        b.unwrap().unwrap();
-        let n = project_vars.snapshot().1["N"].as_str().unwrap().len();
-        assert_eq!(n, 400);
-    }
-
-    #[tokio::test]
-    async fn project_vars_expand_from_updated_vars() {
-        let project_vars = ProjectVars::default();
-        project_vars
-            .update_with(|_, _| Ok(((), Map::from_iter([("HOST".to_string(), json!("new"))]))))
-            .unwrap();
-        let project = project_with_vars(
-            "steps:\n  e:\n    cmd: [echo, '${URL}']\n",
-            &[("HOST", "orig"), ("URL", "${HOST}/x")],
-        );
-        let outcome = exec_with(project, &project_vars).await.unwrap();
-        assert_eq!(stdout(&outcome), &json!("new/x"));
-    }
-
-    #[tokio::test]
-    async fn job_vars_shadow_an_updated_project_var() {
-        let project = project_with_vars(
-            "vars: {A: job}\nsteps:\n\
-             \x20 keep:\n    set: {vars: {A: updated, B: updated}}\n\
-             \x20 e:\n    cmd: [echo, '${A}-${B}']\n",
-            &[("A", "project"), ("B", "project")],
-        );
-        let outcome = exec(project).await.unwrap();
-        assert_eq!(stdout(&outcome), &json!("job-updated"));
-    }
-
-    #[tokio::test]
-    async fn project_vars_beat_the_env_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let env = dir.path().join(".env");
-        std::fs::write(&env, "A=env\nB=env\n").unwrap();
-        let mut project = project_with_vars(
-            "steps:\n  e:\n    cmd: [echo, '${A}-${B}']\n",
-            &[("A", "project")],
-        );
-        project.env_file = Some(env);
-        let outcome = exec(project).await.unwrap();
-        assert_eq!(stdout(&outcome), &json!("project-env"));
     }
 
     #[tokio::test]
@@ -1248,35 +900,33 @@ mod tests {
     #[tokio::test]
     async fn job_without_state_writes_no_file() {
         let dir = tempfile::tempdir().unwrap();
-        let project = project_in(
-            dir.path(),
-            "steps:\n  keep:\n    set: {vars: {V: new}}\n  e:\n    cmd: [echo]\n",
-        );
-        exec(with_vars(project, &[("V", "old")])).await.unwrap();
+        let project = project_in(dir.path(), "steps:\n  e:\n    cmd: [echo]\n");
+        exec(project).await.unwrap();
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
     }
 
     #[tokio::test]
-    async fn process_environment_is_the_last_fallback() {
+    async fn env_file_beats_the_process_environment() {
         let yaml = "steps:\n  e:\n    cmd: [echo, '${CARGO_PKG_NAME}']\n";
         let outcome = exec(project(yaml)).await.unwrap();
         assert_eq!(stdout(&outcome), &json!("rocky"));
-        let outcome = exec(project_with_vars(yaml, &[("CARGO_PKG_NAME", "rb")]))
-            .await
-            .unwrap();
+        let (project, _dir) = project_with_env(yaml, &[("CARGO_PKG_NAME", "rb")]);
+        let outcome = exec(project).await.unwrap();
         assert_eq!(stdout(&outcome), &json!("rb"));
     }
 
     #[tokio::test]
-    async fn loop_item_beats_vars() {
-        let outcome = exec(project(&format!(
-            "{}\
+    async fn loop_item_beats_the_env_file() {
+        let (project, _dir) = project_with_env(
+            &format!(
+                "{}\
                  \x20 each:\n    for_each: steps.seed.stdout.IDS\n    as: ID\n    do:\n\
-                 \x20     e:\n        cmd: [echo, '${{ID}}']\n        vars: {{ID: shadow}}\n",
-            seed(json!({"IDS": [1]}))
-        )))
-        .await
-        .unwrap();
+                 \x20     e:\n        cmd: [echo, '${{ID}}']\n",
+                seed(json!({"IDS": [1]}))
+            ),
+            &[("ID", "shadow")],
+        );
+        let outcome = exec(project).await.unwrap();
         assert_eq!(stdout(&outcome), &json!(1));
     }
 
@@ -1303,25 +953,15 @@ mod tests {
         let outcome = exec(project_in(dir.path(), yaml)).await.unwrap();
         assert_eq!(stdout(&outcome), &json!("2-1"));
         assert_eq!(state_file(dir.path()), json!({"A": 2, "B": 1}));
-
-        let project = project_with_vars(
-            "steps:\n\
-             \x20 swap:\n    set: {vars: {A: '${B}', B: '${A}'}}\n\
-             \x20 print:\n    cmd: [echo, '${A}-${B}']\n",
-            &[("A", "1"), ("B", "2")],
-        );
-        let outcome = exec(project).await.unwrap();
-        assert_eq!(stdout(&outcome), &json!("2-1"));
     }
 
     #[tokio::test]
     async fn switch_case_keys_are_not_expanded() {
         let yaml = "steps:\n  s:\n    switch: V\n    cases: {'${X}': {lit: {cmd: [echo, literal]}}}\n\
                     \x20   default: {other: {cmd: [echo, other]}}\n";
-        for (v, expected) in [("a", "other"), ("$${X}", "literal")] {
-            let outcome = exec(project_with_vars(yaml, &[("X", "a"), ("V", v)]))
-                .await
-                .unwrap();
+        for (v, expected) in [("a", "other"), ("${X}", "literal")] {
+            let (project, _dir) = project_with_env(yaml, &[("X", "a"), ("V", v)]);
+            let outcome = exec(project).await.unwrap();
             assert_eq!(stdout(&outcome), &json!(expected), "{v}");
         }
     }

@@ -8,7 +8,6 @@ use tokio::task::JoinSet;
 use tokio::time::MissedTickBehavior;
 
 use crate::error::Error;
-use crate::project_vars::ProjectVars;
 use crate::schedule::{Clock, Schedule};
 use crate::{exec, progress, project};
 
@@ -19,8 +18,7 @@ use crate::{exec, progress, project};
 /// failed); a run that errors or panics prints an `error` line. Either way the job's next
 /// runs still happen. An `at` job whose time has passed (without `run_on_start`) prints a
 /// `skipped` line instead of running. A job whose schedule fails prints a `stopped` line and stops;
-/// the other jobs keep running. All runs share one in-memory set of updated project
-/// `vars`, kept until `run` stops.
+/// the other jobs keep running.
 pub async fn run(path: &Path) -> Result<(), Error> {
     let project = project::load(path)?;
     if project.schedules.is_empty() {
@@ -31,7 +29,6 @@ pub async fn run(path: &Path) -> Result<(), Error> {
     let now = Zoned::now();
     let mut jobs = JoinSet::new();
     let mut names = HashMap::new();
-    let project_vars = ProjectVars::default();
     for (name, schedule) in project.schedules {
         if let Schedule::Clock {
             clock,
@@ -47,11 +44,9 @@ pub async fn run(path: &Path) -> Result<(), Error> {
             continue;
         }
         let path = path.to_path_buf();
-        let project_vars = project_vars.clone();
         let job = name.clone();
         let started = now.clone();
-        let task =
-            jobs.spawn(async move { run_job(&path, &job, schedule, started, &project_vars).await });
+        let task = jobs.spawn(async move { run_job(&path, &job, schedule, started).await });
         names.insert(task.id(), name);
     }
     while let Some(joined) = jobs.join_next_with_id().await {
@@ -66,13 +61,7 @@ pub async fn run(path: &Path) -> Result<(), Error> {
     Ok(())
 }
 
-async fn run_job(
-    path: &Path,
-    name: &str,
-    schedule: Schedule,
-    started: Zoned,
-    project_vars: &ProjectVars,
-) -> Result<(), Error> {
+async fn run_job(path: &Path, name: &str, schedule: Schedule, started: Zoned) -> Result<(), Error> {
     match &schedule {
         Schedule::Every { interval, delay } => {
             tokio::time::sleep(*delay).await;
@@ -80,7 +69,7 @@ async fn run_job(
             ticks.set_missed_tick_behavior(MissedTickBehavior::Skip);
             loop {
                 ticks.tick().await;
-                run_once(path, name, project_vars).await;
+                run_once(path, name).await;
             }
         }
         Schedule::Clock {
@@ -90,7 +79,7 @@ async fn run_job(
             // `started` is the time the past-`at` check used, so an `at` it let through isn't
             // lost if that time passes before this task starts.
             if *run_on_start {
-                run_once(path, name, project_vars).await;
+                run_once(path, name).await;
             }
             // An `at` time passed during the start run still runs, late: it's the only one.
             let mut after = match clock {
@@ -101,7 +90,7 @@ async fn run_job(
                 // Negative when a slot was reached late: run now.
                 let wait = Zoned::now().duration_until(&next);
                 tokio::time::sleep(Duration::try_from(wait).unwrap_or_default()).await;
-                run_once(path, name, project_vars).await;
+                run_once(path, name).await;
                 // Slots that passed during a long run are skipped.
                 after = Zoned::now().max(next);
             }
@@ -112,11 +101,11 @@ async fn run_job(
 
 /// Runs the job once in its own task, so even a panic is logged as an `error` line
 /// and the schedule carries on.
-async fn run_once(path: &Path, name: &str, project_vars: &ProjectVars) {
-    let (path, job, project_vars) = (path.to_path_buf(), name.to_string(), project_vars.clone());
+async fn run_once(path: &Path, name: &str) {
+    let (path, job) = (path.to_path_buf(), name.to_string());
     let outcome = tokio::spawn(async move {
         let project = tokio::task::spawn_blocking(move || project::load(&path)).await??;
-        exec::exec(project, &job, true, &project_vars).await
+        exec::exec(project, &job, true).await
     })
     .await;
     let event = match outcome {

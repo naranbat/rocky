@@ -79,10 +79,9 @@ pub fn for_each(name: &str, var: &str, count: usize) -> Value {
 }
 
 /// Names only: like `step` lines, it leaves values out.
-pub fn set(name: &str, states: &Map<String, Value>, vars: &Map<String, Value>) -> Value {
+pub fn set(name: &str, states: &Map<String, Value>) -> Value {
     let states: Vec<&String> = states.keys().collect();
-    let vars: Vec<&String> = vars.keys().collect();
-    json!({"event": "set", "step": name, "states": states, "vars": vars})
+    json!({"event": "set", "step": name, "states": states})
 }
 
 #[cfg(test)]
@@ -153,8 +152,8 @@ mod tests {
         );
         let states = Map::from_iter([("A".to_string(), json!(1)), ("B".to_string(), json!("x"))]);
         assert_eq!(
-            set("save", &states, &Map::new()),
-            json!({"event": "set", "step": "save", "states": ["A", "B"], "vars": []})
+            set("save", &states),
+            json!({"event": "set", "step": "save", "states": ["A", "B"]})
         );
     }
 }

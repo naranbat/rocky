@@ -3,32 +3,30 @@
 An HTTP step sends one request and produces a [response](responses.md) `{status, headers, body}`. Write the request under its method, `get:`, `post:`, `put:`, `patch:` or `delete:` (see [Method keys](#method-keys)), or under `http:` with a `method`; its `json` is sent as the JSON body. To reuse a request, put the whole step in a [step file](projects.md#job-and-step-files).
 
 ```yaml
-vars:
-  BASE: https://httpbin.org
 jobs:
   users:
     steps:
       list:
         get:
-          url: ${BASE}/get
+          url: https://httpbin.org/get
           query:
             page: "2"
 
       # A request that is just a URL fits on one line.
       ping:
-        get: "${BASE}/get"
+        get: "https://httpbin.org/get"
         timeout: 5
 
       # Expect a 404 and handle it instead of stopping the job.
       lookup:
-        get: ${BASE}/status/404
+        get: https://httpbin.org/status/404
         allow_failure: true
       missing:
         if: { this: steps.lookup.status, eq: 404 }
         then:
           create:
             post:
-              url: ${BASE}/anything/users
+              url: https://httpbin.org/anything/users
               query:
                 source: ${steps.list.body.args.page}   # query values are percent-encoded
               json:
@@ -56,10 +54,10 @@ Unknown fields are an error, so typos fail loudly.
 
 ```yaml
 ping:
-  get: ${BASE}/get                    # http: { method: GET, url: ${BASE}/get }
+  get: https://httpbin.org/get                    # http: { method: GET, url: https://httpbin.org/get }
 create:
   post:                               # http: { method: POST, url: ..., json: ... }
-    url: ${BASE}/anything/users
+    url: https://httpbin.org/anything/users
     json: { name: alice }
 ```
 
@@ -71,7 +69,7 @@ A step has only one of `http`, `get`, `post`, `put`, `patch` and `delete`. A met
 
 ## Behaviour
 
-- **Variables** are expanded before sending. The step's own `vars` come before those of its enclosing steps, the job and the project. See [Variables](variables.md#vars-levels).
+- **Variables** are expanded before sending. See [Variables](variables.md#lookup-order).
 - **Failure:** a 4xx or 5xx status fails the step. Use `allow_failure: true` to continue. See [Projects](projects.md#failures-and-allow_failure).
 - **Result:** saved as `steps.<name>` (the step's key), read as `${steps.<name>.status}`, `${steps.<name>.headers.<lowercase-name>}` and `${steps.<name>.body...}`.
 - **Content type:** `Content-Type: application/json` is added when there is a `json`, unless you set a `Content-Type` header yourself (the name is matched in any case).

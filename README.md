@@ -22,10 +22,9 @@ These projects in [`examples/`](examples/) run as they are:
 
 - [`httpbin.yaml`](examples/httpbin.yaml): requests, commands, branches, loops and timeouts against https://httpbin.org
 - [`imports.yaml`](examples/imports.yaml): the same, with every job in its own file under [`jobs/`](examples/jobs/)
-- [`vars-env.yaml`](examples/vars-env.yaml): `vars` and the env file [`example.env`](examples/example.env), against httpbin.org
+- [`env-file.yaml`](examples/env-file.yaml): the env file [`example.env`](examples/example.env), against httpbin.org
 - [`cmd-env.yaml`](examples/cmd-env.yaml): values passed to commands with `env`; only runs commands
 - [`state.yaml`](examples/state.yaml): a counter kept between runs; only runs commands
-- [`set-vars.yaml`](examples/set-vars.yaml): a counter shared between jobs under `run`; only runs commands
 
 [`steps/`](examples/steps/) holds step files.
 
@@ -49,7 +48,7 @@ Each feature has its own page in [`docs/`](docs/README.md):
 - [HTTP steps](docs/http-steps.md): HTTP request fields (`get:`, `post:`, … or `http:`) and behaviour
 - [Responses](docs/responses.md): the `{status, headers, body}` result
 - [Cmd steps](docs/cmd-steps.md): running programs, `stdin`, reading and writing files
-- [Variables](docs/variables.md) and [env files](docs/env-files.md), including `vars` built from other vars and project `vars` that jobs update at runtime with `set`
+- [Variables](docs/variables.md) and [env files](docs/env-files.md)
 - [State](docs/state.md): values kept between runs with a job's `states` and `set`
 - [Conditions](docs/conditions.md): `if` / `then` / `else`, `switch`
 - [Loops](docs/loops.md): `for_each` / `as` / `do`
@@ -65,6 +64,5 @@ Each feature has its own page in [`docs/`](docs/README.md):
 - Request bodies are JSON only (no form or multipart).
 - No dry run: requests are always sent.
 - `timeout` is in whole seconds.
-- Project `vars` changed by `set` live in memory only; they reset when `exec` or `run` restarts.
 - Ctrl-C, SIGTERM, SIGHUP (closing the terminal) and SIGQUIT stop `rocky` and the commands it runs; `kill -9` can't be caught, so it leaves running commands behind.
 - Unix only: commands run in their own process group, which needs Unix signals.

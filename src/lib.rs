@@ -12,7 +12,6 @@ pub mod pattern;
 pub mod process_group;
 pub mod progress;
 pub mod project;
-pub mod project_vars;
 pub mod request;
 pub mod response;
 pub mod run;

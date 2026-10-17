@@ -1,10 +1,7 @@
-# A project: jobs that share `vars`. Every job sends requests to https://httpbin.org.
+# A project: jobs that share an env file. Every job sends requests to https://httpbin.org.
 #   rocky exec examples/httpbin.yaml login       # run one job
 #   rocky run examples/httpbin.yaml              # run the jobs listed in `schedules`
-vars:
-  BASE: https://httpbin.org
-  USER: alice
-  COUNT: "15"                         # set to 5 to take the `else` branch of `conditional`
+env_file: httpbin.env                 # BASE, USER and COUNT
 
 # When `rocky run` runs each job. `rocky exec` checks this but doesn't run it.
 schedules:

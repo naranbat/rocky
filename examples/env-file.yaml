@@ -1,0 +1,11 @@
+# Values from an env file (path relative to this file).
+# Run: rocky exec examples/env-file.yaml user
+env_file: example.env
+jobs:
+  user:
+    steps:
+      user:
+        get:
+          url: https://httpbin.org/anything/users/42
+          headers:
+            Authorization: Bearer ${API_TOKEN}

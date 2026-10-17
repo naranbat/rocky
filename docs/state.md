@@ -49,8 +49,7 @@ remember:
 - The new values are written to the state file right away. A later step that fails doesn't undo them.
 - Steps after it, including later in the same run, see the new values.
 - It can go anywhere a step can: inside a branch, switch or loop, and in a step file.
-- The same `set` can also update project `vars` (see [Variables](variables.md#updating-vars-at-runtime)).
-- Only `vars` may go with it. It has no result: it isn't saved under `steps`, and it doesn't count as the last step that ran.
+- No other key may go with it. It has no result: it isn't saved under `steps`, and it doesn't count as the last step that ran.
 - Every name under `set.states` must be declared in the job's `states`. This is checked when the project loads.
 
 ## The state file
@@ -72,4 +71,4 @@ Each job's state is stored in `states/<job>.json` next to the project file, e.g.
 
 ## `states` is reserved
 
-`states` is a variable like `steps`: a variable named `states` (under any `vars`, or in `as`) fails when the project loads.
+`states` is a variable like `steps`: a loop variable named `states` (in `as`) fails when the project loads.

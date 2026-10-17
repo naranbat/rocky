@@ -3,15 +3,12 @@
 A project is a YAML file of named **jobs**. A job is a map of named **steps** that `rocky exec` executes in order, or that `rocky run` runs on the project's [schedules](schedules.md). Jobs and steps are both named by their key, and can be written inline or kept in their own YAML files (see [Job and step files](#job-and-step-files)). A step sends an **HTTP request** or runs a **command**, and every step can use the result of any earlier step. `exec` prints the result of the last step that ran as JSON.
 
 ```yaml
-vars:                              # shared by all jobs
-  BASE: https://httpbin.org
-  USER: alice
 jobs:
   report:
     steps:
       login:                       # the step's name
         post:                      # an HTTP request
-          url: ${BASE}/anything/login
+          url: https://httpbin.org/anything/login
           json:                    # sent as the JSON body
             token: demo-token
         # httpbin echoes the request body back under `json`,
@@ -24,7 +21,7 @@ jobs:
 
       shout:
         cmd: [tr, a-z, A-Z]
-        stdin: ${USER}             # the command's standard input
+        stdin: ${USER}             # the command's standard input; USER from the environment
 
       save:                        # write a file: the path is $1
         cmd: [sh, -c, 'cat > "$1"', _, report.json]
@@ -35,7 +32,7 @@ jobs:
 
       send:
         post:
-          url: ${BASE}/anything/report
+          url: https://httpbin.org/anything/report
           headers:
             Authorization: Bearer ${steps.login.body.json.token}
           json:
@@ -46,13 +43,12 @@ jobs:
 rocky exec project.yaml report | jq .body.json   # {"date": "2026-10-09"}
 ```
 
-Examples: [`httpbin.yaml`](../examples/httpbin.yaml) (jobs `login`, `mixed`, `conditional`, `health`, `loop`, and `files` from [`jobs/files.yaml`](../examples/jobs/files.yaml)), [`imports.yaml`](../examples/imports.yaml) (jobs `health`, `report` and `files`, each from its own file), [`vars-env.yaml`](../examples/vars-env.yaml) (job `user`), [`cmd-env.yaml`](../examples/cmd-env.yaml) (job `greet`).
+Examples: [`httpbin.yaml`](../examples/httpbin.yaml) (jobs `login`, `mixed`, `conditional`, `health`, `loop`, and `files` from [`jobs/files.yaml`](../examples/jobs/files.yaml)), [`imports.yaml`](../examples/imports.yaml) (jobs `health`, `report` and `files`, each from its own file), [`env-file.yaml`](../examples/env-file.yaml) (job `user`), [`cmd-env.yaml`](../examples/cmd-env.yaml) (job `greet`).
 
 ## Project fields
 
 | Field | Notes |
 |---|---|
-| `vars` | Map of name → string, shared by all jobs. A `set` step can change them at runtime. See [Variables](variables.md). |
 | `env_file` | A `.env` file shared by all jobs, relative to the project file. See [Env files](env-files.md). |
 | `schedules` | Optional. Map of job name → schedule: when `rocky run` runs that job. See [Schedules](schedules.md). `exec` ignores it. |
 | `jobs` | Required, at least one. Map of job name → job, or → the path of a job file. |
@@ -61,7 +57,6 @@ Examples: [`httpbin.yaml`](../examples/httpbin.yaml) (jobs `login`, `mixed`, `co
 
 | Field | Notes |
 |---|---|
-| `vars` | Map of name → string, for this job's steps. Checked before the project's `vars`. See [Variables](variables.md#vars-levels). |
 | `states` | Map of name → default value, kept between runs in `states/<job>.json` and read as `${states.NAME}`. See [State](state.md). |
 | `steps` | Required, and must not be empty. Map of step name → step, or → the path of a step file. Steps run in the order they are written. |
 
@@ -77,13 +72,12 @@ Each entry in `steps` (and in `then`, `else`, `do`, each switch case and `defaul
 | Switch | `switch`, `cases`, `default` | [Conditions](conditions.md#switch) |
 | Loop | `for_each`, `as`, `do` | [Loops](loops.md) |
 | Step file | a string: the path of a step file | [Job and step files](#job-and-step-files) |
-| Set state or vars | `set:` with `states:` and/or `vars:` (each a map of name → value) | [State](state.md#set), [Variables](variables.md#updating-vars-at-runtime) |
+| Set state | `set:` with `states:` (a map of name → value) | [State](state.md#set) |
 
 ## Step fields
 
 | Field | Applies to | Notes |
 |---|---|---|
-| `vars` | all | Map of name → string, for this step and the steps nested in it. Checked before the job's and project's `vars`. See [Variables](variables.md#vars-levels). |
 | `http` / `cmd` | HTTP and cmd steps | Exactly one of them. `cmd` must not be empty. `get`, `post`, `put`, `patch` and `delete` [count as `http`](http-steps.md#method-keys). |
 | `timeout` | HTTP and cmd steps | Seconds before the step is stopped and fails. On an HTTP step the default is 30s; cmd steps have no default. |
 | `cwd`, `stdin`, `env`, `capture_stdout` | cmd steps | Working directory, standard input, environment variables, and whether stdout is kept. See [Cmd steps](cmd-steps.md#options). |
@@ -91,7 +85,7 @@ Each entry in `steps` (and in `then`, `else`, `do`, each switch case and `defaul
 | `if`, `then`, `else` | branches | A branch has no `http`, `cmd`, `timeout` or `allow_failure`. |
 | `switch`, `cases`, `default` | switches | Like a branch: no `http`, `cmd`, `timeout` or `allow_failure`, and no `if`, `then` or `else`. |
 | `for_each`, `as`, `do` | loops | A loop has none of those keys and no `if`, `then`, `else`, `switch`, `cases` or `default`. |
-| `set` | set state or vars | Only `vars` may go with it. Every `set.states` name must be declared in the job's `states`, and every `set.vars` name in the project's `vars`. |
+| `set` | set state | No other key may go with it. Every `set.states` name must be declared in the job's `states`. |
 
 The step's name is its key. It saves an HTTP or cmd step's result as `steps.<name>`, and labels the step in errors and log lines (see [labels](cli.md#errors-and-exit-codes)). It must be a [variable name](variables.md#names) other than `steps` or `states`, and two steps in the same map can't share it. There is no `name` field.
 
@@ -151,13 +145,12 @@ The whole project, every job including nested branches and loops, is checked whe
 - a step with none, or both, of `http` and `cmd`
 - `cwd`, `stdin`, `env` or `capture_stdout` without `cmd`; `timeout` on a branch, switch or loop; `then`/`else` without `if`; `cases`/`default` without `switch`; `do`/`as` without `for_each`
 - a missing step or job file, a step file with a `name` field, or a step file that uses itself, directly or through other files
-- a name that appears twice in `jobs`, `schedules`, any `vars` or `states`, a `set`, a request's `headers` or `query`, a cmd step's `env`, or a switch's `cases`; a `schedules` entry for a job that doesn't exist
-- a [variable name](variables.md#names) under any `vars` or in `as` that isn't uppercase (`A-Z`, `0-9`, `_`), or a step key or name under `states` that isn't an identifier or is `steps` or `states`
-- a `set` with neither `states` nor `vars`, or with any other step key than `vars`
+- a name that appears twice in `jobs`, `schedules`, `states`, a `set`, a request's `headers` or `query`, a cmd step's `env`, or a switch's `cases`; a `schedules` entry for a job that doesn't exist
+- a [variable name](variables.md#names) in `as` that isn't uppercase (`A-Z`, `0-9`, `_`), or a step key or name under `states` that isn't an identifier or is `steps` or `states`
+- a `set` without `states`, or with any other step key
 - a `set.states` name the job's `states` doesn't declare
-- a `set.vars` name the project's `vars` doesn't declare
 - an invalid [condition](conditions.md) or [schedule](schedules.md)
-- unknown keys anywhere, including `schedule` inside a job
+- unknown keys anywhere, including `schedule` inside a job and `vars` anywhere
 
 Errors inside a job are reported under its name:
 
@@ -189,14 +182,14 @@ steps:
     cmd: [date]
 
 # steps/login.yaml: one step of any kind, including a branch or loop; no `name`
-post: { url: "${BASE}/anything/login", json: { token: demo-token } }
+post: { url: "https://httpbin.org/anything/login", json: { token: demo-token } }
 ```
 
 - A step file holds one step, without a `name`: the key that points at it names it, so one file can be used under several names. It can use other step files, inside a branch or loop too, but not itself, directly or through other files.
-- The entry is just a path, so everything else, `vars` included, goes in the file. To change a field for one use, write the step inline.
-- A job file has the job fields `vars`, `states` and `steps`. The project keeps `vars`, `env_file` and `schedules`.
+- The entry is just a path, so everything else goes in the file. To change a field for one use, write the step inline.
+- A job file has the job fields `states` and `steps`. The project keeps `env_file` and `schedules`.
 
-Example: [`imports.yaml`](../examples/imports.yaml), whose jobs all come from [`jobs/`](../examples/jobs/) and share its `vars`.
+Example: [`imports.yaml`](../examples/imports.yaml), whose jobs all come from [`jobs/`](../examples/jobs/) and share its env file.
 
 ## Paths
 

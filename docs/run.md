@@ -3,8 +3,6 @@
 `rocky run <project>` runs every job listed in the [project's](projects.md) `schedules`, until stopped with Ctrl-C, SIGTERM, SIGHUP or SIGQUIT, or until only finished `at` schedules are left. Jobs that aren't listed are skipped; run them with `rocky exec`.
 
 ```yaml
-vars:
-  BASE: https://httpbin.org
 schedules:
   poll:
     every: 5m
@@ -17,7 +15,7 @@ jobs:
   poll:
     steps:
       get:
-        get: "${BASE}/get"
+        get: "https://httpbin.org/get"
 
   morning-report:
     steps:
@@ -63,14 +61,14 @@ Every log line is one JSON object on **stdout**, with `job`, `time` (local time 
 | `branch` | `step`, `arm` (`then` or `else`), `steps` (how many entries the chosen arm has; nested steps and loop iterations aren't counted) |
 | `switch` | `step`, `case` (the matching case's number, from 1, or `"default"`), `steps` (how many entries the chosen case has) |
 | `for_each` | `step`, `var`, `items` (the list length) |
-| `set` | `step`, `states` and `vars` (the names it set, `[]` if none; values are left out) |
+| `set` | `step`, `states` (the names it set; values are left out) |
 | `done` | `failed_step`: the step that failed without `allow_failure`, or `null`; `reason`: why it failed (`returned HTTP 500`, `exited with code 3`), or `null` |
 | `error` | `error`: why the run stopped, e.g. an undefined variable, a project that became invalid, or a crash |
 | `stopped` | `error`: why the job's schedule stopped |
 | `skipped` | `reason`: why the job won't run, e.g. its `at` time has passed |
 
 ```json
-{"job":"poll","time":"2026-10-09T09:30:00+09:00","event":"error","error":"step `get` failed: variable `TOKEN` is not defined (checked steps, states, loop items, vars, env_file, environment)"}
+{"job":"poll","time":"2026-10-09T09:30:00+09:00","event":"error","error":"step `get` failed: variable `TOKEN` is not defined (checked steps, states, loop items, env_file, environment)"}
 ```
 
 A step that ends in an error gets no `step` line; the `error` line names it. See also [Debugging](debugging.md#run-log-lines).
@@ -79,6 +77,6 @@ A step that ends in an error gets no `step` line; the `error` line names it. See
 
 - **Independent jobs:** each job runs on its own schedule, concurrently with the others.
 - **No overlap:** a job never overlaps itself. If a run takes longer than its interval, the missed runs are skipped.
-- **Live edits:** the project and its job and step files are re-read on every run, so edits to steps and `vars` apply from the next run, except a project var a `set` has updated, which keeps its updated value until `run` stops (see [Variables](variables.md#updating-vars-at-runtime)). Schedules are read only at startup.
+- **Live edits:** the project and its job and step files are re-read on every run, so edits to steps and the env file apply from the next run. Schedules are read only at startup.
 - **Failures don't stop the job:** after a run that failed, errored or crashed, the job keeps its schedule and the other jobs are unaffected. If a job's schedule itself can't be computed, that job stops with a `stopped` line, and the other jobs keep running.
 - **Exit:** `run` exits once no job has runs left: every scheduled job is an `at` job that has already run or was skipped, or has stopped after a `stopped` error.

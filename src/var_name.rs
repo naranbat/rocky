@@ -12,11 +12,11 @@ pub fn is_valid(name: &str) -> bool {
         && !matches!(name, "steps" | "states")
 }
 
-/// How a `vars` or loop `as` name is checked, worded for error messages.
+/// How a loop `as` name is checked, worded for error messages.
 pub const VAR_RULE: &str =
     "must start with an uppercase letter or `_` and contain only uppercase letters, digits and `_`";
 
-/// Whether `name` can name a `vars` entry or a loop variable: `[A-Z_][A-Z0-9_]*`.
+/// Whether `name` can name a loop variable: `[A-Z_][A-Z0-9_]*`.
 pub fn is_valid_var(name: &str) -> bool {
     let mut chars = name.chars();
     chars

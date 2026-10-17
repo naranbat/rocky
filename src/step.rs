@@ -22,10 +22,6 @@ pub struct Step {
     /// the entry's value when it is a string.
     #[serde(skip)]
     pub r#use: Option<PathBuf>,
-    /// Values for `${NAME}` in this step and the steps nested in it, checked before the
-    /// enclosing steps', job's and project's `vars`.
-    #[serde(default, deserialize_with = "project::unique")]
-    pub vars: BTreeMap<String, String>,
     /// An HTTP request.
     pub http: Option<RequestSpec>,
     /// An HTTP request with its method as the key: folded into `http` when resolved.
@@ -77,7 +73,7 @@ pub struct Step {
     pub cases: Vec<Case>,
     #[serde(default, deserialize_with = "named")]
     pub default: Vec<Step>,
-    /// Makes this a `set` step: new values for job `states` and project `vars`.
+    /// Makes this a `set` step: new values for job `states`.
     pub set: Option<Set>,
 }
 
@@ -88,9 +84,6 @@ pub struct Set {
     /// Job `states` to set; each is saved to the state file.
     #[serde(default, deserialize_with = "project::unique")]
     pub states: BTreeMap<String, Value>,
-    /// Project `vars` to set, in memory only.
-    #[serde(default, deserialize_with = "project::unique")]
-    pub vars: BTreeMap<String, Value>,
 }
 
 /// One `cases` entry of a switch: steps to run when the variable equals its key.
@@ -203,8 +196,8 @@ impl<'de> Deserialize<'de> for Source {
 }
 
 impl Step {
-    /// Whether any key besides `vars` is set.
-    fn has_fields_besides_vars(&self) -> bool {
+    /// Whether any key is set.
+    fn has_fields(&self) -> bool {
         self.has_step_fields()
             || self.cwd.is_some()
             || self.stdin.is_some()
@@ -250,7 +243,6 @@ fn resolve_one(step: &mut Step, dir: &Path, stack: &mut Vec<PathBuf>) -> Result<
             var_name::RULE
         )));
     }
-    check_names(&name, "vars", step.vars.keys())?;
     resolve_method(step, &name)?;
     if let Some(path) = step.r#use.take() {
         return resolve_use(step, path, dir, stack);
@@ -367,14 +359,14 @@ fn resolve_use(
 }
 
 fn resolve_set(step: &mut Step, set: Set, name: &str) -> Result<(), Error> {
-    if set.states.is_empty() && set.vars.is_empty() {
+    if set.states.is_empty() {
         return Err(Error::InvalidStep(format!(
-            "`{name}`: `set` needs `states` or `vars`"
+            "`{name}`: `set` needs `states`"
         )));
     }
-    if step.has_fields_besides_vars() {
+    if step.has_fields() {
         return Err(Error::InvalidStep(format!(
-            "`{name}` is a `set` step and can only have `vars`"
+            "`{name}` is a `set` step and can't have other fields"
         )));
     }
     step.set = Some(set);
@@ -480,7 +472,7 @@ fn resolve_leaf(step: &Step, name: &str) -> Result<(), Error> {
     Ok(())
 }
 
-/// Checks that every name in the `field` (`vars` or `as`) of step `name` is a valid var name.
+/// Checks that every name in the `field` (`as`) of step `name` is a valid var name.
 fn check_names<'a>(
     name: &str,
     field: &str,
@@ -656,7 +648,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_invalid_loop_and_vars_names() {
+    fn rejects_invalid_loop_names() {
         for (yaml, field, var) in [
             (
                 "a:\n  for_each: X\n  as: states\n  do: {b: {cmd: [echo]}}\n",
@@ -673,8 +665,6 @@ mod tests {
                 "as",
                 "",
             ),
-            ("a:\n  cmd: [echo]\n  vars: {1A: x}\n", "vars", "1A"),
-            ("a:\n  cmd: [echo]\n  vars: {lower: x}\n", "vars", "lower"),
             (
                 "a:\n  for_each: X\n  as: item\n  do: {b: {cmd: [echo]}}\n",
                 "as",
@@ -896,37 +886,31 @@ mod tests {
     }
 
     #[test]
-    fn set_only_goes_with_vars() {
-        let steps =
-            resolve_here("s:\n  vars: {A: b}\n  set: {states: {N: '${A}'}, vars: {M: 1}}\n")
-                .unwrap();
+    fn set_goes_alone() {
+        let steps = resolve_here("s:\n  set: {states: {N: '${A}'}}\n").unwrap();
         let set = steps[0].set.as_ref().unwrap();
         assert_eq!(set.states["N"], Value::from("${A}"));
-        assert_eq!(set.vars["M"], Value::from(1));
         for yaml in [
             "s:\n  set: {states: {N: 1}}\n  cmd: [echo]\n",
             "s:\n  set: {states: {N: 1}}\n  allow_failure: true\n",
             "s:\n  set: {states: {N: 1}}\n  if: {this: X, eq: 1}\n  then: {a: {cmd: [echo]}}\n",
-            "s:\n  set: {vars: {N: 1}}\n  for_each: X\n  do: {a: {cmd: [echo]}}\n",
-            "s:\n  set: {vars: {N: 1}}\n  cwd: w\n",
-            "s:\n  set: {vars: {N: 1}}\n  env: {A: b}\n",
+            "s:\n  set: {states: {N: 1}}\n  for_each: X\n  do: {a: {cmd: [echo]}}\n",
+            "s:\n  set: {states: {N: 1}}\n  cwd: w\n",
+            "s:\n  set: {states: {N: 1}}\n  env: {A: b}\n",
         ] {
             let msg = invalid_step(yaml);
             assert!(
-                msg.contains("`s` is a `set` step and can only have `vars`"),
+                msg.contains("`s` is a `set` step and can't have other fields"),
                 "{yaml}: {msg}"
             );
         }
     }
 
     #[test]
-    fn set_needs_states_or_vars() {
+    fn set_needs_states() {
         for yaml in ["s:\n  set: {}\n", "s:\n  set: {states: {}}\n"] {
             let msg = invalid_step(yaml);
-            assert!(
-                msg.contains("`s`: `set` needs `states` or `vars`"),
-                "{yaml}: {msg}"
-            );
+            assert!(msg.contains("`s`: `set` needs `states`"), "{yaml}: {msg}");
         }
         assert!(parse_named("s:\n  set: {state: {N: 1}}\n").is_err());
         assert!(parse_named("s:\n  states_update: {N: 1}\n").is_err());

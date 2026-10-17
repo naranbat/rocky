@@ -32,11 +32,9 @@ pub enum Error {
         source: Box<dyn std::error::Error + Send + Sync>,
     },
     #[error(
-        "variable `{0}` is not defined (checked steps, states, loop items, vars, env_file, environment)"
+        "variable `{0}` is not defined (checked steps, states, loop items, env_file, environment)"
     )]
     UndefinedVar(String),
-    #[error("variable `{0}` refers to itself through its own value")]
-    CyclicVar(String),
     #[error("unclosed `${{` in `{0}`")]
     UnclosedVar(String),
     #[error("invalid HTTP method `{0}`")]

@@ -11,9 +11,8 @@ pub enum Kind {
 }
 
 const PROJECT: &str = "\
-# A project: named jobs that share `vars`.
+# A project: named jobs.
 #   rocky exec <this file> example
-vars: {}
 jobs:
   example:
     steps:
@@ -41,16 +40,12 @@ get: https://httpbin.org/get
 ";
 
 const FULL_PROJECT_HEADER: &str = "\
-# A project: named jobs that share `vars`. Every field is shown; delete what you don't need.
+# A project: named jobs. Every field is shown; delete what you don't need.
 #   rocky exec <this file> example   runs one job once
 #   rocky run <this file>            runs the jobs in `schedules` until stopped
 
-# Values for ${NAME} in every job. Strings: quote numbers (\"42\"). A `set` step can
-# change them at runtime; `run` keeps the new values for every job while it runs.
-vars:
-  USER: alice
-
-# A .env file for secrets, relative to this file. It is read when a run starts, so it must exist.
+# A .env file for values used as ${NAME} (secrets, settings), relative to this file. It is read
+# when a run starts, so it must exist. ${USER} below comes from it or from the environment.
 # env_file: .env
 
 # When `rocky run` runs each job; `exec` ignores this. Exactly one of `every` (30s, 5m,
@@ -69,12 +64,11 @@ jobs:
 
 const FULL_JOB_HEADER: &str = "\
 # A job in its own file, with every kind of step. Add it to a project's `jobs`:
-# `name: path/to/this.yaml`. ${USER} comes from the project's `vars` (or the environment), unless
-# this job or a step sets its own `vars`.
+# `name: path/to/this.yaml`. ${USER} comes from the project's env_file or the environment.
 ";
 
 const FULL_STEP_HEADER: &str = "\
-# Every field is shown; delete what you don't need. ${USER} comes from the project's `vars`.
+# Every field is shown; delete what you don't need. ${USER} comes from the env_file or the environment.
 ";
 
 const FULL_HTTP_STEP: &str = "\
@@ -90,7 +84,6 @@ post:                               # or get, put, patch, delete; others: `http:
     tags: [admin, beta]
   insecure: false                   # true skips TLS certificate checks
   follow_redirects: true            # false returns a 3xx response itself
-# vars: {USER: bob}                 # values for this step only, checked before the job's and project's
 timeout: 10                         # seconds (default 30)
 allow_failure: false                # true continues after a 4xx/5xx, a timeout or a network error
 ";
@@ -150,22 +143,6 @@ const FULL_CONTROL: &str = "
   # notify: steps/notify.yaml
 ";
 
-const FULL_SET_VARS: &str = "
-  # Update project vars: new values for names in the project's `vars`, seen by every job.
-  rename:
-    set:
-      vars:
-        USER: bob                       # was ${USER}
-";
-
-const FULL_SET_VARS_HINT: &str = "
-  # Update project vars; needs the project's `vars` to declare USER.
-  # rename:
-  #   set:
-  #     vars:
-  #       USER: bob                     # was ${USER}
-";
-
 /// How much a starter file shows.
 #[derive(Clone, Copy, clap::ValueEnum)]
 pub enum Level {
@@ -182,10 +159,7 @@ pub fn create(kind: Kind, level: Level, path: &Path) -> Result<String, Error> {
     let (text, hint) = match kind {
         Kind::Project => (
             if full {
-                format!(
-                    "{FULL_PROJECT_HEADER}{}",
-                    indent(&format!("{}{FULL_SET_VARS}", full_steps()), 4)
-                )
+                format!("{FULL_PROJECT_HEADER}{}", indent(&full_steps(), 4))
             } else {
                 PROJECT.to_string()
             },
@@ -195,7 +169,7 @@ pub fn create(kind: Kind, level: Level, path: &Path) -> Result<String, Error> {
             let name = path.file_stem().unwrap_or_default().to_string_lossy();
             (
                 if full {
-                    format!("{FULL_JOB_HEADER}{}{FULL_SET_VARS_HINT}", full_steps())
+                    format!("{FULL_JOB_HEADER}{}", full_steps())
                 } else {
                     JOB.to_string()
                 },
@@ -245,8 +219,7 @@ pub fn ask_http(mut input: impl BufRead, mut out: impl Write) -> Result<bool, Er
 /// A job's `steps` with one step of every kind, using every field.
 fn full_steps() -> String {
     format!(
-        "# vars: {{USER: bob}}                 # values for this job's steps, checked before the project's\n\
-         states:                             # kept between runs in states/<job>.json, read as ${{states.NAME}}\n  \
+        "states:                             # kept between runs in states/<job>.json, read as ${{states.NAME}}\n  \
          LAST_STATUS: none                 # the default, used until `set` changes it\n  \
          PREVIOUS_STATUS: none\n\
          steps:\n  \
@@ -305,12 +278,11 @@ mod tests {
         let mut project = project::load(&project_file).unwrap();
         let example = project.take("example").unwrap();
         if matches!(level, Level::Full) {
-            assert!(
-                example
-                    .steps
-                    .iter()
-                    .any(|a| a.set.as_ref().is_some_and(|s| s.vars.contains_key("USER")))
-            );
+            assert!(example.steps.iter().any(|a| {
+                a.set
+                    .as_ref()
+                    .is_some_and(|s| s.states.contains_key("LAST_STATUS"))
+            }));
         }
 
         create(Kind::Job, level, &dir.path().join("jobs/w.yaml")).unwrap();

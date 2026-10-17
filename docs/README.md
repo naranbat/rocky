@@ -21,7 +21,7 @@ One page per feature. For installing and a first run, see the [project README](.
 
 | Page | What it covers |
 |---|---|
-| [Variables](variables.md) | `${NAME}` substitution, typed values, dot paths, lookup order, and updating project `vars` at runtime with `set` |
+| [Variables](variables.md) | `${NAME}` substitution, typed values, dot paths, and lookup order |
 | [Env files](env-files.md) | Loading variables from `.env` files |
 | [State](state.md) | Keeping values between runs with a job's `states` and `set` |
 

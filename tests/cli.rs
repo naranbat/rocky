@@ -309,18 +309,17 @@ async fn job_prints_failing_step_result() {
 
 /// Run from another directory, so the env file must be found next to the project.
 #[test]
-fn cmd_output_branch_and_vars() {
+fn cmd_output_branch_and_env_file() {
     let dir = tempfile::tempdir().unwrap();
     let file = write(
         dir.path(),
         "project.yaml",
         "env_file: .env\n\
-         vars: {USER_NAME: alice}\n\
          jobs:\n  w:\n    steps:\n\
          \x20     count:\n        cmd: [echo, '{\"n\": 5}']\n\
          \x20     size:\n        if: {this: steps.count.stdout.n, gt: 3}\n        then: {big: {cmd: [echo, '${GREETING} ${USER_NAME} n=${steps.count.stdout.n}']}}\n        else: {small: {cmd: [echo, small]}}\n",
     );
-    write(dir.path(), ".env", "GREETING=hello\n");
+    write(dir.path(), ".env", "GREETING=hello\nUSER_NAME=alice\n");
     let other_cwd = tempfile::tempdir().unwrap();
 
     let out = exec_project(&file, other_cwd.path());
@@ -375,13 +374,12 @@ async fn job_steps_read_earlier_results_via_args_and_stdin() {
     let out = exec_yaml(
         dir.path(),
         &format!(
-            "vars:\n  BASE: {}\n\
-             jobs:\n  w:\n    steps:\n\
-             \x20     fetch:\n        http: {{method: GET, url: \"${{BASE}}/users\"}}\n\
+            "jobs:\n  w:\n    steps:\n\
+             \x20     fetch:\n        http: {{method: GET, url: \"{base}/users\"}}\n\
              \x20     count:\n        cmd: [wc, -c]\n        stdin: ${{steps.fetch.body.users}}\n\
-             \x20     report:\n        http:\n          method: POST\n          url: ${{BASE}}/report\n          headers:\n            Authorization: Bearer ${{steps.fetch.headers.x-token}}\n          json:\n            users: ${{steps.fetch.body}}\n            bytes: ${{steps.count.stdout}}\n            prev_status: ${{steps.fetch.status}}\n\
+             \x20     report:\n        http:\n          method: POST\n          url: {base}/report\n          headers:\n            Authorization: Bearer ${{steps.fetch.headers.x-token}}\n          json:\n            users: ${{steps.fetch.body}}\n            bytes: ${{steps.count.stdout}}\n            prev_status: ${{steps.fetch.status}}\n\
              \x20     check:\n        if: {{this: steps.report.status, eq: 201}}\n        then:\n          print:\n            cmd: [echo, 'reported ${{steps.count.stdout}}']\n",
-            server.uri()
+            base = server.uri()
         ),
     );
     assert_eq!(stdout_json(&out)["stdout"], "reported 13");
@@ -394,10 +392,9 @@ fn run_runs_at_job_once_and_exits() {
     let output = run_yaml(
         dir.path(),
         &format!(
-            "vars: {{WHO: hi}}\n\
-             schedules:\n  hello:\n    at: \"{at}\"\n\
+            "schedules:\n  hello:\n    at: \"{at}\"\n\
              jobs:\n\
-             \x20 hello:\n    steps:\n      greet:\n        cmd: [echo, '${{WHO}}']\n\
+             \x20 hello:\n    steps:\n      greet:\n        cmd: [echo, hi]\n\
              \x20 manual:\n    steps:\n      never:\n        cmd: [echo, never]\n"
         ),
     );

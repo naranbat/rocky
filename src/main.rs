@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 use nix::sys::signal::Signal;
-use rocky::{error, exec, new, process_group, project, project_vars, run};
+use rocky::{error, exec, new, process_group, project, run};
 use tokio::signal::unix::{SignalKind, signal};
 
 #[derive(Parser)]
@@ -26,7 +26,7 @@ enum Command {
     },
     /// Run a project's scheduled jobs.
     ///
-    /// Runs until stopped. Prints one JSON line per step, branch, switch, loop, state or vars update and run, also appended to `logs/<date>.log`.
+    /// Runs until stopped. Prints one JSON line per step, branch, switch, loop, state update and run, also appended to `logs/<date>.log`.
     Run { file: PathBuf },
     /// Check a project for errors without running it.
     ///
@@ -58,13 +58,7 @@ enum NewKind {
 async fn main() -> anyhow::Result<()> {
     match Cli::parse().command {
         Command::Exec { file, job } => {
-            let outcome = until_stopped(exec::exec(
-                project::load(&file)?,
-                &job,
-                false,
-                &project_vars::ProjectVars::default(),
-            ))
-            .await?;
+            let outcome = until_stopped(exec::exec(project::load(&file)?, &job, false)).await?;
             println!("{}", serde_json::to_string_pretty(&outcome.result)?);
             if let Some(step) = outcome.failed_step {
                 let reason = outcome

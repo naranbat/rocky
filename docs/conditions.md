@@ -23,7 +23,7 @@ steps:
     get: "${BASE}/done"
 ```
 
-Example: the `conditional` job in [`examples/httpbin.yaml`](../examples/httpbin.yaml). Run it as is for the `then` branch, or set `COUNT` to `"5"` in the project's `vars` for the `else` branch.
+Example: the `conditional` job in [`examples/httpbin.yaml`](../examples/httpbin.yaml). Run it as is for the `then` branch, or set `COUNT` to `5` in [`examples/httpbin.env`](../examples/httpbin.env) for the `else` branch.
 
 ## Branch fields
 
@@ -59,9 +59,9 @@ A condition is either `this` with **one or more** operators, or exactly one of `
 
 ## Variable lookup
 
-`this` is looked up in this order: loop variables, `steps.NAME...` and `states.NAME`; then the `vars` of the step and its enclosing steps, the job and the project; then the project `env_file`; then the environment. An undefined variable fails the step, except with `exists`.
+`this` is looked up in this order: loop variables, `steps.NAME...` and `states.NAME`; then the project `env_file`; then the environment. An undefined variable fails the step, except with `exists`.
 
-Values from `vars`, env files and the environment are strings (except a project var set by `set`), which is why numeric strings are accepted by the number operators.
+Values from env files and the environment are strings, which is why numeric strings are accepted by the number operators.
 
 ## Behaviour
 

@@ -33,7 +33,7 @@ A loop can't also have `http`, `cmd`, `timeout`, `allow_failure`, `if`, `then`, 
 ## The list
 
 - `for_each` is looked up like a [condition's `this`](conditions.md#variable-lookup).
-- The value must be a JSON array. Arrays come from `steps.NAME...`, `states.NAME`, an outer loop's element, or a project var set to a list by [`set`](variables.md#updating-vars-at-runtime). Other values from `vars`, env files and the environment are strings, so they can't be looped over.
+- The value must be a JSON array. Arrays come from `steps.NAME...`, `states.NAME`, or an outer loop's element. Values from env files and the environment are strings, so they can't be looped over.
 - A non-list value fails the step with ``for_each: `X` is not a list (…)``. An undefined variable fails it too.
 - An empty list runs nothing.
 

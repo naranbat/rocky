@@ -39,14 +39,14 @@ Example: the `mixed` job in [`examples/httpbin.yaml`](../examples/httpbin.yaml).
 |---|---|
 | `cmd` | A non-empty list: the program, then its arguments. A single string such as `cmd: "ls -la"` is rejected; write `[ls, -la]`. |
 
-The common step fields (`vars`, `allow_failure`) work as for HTTP steps. See [Projects](projects.md#step-fields).
+The common step field `allow_failure` works as for HTTP steps. See [Projects](projects.md#step-fields).
 
 ## Arguments and substitution
 
 - `${...}` is substituted inside each list item. A value always stays **one** argument, however many spaces or quotes it contains, so it can't inject extra arguments or shell syntax.
 - Strings are inserted as-is. Numbers, objects and arrays are inserted as compact JSON.
 - For pipes, redirects or globbing, call a shell yourself: `cmd: [sh, -c, "ls | wc -l"]`. Don't put `${...}` inside the `sh -c` script, because the shell would interpret the value. Pass it as a positional argument, as in the `slug` example above.
-- Variables are looked up in earlier results (loop variables, `steps` and `states`), then the `vars` of the step, its enclosing steps, the job and the project, then the project `env_file`, then the environment. See [Variables](variables.md#lookup-order).
+- Variables are looked up in earlier results (loop variables, `steps` and `states`), then the project `env_file`, then the environment. See [Variables](variables.md#lookup-order).
 
 ## `stdin`
 
@@ -111,6 +111,6 @@ load:
 ## Environment
 
 - Without `cwd`, commands run in **your current directory**, not the project file's directory.
-- They inherit the environment of `rocky`. Project `vars` and env files are **not** exported to them; list the ones a command needs under [`env`](#options), or pass them as arguments or `stdin`.
+- They inherit the environment of `rocky`. Env file values are **not** exported to them; list the ones a command needs under [`env`](#options), or pass them as arguments or `stdin`.
 - Without `timeout`, a command that never exits blocks the job until `rocky` is stopped (Ctrl-C, SIGTERM, SIGHUP or SIGQUIT), which kills it and everything it started.
 - A program that can't be found or started fails the step with ``failed to start command `x` ``, even with `allow_failure`.

@@ -10,14 +10,13 @@ use serde_json::Value;
 use crate::error::Error;
 use crate::schedule::Schedule;
 use crate::step::{self, Step};
-use crate::{project_vars, state, var_name};
+use crate::{state, var_name};
 
-/// Named jobs sharing `vars` and an `env_file`, described in a YAML file.
+/// Named jobs sharing an `env_file`, described in a YAML file.
 #[derive(Debug)]
 pub struct Project {
     /// The project file's directory; job state files go in its `states/`.
     pub dir: PathBuf,
-    pub vars: BTreeMap<String, String>,
     pub env_file: Option<PathBuf>,
     /// Job name to when `rocky run` runs it.
     pub schedules: BTreeMap<String, Schedule>,
@@ -28,8 +27,6 @@ pub struct Project {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawProject {
-    #[serde(default, deserialize_with = "unique")]
-    vars: BTreeMap<String, String>,
     env_file: Option<PathBuf>,
     #[serde(default, deserialize_with = "unique")]
     schedules: BTreeMap<String, Schedule>,
@@ -104,9 +101,6 @@ impl<'de> Deserialize<'de> for JobSource {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Job {
-    /// Values for `${NAME}` in this job's steps, checked before the project's `vars`.
-    #[serde(default, deserialize_with = "unique")]
-    pub vars: BTreeMap<String, String>,
     /// State names to their defaults, kept across runs in `states/<job>.json`.
     #[serde(default, deserialize_with = "unique")]
     pub states: BTreeMap<String, Value>,
@@ -136,12 +130,6 @@ pub fn load(path: &Path) -> Result<Project, Error> {
     if raw.jobs.is_empty() {
         return Err(Error::InvalidProject("project has no jobs".to_string()));
     }
-    check_names(
-        "vars",
-        raw.vars.keys(),
-        var_name::is_valid_var,
-        var_name::VAR_RULE,
-    )?;
     if let Some(name) = raw
         .schedules
         .keys()
@@ -154,7 +142,7 @@ pub fn load(path: &Path) -> Result<Project, Error> {
     let dir = path.parent().unwrap_or(Path::new(""));
     let mut jobs = BTreeMap::new();
     for (name, source) in raw.jobs {
-        let job = load_job(source, dir, &raw.vars).map_err(|source| Error::Job {
+        let job = load_job(source, dir).map_err(|source| Error::Job {
             name: name.clone(),
             source: Box::new(source),
         })?;
@@ -162,7 +150,6 @@ pub fn load(path: &Path) -> Result<Project, Error> {
     }
     Ok(Project {
         dir: dir.to_path_buf(),
-        vars: raw.vars,
         env_file: raw.env_file.map(|p| dir.join(p)),
         schedules: raw.schedules,
         jobs,
@@ -170,7 +157,7 @@ pub fn load(path: &Path) -> Result<Project, Error> {
 }
 
 /// Reads a job file if `source` is a path, then validates its steps.
-fn load_job(source: JobSource, dir: &Path, vars: &BTreeMap<String, String>) -> Result<Job, Error> {
+fn load_job(source: JobSource, dir: &Path) -> Result<Job, Error> {
     let (mut job, dir) = match source {
         JobSource::Path(path) => {
             let path = dir.join(path);
@@ -183,12 +170,6 @@ fn load_job(source: JobSource, dir: &Path, vars: &BTreeMap<String, String>) -> R
         return Err(Error::InvalidProject("job has no steps".to_string()));
     }
     check_names(
-        "vars",
-        job.vars.keys(),
-        var_name::is_valid_var,
-        var_name::VAR_RULE,
-    )?;
-    check_names(
         "states",
         job.states.keys(),
         var_name::is_valid,
@@ -196,7 +177,6 @@ fn load_job(source: JobSource, dir: &Path, vars: &BTreeMap<String, String>) -> R
     )?;
     step::resolve(&mut job.steps, &dir)?;
     state::check(&job.steps, &job.states)?;
-    project_vars::check(&job.steps, vars)?;
     Ok(job)
 }
 
@@ -257,14 +237,12 @@ mod tests {
         let mut project = load_in(
             dir.path(),
             "env_file: .env\n\
-             vars: {BASE: https://x}\n\
              schedules: {a: {every: 5m}}\n\
              jobs:\n\
              \x20 a:\n    steps:\n      e:\n        cmd: [echo]\n        cwd: work\n\
              \x20 b:\n    steps: {e: {cmd: [echo]}}\n",
         )
         .unwrap();
-        assert_eq!(project.vars["BASE"], "https://x");
         assert_eq!(project.env_file, Some(dir.path().join(".env")));
         let a = project.take("a").unwrap();
         assert!(project.schedules.contains_key("a"));
@@ -358,53 +336,17 @@ mod tests {
     }
 
     #[test]
-    fn checks_vars_names() {
+    fn rejects_vars() {
         let dir = tempfile::tempdir().unwrap();
-        let err = load_in(
-            dir.path(),
-            "vars: {steps: x}\njobs:\n  w: {steps: {e: {cmd: [echo]}}}\n",
-        )
-        .unwrap_err();
-        assert!(
-            matches!(&err, Error::InvalidProject(msg) if msg == &format!("`vars` name `steps` {}", var_name::VAR_RULE)),
-            "{err}"
-        );
-        for (yaml, bad) in [
-            (
-                "jobs:\n  w: {vars: {a-b: x}, steps: {e: {cmd: [echo]}}}\n",
-                "`a-b`",
-            ),
-            (
-                "jobs:\n  w: {steps: {e: {vars: {a.b: x}, cmd: [echo]}}}\n",
-                "`a.b`",
-            ),
-        ] {
-            let err = load_in(dir.path(), yaml).unwrap_err();
-            assert!(
-                matches!(&err, Error::Job { name, source } if name == "w" && source.to_string().contains(bad)),
-                "{yaml}: {err}"
-            );
-        }
-    }
-
-    #[test]
-    fn checks_set_vars_names() {
-        let dir = tempfile::tempdir().unwrap();
-        load_in(
-            dir.path(),
-            "vars: {N: '0'}\njobs:\n  w: {steps: {s: {set: {vars: {N: 1}}}}}\n",
-        )
-        .unwrap();
         for yaml in [
-            "vars: {N: '0'}\njobs:\n  w: {steps: {s: {set: {vars: {M: 1}}}}}\n",
-            // Only the project's `vars` can be updated, not a job's.
-            "jobs:\n  w:\n    vars: {M: '0'}\n    steps: {s: {set: {vars: {M: 1}}}}\n",
+            "vars: {A: x}\njobs:\n  w: {steps: {e: {cmd: [echo]}}}\n",
+            "jobs:\n  w: {vars: {A: x}, steps: {e: {cmd: [echo]}}}\n",
+            "jobs:\n  w: {steps: {e: {vars: {A: x}, cmd: [echo]}}}\n",
+            "jobs:\n  w: {states: {N: 0}, steps: {s: {set: {states: {N: 1}, vars: {A: 1}}}}}\n",
         ] {
             let err = load_in(dir.path(), yaml).unwrap_err();
-            assert!(
-                matches!(&err, Error::Job { name, source } if name == "w" && source.to_string().contains("`M`")),
-                "{yaml}: {err}"
-            );
+            let cause = std::error::Error::source(&err).unwrap().to_string();
+            assert!(cause.contains("unknown field `vars`"), "{yaml}: {cause}");
         }
     }
 
@@ -418,31 +360,13 @@ mod tests {
                 "jobs: duplicate key `w`",
             ),
             (
-                format!("vars: {{A: x, A: y}}\njobs: {{{w}}}\n"),
-                "vars: duplicate key `A`",
-            ),
-            (
                 format!("schedules: {{w: {{every: 1s}}, w: {{every: 2s}}}}\njobs: {{{w}}}\n"),
                 "schedules: duplicate key `w`",
-            ),
-            (
-                "jobs:\n  w: {vars: {A: x, A: y}, steps: {e: {cmd: [echo]}}}\n"
-                    .to_string(),
-                "jobs.w.vars: duplicate key `A`",
-            ),
-            (
-                "jobs:\n  w: {steps: {e: {vars: {A: x, A: y}, cmd: [echo]}}}\n"
-                    .to_string(),
-                "jobs.w.steps.e.vars: duplicate key `A`",
             ),
             (
                 "jobs:\n  w: {states: {N: 0, N: 1}, steps: {e: {cmd: [echo]}}}\n"
                     .to_string(),
                 "jobs.w.states: duplicate key `N`",
-            ),
-            (
-                "jobs:\n  w: {steps: {s: {set: {vars: {A: 1, A: 2}}}}}\n".to_string(),
-                "jobs.w.steps.s.set.vars: duplicate key `A`",
             ),
             (
                 "jobs:\n  w: {steps: {s: {set: {states: {A: 1, A: 2}}}}}\n".to_string(),

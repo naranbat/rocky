@@ -20,7 +20,7 @@ $ rocky run project.yaml | jq -c '{event, step, arm, ok}'
 | `branch` | a branch chose `then` or `else` |
 | `switch` | a switch chose a case or `default` |
 | `for_each` | a loop started |
-| `set` | a `set` step set state or project vars; logged just before the state file is written |
+| `set` | a `set` step set state; logged just before the state file is written |
 | `done` | the run finished; `failed_step` names the step that stopped it and `reason` says why, or both are `null` |
 | `error` | the run stopped with an error |
 | `stopped` | a job's schedule stopped; `error` says why |
