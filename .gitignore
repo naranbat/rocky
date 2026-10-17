@@ -1,0 +1,29 @@
+# ---------- Rust / Cargo ----------
+# Build output
+/target/
+# In a workspace, ignore nested target dirs too
+**/target/
+
+# ---------- Environment / Secrets ----------
+.env
+.env.*
+!.env.example
+
+# ---------- IDEs / Editors ----------
+.idea/
+*.iml
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+!.vscode/launch.json
+*.swp
+*.swo
+*~
+.fleet/
+.zed/
+.claude/
+
+# ---------- OS files ----------
+.DS_Store
+Thumbs.db
+desktop.ini
