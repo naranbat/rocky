@@ -1256,6 +1256,33 @@ fn validate_accepts_an_at_schedule_in_the_past() {
 }
 
 #[test]
+fn run_does_not_log_a_set_whose_states_could_not_be_saved() {
+    let dir = tempfile::tempdir().unwrap();
+    let at = at_in(300);
+    let project = write(
+        dir.path(),
+        "project.yaml",
+        &format!(
+            "schedules:\n  w: {{at: \"{at}\"}}\n\
+             jobs:\n  w:\n    states: {{N: 0}}\n    steps:\n\
+             \x20     lock:\n        cmd: [chmod, '555', states]\n        cwd: .\n\
+             \x20     save:\n        set: {{states: {{N: 1}}}}\n"
+        ),
+    );
+
+    let output = run(&project, dir.path());
+    // Writable again, so the temp dir can be removed.
+    let writable = std::os::unix::fs::PermissionsExt::from_mode(0o755);
+    std::fs::set_permissions(dir.path().join("states"), writable).unwrap();
+    let events: Vec<_> = stdout_lines(&output)
+        .iter()
+        .map(|line| line["event"].clone())
+        .collect();
+    assert!(events.contains(&json!("error")), "{events:?}");
+    assert!(!events.contains(&json!("set")), "{events:?}");
+}
+
+#[test]
 fn run_skips_an_at_schedule_in_the_past_and_runs_the_others() {
     let dir = tempfile::tempdir().unwrap();
     let at = at_in(300);

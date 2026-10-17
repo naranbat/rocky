@@ -27,8 +27,9 @@ pub struct Group {
     finished: bool,
 }
 
-/// Starts `command` and tracks the group it leads. Holds the same lock as [`kill_running`],
-/// so a stop can't miss a command that's starting; once stopping, nothing new starts.
+/// Starts `command` and tracks the group it leads. Holds the same lock as [`kill_running`]
+/// across the spawn, so a stop can't exit while a command is starting but not yet tracked;
+/// once stopping, nothing new starts.
 pub fn spawn(command: &mut Command) -> io::Result<(Child, Group)> {
     let mut running = running();
     if running.stopping {
@@ -56,7 +57,9 @@ impl Group {
 
 impl Drop for Group {
     fn drop(&mut self) {
-        running().groups.remove(&self.id);
+        // Killed before the lock is released, so `kill_running` can't miss the group.
+        let mut running = running();
+        running.groups.remove(&self.id);
         if !self.finished {
             kill(self.id);
         }

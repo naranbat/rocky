@@ -49,7 +49,9 @@ pub async fn run(path: &Path) -> Result<(), Error> {
         let path = path.to_path_buf();
         let project_vars = project_vars.clone();
         let job = name.clone();
-        let task = jobs.spawn(async move { run_job(&path, &job, schedule, &project_vars).await });
+        let started = now.clone();
+        let task =
+            jobs.spawn(async move { run_job(&path, &job, schedule, started, &project_vars).await });
         names.insert(task.id(), name);
     }
     while let Some(joined) = jobs.join_next_with_id().await {
@@ -68,6 +70,7 @@ async fn run_job(
     path: &Path,
     name: &str,
     schedule: Schedule,
+    started: Zoned,
     project_vars: &ProjectVars,
 ) -> Result<(), Error> {
     match &schedule {
@@ -84,7 +87,8 @@ async fn run_job(
             clock,
             run_on_start,
         } => {
-            let started = Zoned::now();
+            // `started` is the time the past-`at` check used, so an `at` it let through isn't
+            // lost if that time passes before this task starts.
             if *run_on_start {
                 run_once(path, name, project_vars).await;
             }

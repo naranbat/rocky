@@ -20,31 +20,30 @@ struct Vars {
 }
 
 impl ProjectVars {
-    pub fn snapshot(&self) -> Map<String, Value> {
-        self.lock().values.clone()
+    /// The current version and values.
+    pub fn snapshot(&self) -> (u64, Map<String, Value>) {
+        let vars = self.lock();
+        (vars.version, vars.values.clone())
     }
 
-    pub fn version(&self) -> u64 {
-        self.lock().version
+    /// Like [`ProjectVars::snapshot`], but `None` while the version is still `version`.
+    pub fn changed_since(&self, version: u64) -> Option<(u64, Map<String, Value>)> {
+        let vars = self.lock();
+        (vars.version != version).then(|| (vars.version, vars.values.clone()))
     }
 
-    #[cfg(test)]
-    pub fn update(&self, set: Map<String, Value>) {
-        let mut vars = self.lock();
-        vars.values.extend(set);
-        vars.version += 1;
-    }
-
-    /// Calls `f` with the current values and applies the updates it returns, holding the
-    /// lock throughout, so concurrent runs can't lose each other's updates.
+    /// Calls `f` with the current version and values and applies the updates it returns,
+    /// holding the lock throughout, so concurrent runs can't lose each other's updates.
     pub fn update_with<T>(
         &self,
-        f: impl FnOnce(&Map<String, Value>) -> Result<(T, Map<String, Value>), Error>,
+        f: impl FnOnce(u64, &Map<String, Value>) -> Result<(T, Map<String, Value>), Error>,
     ) -> Result<T, Error> {
         let mut vars = self.lock();
-        let (result, set) = f(&vars.values)?;
-        vars.values.extend(set);
-        vars.version += 1;
+        let (result, set) = f(vars.version, &vars.values)?;
+        if !set.is_empty() {
+            vars.values.extend(set);
+            vars.version += 1;
+        }
         Ok(result)
     }
 
@@ -74,13 +73,18 @@ mod tests {
     #[test]
     fn update_overwrites_and_keeps_other_names() {
         let vars = ProjectVars::default();
-        vars.update(Map::from_iter([
+        let update = |set: Map<String, Value>| vars.update_with(|_, _| Ok(((), set))).unwrap();
+        update(Map::from_iter([
             ("A".to_string(), json!(1)),
             ("B".to_string(), json!("b")),
         ]));
-        vars.update(Map::from_iter([("A".to_string(), json!([2]))]));
-        assert_eq!(Value::Object(vars.snapshot()), json!({"A": [2], "B": "b"}));
-        assert_eq!(vars.version(), 2);
+        update(Map::from_iter([("A".to_string(), json!([2]))]));
+        update(Map::new());
+        let (version, values) = vars.snapshot();
+        assert_eq!(Value::Object(values), json!({"A": [2], "B": "b"}));
+        assert_eq!(version, 2);
+        assert!(vars.changed_since(2).is_none());
+        assert_eq!(vars.changed_since(1).map(|(version, _)| version), Some(2));
     }
 
     #[test]

@@ -103,8 +103,8 @@ pub async fn exec(
         None => BTreeMap::new(),
     };
     // Also checks every project var expands before any step runs.
-    let mut outer_version = project_vars.version();
-    let mut outer = outer_vars(&project.vars, &project_vars.snapshot(), &env)?;
+    let (mut outer_version, updated) = project_vars.snapshot();
+    let mut outer = outer_vars(&project.vars, &updated, &env)?;
 
     let mut values = Map::new();
     let state_path = project.dir.join("states").join(format!("{job}.json"));
@@ -136,11 +136,9 @@ pub async fn exec(
                 continue;
             }
         };
-        // Other jobs may have updated project `vars` since the last step. The version is read
-        // first, so an update in between only causes one more rebuild.
-        let version = project_vars.version();
-        if version != outer_version {
-            outer = outer_vars(&project.vars, &project_vars.snapshot(), &env)?;
+        // Other jobs may have updated project `vars` since the last step.
+        if let Some((version, updated)) = project_vars.changed_since(outer_version) {
+            outer = outer_vars(&project.vars, &updated, &env)?;
             outer_version = version;
         }
         scope.extend(std::mem::take(&mut step.vars));
@@ -152,13 +150,19 @@ pub async fn exec(
         if let Some(set) = step.set.take() {
             // Worked out from the current project `vars` and applied under one lock, so a
             // concurrent `set` of the same var isn't lost.
-            let (states, set_vars) = project_vars.update_with(|current| {
-                let outer = outer_vars(&project.vars, current, &env)?;
+            let (states, set_vars) = project_vars.update_with(|version, current| {
+                let rebuilt;
+                let outer = if version == outer_version {
+                    &outer
+                } else {
+                    rebuilt = outer_vars(&project.vars, current, &env)?;
+                    &rebuilt
+                };
                 let substitute = |updates: BTreeMap<String, Value>| {
                     let mut set = Map::new();
                     for (var, mut value) in updates {
                         vars::substitute_value(&mut value, &|var| {
-                            lookup(var, &values, &scope, &outer)
+                            lookup(var, &values, &scope, outer)
                         })
                         .map_err(to_step_error)?;
                         set.insert(var, value);
@@ -168,16 +172,17 @@ pub async fn exec(
                 let (states, set_vars) = (substitute(set.states)?, substitute(set.vars)?);
                 Ok(((states, set_vars.clone()), set_vars))
             })?;
-            if log {
-                progress::emit(job, progress::set(&name, &states, &set_vars)).await;
-            }
             if !states.is_empty() {
-                state.extend(states);
+                state.extend(states.clone());
                 let (path, saved) = (state_path.clone(), state.clone());
                 tokio::task::spawn_blocking(move || state::save(&path, &saved))
                     .await?
                     .map_err(to_step_error)?;
                 values.insert("states".to_string(), Value::Object(state.clone()));
+            }
+            // Logged once the states are saved, so a failed save isn't logged as set.
+            if log {
+                progress::emit(job, progress::set(&name, &states, &set_vars)).await;
             }
             continue;
         }
@@ -274,8 +279,11 @@ async fn run_step(
 ) -> Result<StepResult, Error> {
     let request = step.http.take();
     let result = match perform(&step, request, values, scope, outer, clients).await {
-        Err(err @ (Error::Timeout(_) | Error::Http(_) | Error::CommandTimeout { .. }))
-            if step.allow_failure =>
+        // A request that couldn't be built (a bad URL or header) is a mistake in the step,
+        // not a network error.
+        Err(err @ (Error::Timeout(_) | Error::CommandTimeout { .. }))
+        | Err(err @ Error::Http(_))
+            if step.allow_failure && !matches!(&err, Error::Http(e) if e.is_builder()) =>
         {
             StepResult::Errored { error: err.chain() }
         }
@@ -394,10 +402,18 @@ fn outer_vars(
         .iter()
         .map(|(name, value)| (name.clone(), Value::String(value.clone())))
         .collect();
+    let done = RefCell::new(BTreeMap::new());
     for name in declared.keys() {
         let value = match updated.get(name) {
             Some(value) => value.clone(),
-            None => Value::String(expand_project_var(name, declared, updated, env, &[])?),
+            None => Value::String(expand_project_var(
+                name,
+                declared,
+                updated,
+                env,
+                &[],
+                &done,
+            )?),
         };
         outer.insert(name.clone(), value);
     }
@@ -407,14 +423,18 @@ fn outer_vars(
 /// The project var `name` with `${NAME}` in its value expanded from the other project vars
 /// (their `updated` value if `set` has changed them), then `env` (the env_file), then the
 /// process environment. `seen` holds the project vars being expanded, to catch a value that
-/// refers back to itself.
+/// refers back to itself; `done` the ones already expanded, so each is expanded once.
 fn expand_project_var(
     name: &str,
     declared: &BTreeMap<String, String>,
     updated: &Map<String, Value>,
     env: &BTreeMap<String, String>,
     seen: &[&str],
+    done: &RefCell<BTreeMap<String, String>>,
 ) -> Result<String, Error> {
+    if let Some(value) = done.borrow().get(name) {
+        return Ok(value.clone());
+    }
     if seen.contains(&name) {
         return Err(Error::CyclicVar(name.to_string()));
     }
@@ -432,7 +452,7 @@ fn expand_project_var(
         if let Some(value) = updated.get(var) {
             return Some(value.clone());
         }
-        match expand_project_var(var, declared, updated, env, &seen) {
+        match expand_project_var(var, declared, updated, env, &seen, done) {
             Ok(value) => Some(Value::String(value)),
             Err(err) => {
                 nested.replace(Some(err));
@@ -441,10 +461,12 @@ fn expand_project_var(
         }
     };
     let expanded = vars::substitute(text, &find);
-    match nested.into_inner() {
-        Some(err) => Err(err),
-        None => expanded,
-    }
+    let value = match nested.into_inner() {
+        Some(err) => return Err(err),
+        None => expanded?,
+    };
+    done.borrow_mut().insert(name.to_string(), value.clone());
+    Ok(value)
 }
 
 #[cfg(test)]
@@ -1095,6 +1117,34 @@ mod tests {
         assert_eq!(stdout(&outcome), &json!("prefix-new new"));
     }
 
+    /// Each var uses the one before twice, so expanding without reuse takes 2^30 lookups.
+    #[tokio::test]
+    async fn project_vars_used_many_times_are_expanded_once() {
+        let mut vars = vec![("V0".to_string(), String::new())];
+        for i in 1..=30 {
+            vars.push((format!("V{i}"), format!("${{V{0}}}${{V{0}}}", i - 1)));
+        }
+        let vars: Vec<(&str, &str)> = vars.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect();
+        let project = project_with_vars("steps:\n  e:\n    cmd: [echo, 'x${V30}x']\n", &vars);
+        let outcome = exec(project, false).await.unwrap();
+        assert_eq!(stdout(&outcome), &json!("xx"));
+    }
+
+    #[tokio::test]
+    async fn allow_failure_does_not_hide_an_invalid_url() {
+        let err = exec(
+            project("steps:\n  bad:\n    get: 'not a url'\n    allow_failure: true\n"),
+            false,
+        )
+        .await
+        .err()
+        .unwrap();
+        assert!(
+            matches!(err, Error::Step { ref source, .. } if matches!(**source, Error::Http(_))),
+            "{err}"
+        );
+    }
+
     #[tokio::test]
     async fn set_vars_is_seen_by_later_steps_and_keeps_its_type() {
         let yaml = "steps:\n\
@@ -1108,7 +1158,7 @@ mod tests {
             .unwrap();
         assert_eq!(stdout(&outcome), &json!("n=0 2 2"));
         assert_eq!(
-            Value::Object(project_vars.snapshot()),
+            Value::Object(project_vars.snapshot().1),
             json!({"L": [1, 2], "N": "n=0"})
         );
     }
@@ -1158,14 +1208,16 @@ mod tests {
         let (a, b) = tokio::join!(spawn(project("a")), spawn(project("b")));
         a.unwrap().unwrap();
         b.unwrap().unwrap();
-        let n = project_vars.snapshot()["N"].as_str().unwrap().len();
+        let n = project_vars.snapshot().1["N"].as_str().unwrap().len();
         assert_eq!(n, 400);
     }
 
     #[tokio::test]
     async fn project_vars_expand_from_updated_vars() {
         let project_vars = ProjectVars::default();
-        project_vars.update(Map::from_iter([("HOST".to_string(), json!("new"))]));
+        project_vars
+            .update_with(|_, _| Ok(((), Map::from_iter([("HOST".to_string(), json!("new"))]))))
+            .unwrap();
         let project = project_with_vars(
             "steps:\n  e:\n    cmd: [echo, '${URL}']\n",
             &[("HOST", "orig"), ("URL", "${HOST}/x")],
