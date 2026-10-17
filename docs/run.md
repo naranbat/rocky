@@ -13,12 +13,12 @@ schedules:
     at: "2027-10-10T09:30:00"        # once
 jobs:
   poll:
-    steps:
+    tasks:
       get:
         get: "https://httpbin.org/get"
 
   morning-report:
-    steps:
+    tasks:
       greet:
         cmd: [echo, "${USER}"]
 
@@ -43,40 +43,40 @@ The job name labels its log lines and errors.
 
 The whole project is loaded and checked before anything runs. Any error stops `run`:
 
-- an invalid project, job, step or schedule (see [Validation](projects.md#validation))
+- an invalid project, job, task or schedule (see [Validation](projects.md#validation))
 - no `schedules`: ``invalid project: project has no `schedules` ``
 
 ## Output
 
-Every log line is one JSON object on **stdout**, with `job`, `time` (local time with offset) and `event` fields. The same lines are appended to `logs/YYYY-MM-DD.log` in the current directory, one file per day by each line's date; the `logs` directory is created if missing, and a failed write is reported on stderr without stopping `run`. If stdout is closed (`run | head`), `run` keeps running and logging to the file. Each run writes a line per step, branch or switch decision, loop and `set` as it goes, then a `done` line:
+Every log line is one JSON object on **stdout**, with `job`, `time` (local time with offset) and `event` fields. The same lines are appended to `logs/YYYY-MM-DD.log` in the current directory, one file per day by each line's date; the `logs` directory is created if missing, and a failed write is reported on stderr without stopping `run`. If stdout is closed (`run | head`), `run` keeps running and logging to the file. Each run writes a line per task, branch or switch decision, loop and `set` as it goes, then a `done` line:
 
 ```json
-{"job":"poll","time":"2026-10-09T09:30:00+09:00","event":"step","step":"get","status":200,"ms":412,"ok":true}
-{"job":"poll","time":"2026-10-09T09:30:00+09:00","event":"done","failed_step":null,"reason":null}
+{"job":"poll","time":"2026-10-09T09:30:00+09:00","event":"task","task":"get","status":200,"ms":412,"ok":true}
+{"job":"poll","time":"2026-10-09T09:30:00+09:00","event":"done","failed_task":null,"reason":null}
 ```
 
 | `event` | Other fields |
 |---|---|
-| `step` | `step` (the step's key), then `status` (HTTP), `exit_code` (cmd) or `error` (a timeout or network error with `allow_failure`), `ms`, `ok`, and `allowed: true` when it failed with `allow_failure` |
-| `branch` | `step`, `arm` (`then` or `else`), `steps` (how many entries the chosen arm has; nested steps and loop iterations aren't counted) |
-| `switch` | `step`, `case` (the matching case's number, from 1, or `"default"`), `steps` (how many entries the chosen case has) |
-| `for_each` | `step`, `var`, `items` (the list length) |
-| `set` | `step`, `states` (the names it set; values are left out) |
-| `done` | `failed_step`: the step that failed without `allow_failure`, or `null`; `reason`: why it failed (`returned HTTP 500`, `exited with code 3`), or `null` |
+| `task` | `task` (the task's key), then `status` (HTTP), `exit_code` (cmd) or `error` (a timeout or network error with `allow_failure`), `ms`, `ok`, and `allowed: true` when it failed with `allow_failure` |
+| `branch` | `task`, `arm` (`then` or `else`), `tasks` (how many entries the chosen arm has; nested tasks and loop iterations aren't counted) |
+| `switch` | `task`, `case` (the matching case's number, from 1, or `"default"`), `tasks` (how many entries the chosen case has) |
+| `for_each` | `task`, `var`, `items` (the list length) |
+| `set` | `task`, `states` (the names it set; values are left out) |
+| `done` | `failed_task`: the task that failed without `allow_failure`, or `null`; `reason`: why it failed (`returned HTTP 500`, `exited with code 3`), or `null` |
 | `error` | `error`: why the run stopped, e.g. an undefined variable, a project that became invalid, or a crash |
 | `stopped` | `error`: why the job's schedule stopped |
 | `skipped` | `reason`: why the job won't run, e.g. its `at` time has passed |
 
 ```json
-{"job":"poll","time":"2026-10-09T09:30:00+09:00","event":"error","error":"step `get` failed: variable `TOKEN` is not defined (checked steps, states, loop items, values, env_file, environment)"}
+{"job":"poll","time":"2026-10-09T09:30:00+09:00","event":"error","error":"task `get` failed: variable `TOKEN` is not defined (checked tasks, states, loop items, values, env_file, environment)"}
 ```
 
-A step that ends in an error gets no `step` line; the `error` line names it. See also [Debugging](debugging.md#run-log-lines).
+A task that ends in an error gets no `task` line; the `error` line names it. See also [Debugging](debugging.md#run-log-lines).
 
 ## Behaviour
 
 - **Independent jobs:** each job runs on its own schedule, concurrently with the others.
 - **No overlap:** a job never overlaps itself. If a run takes longer than its interval, the missed runs are skipped.
-- **Live edits:** the project and its job and step files are re-read on every run, so edits to steps and the env file apply from the next run. Schedules are read only at startup.
+- **Live edits:** the project and its job and task files are re-read on every run, so edits to tasks and the env file apply from the next run. Schedules are read only at startup.
 - **Failures don't stop the job:** after a run that failed, errored or crashed, the job keeps its schedule and the other jobs are unaffected. If a job's schedule itself can't be computed, that job stops with a `stopped` line, and the other jobs keep running.
 - **Exit:** `run` exits once no job has runs left: every scheduled job is an `at` job that has already run or was skipped, or has stopped after a `stopped` error.

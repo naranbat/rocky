@@ -4,7 +4,7 @@ use std::fmt;
 use serde::de::{self, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer};
 
-/// An HTTP request: an `http` step's fields.
+/// An HTTP request: an `http` task's fields.
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct RequestSpec {
@@ -45,7 +45,7 @@ impl RequestSpec {
     }
 }
 
-/// A `get`, `post`, `put`, `patch` or `delete` step's value: the URL, or the `http` fields
+/// A `get`, `post`, `put`, `patch` or `delete` task's value: the URL, or the `http` fields
 /// (its method comes from the key).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Shorthand(pub RequestSpec);

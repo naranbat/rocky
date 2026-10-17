@@ -11,14 +11,14 @@ use crate::error::Error;
 use crate::request::{RequestSpec, Shorthand};
 use crate::{project, var_name};
 
-/// One entry of a job's `steps`: an HTTP or cmd step, a branch, or a loop.
+/// One entry of a job's `tasks`: an HTTP or cmd task, a branch, or a loop.
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Step {
-    /// Its key in the enclosing `steps`, `then`, `else`, `do` or `default` map.
+pub struct Task {
+    /// Its key in the enclosing `tasks`, `then`, `else`, `do` or `default` map.
     #[serde(skip)]
     pub name: String,
-    /// A step YAML file, relative to the file that declares this step, used in its place:
+    /// A task YAML file, relative to the file that declares this task, used in its place:
     /// the entry's value when it is a string.
     #[serde(skip)]
     pub r#use: Option<PathBuf>,
@@ -32,13 +32,13 @@ pub struct Step {
     pub delete: Option<Shorthand>,
     /// Program and arguments, run directly without a shell; `${VAR}` is substituted per element.
     pub cmd: Option<Vec<String>>,
-    /// Seconds before the step is stopped and fails: a `cmd` command is killed, an `http`
+    /// Seconds before the task is stopped and fails: a `cmd` command is killed, an `http`
     /// request (default 30) is abandoned.
     pub timeout: Option<u64>,
-    /// Directory a `cmd` step runs in, relative to the file that declares this step;
+    /// Directory a `cmd` task runs in, relative to the file that declares this task;
     /// default: the current directory. `${VAR}` is substituted.
     pub cwd: Option<PathBuf>,
-    /// Directory of the file that declares this step; `cwd` is relative to it.
+    /// Directory of the file that declares this task; `cwd` is relative to it.
     #[serde(skip)]
     pub dir: PathBuf,
     /// A `cmd` command's standard input: a string as-is, anything else as JSON.
@@ -57,27 +57,27 @@ pub struct Step {
     #[serde(rename = "if")]
     pub condition: Option<Condition>,
     #[serde(default, deserialize_with = "named")]
-    pub then: Vec<Step>,
+    pub then: Vec<Task>,
     #[serde(default, rename = "else", deserialize_with = "named")]
-    pub otherwise: Vec<Step>,
+    pub otherwise: Vec<Task>,
     /// Makes this a loop: runs `do` once per element of this list variable.
     pub for_each: Option<String>,
     /// The variable each element is bound to inside `do` (default `ITEM`).
     #[serde(rename = "as")]
     pub item_var: Option<String>,
     #[serde(default, rename = "do", deserialize_with = "named")]
-    pub body: Vec<Step>,
+    pub body: Vec<Task>,
     /// Makes this a switch: runs the first case whose key equals this variable, else `default`.
     pub switch: Option<String>,
     #[serde(default, deserialize_with = "cases")]
     pub cases: Vec<Case>,
     #[serde(default, deserialize_with = "named")]
-    pub default: Vec<Step>,
-    /// Makes this a `set` step: new values for job `states`.
+    pub default: Vec<Task>,
+    /// Makes this a `set` task: new values for job `states`.
     pub set: Option<Set>,
 }
 
-/// A `set` step's body: name to new value; `${VAR}` is substituted.
+/// A `set` task's body: name to new value; `${VAR}` is substituted.
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Set {
@@ -86,19 +86,19 @@ pub struct Set {
     pub states: BTreeMap<String, Value>,
 }
 
-/// One `cases` entry of a switch: steps to run when the variable equals its key.
+/// One `cases` entry of a switch: tasks to run when the variable equals its key.
 #[derive(Clone, Debug)]
 pub struct Case {
     pub value: Value,
-    pub body: Vec<Step>,
+    pub body: Vec<Task>,
 }
 
-/// Reads a switch's `cases`: a map of value to the steps to run, keeping its order.
+/// Reads a switch's `cases`: a map of value to the tasks to run, keeping its order.
 fn cases<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<Case>, D::Error> {
     struct CasesVisitor;
 
-    /// A case's steps, read like any other map of named steps.
-    struct Body(Vec<Step>);
+    /// A case's tasks, read like any other map of named tasks.
+    struct Body(Vec<Task>);
 
     impl<'de> Deserialize<'de> for Body {
         fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
@@ -110,7 +110,7 @@ fn cases<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<Case>, D::Err
         type Value = Vec<Case>;
 
         fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
-            f.write_str("a map of value to a map of steps")
+            f.write_str("a map of value to a map of tasks")
         }
 
         fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Vec<Case>, A::Error> {
@@ -129,44 +129,44 @@ fn cases<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<Case>, D::Err
     deserializer.deserialize_map(CasesVisitor)
 }
 
-/// Reads a map of step name to step, or to the path of a step file, keeping its order.
-pub fn named<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<Step>, D::Error> {
+/// Reads a map of task name to task, or to the path of a task file, keeping its order.
+pub fn named<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<Task>, D::Error> {
     struct NamedVisitor;
 
     impl<'de> Visitor<'de> for NamedVisitor {
-        type Value = Vec<Step>;
+        type Value = Vec<Task>;
 
         fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
-            f.write_str("a map of step name to a step or a step file path")
+            f.write_str("a map of task name to a task or a task file path")
         }
 
-        fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Vec<Step>, A::Error> {
-            let mut steps: Vec<Step> = Vec::new();
+        fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Vec<Task>, A::Error> {
+            let mut tasks: Vec<Task> = Vec::new();
             while let Some(name) = map.next_key::<String>()? {
-                if steps.iter().any(|a| a.name == name) {
-                    return Err(de::Error::custom(format!("duplicate step `{name}`")));
+                if tasks.iter().any(|a| a.name == name) {
+                    return Err(de::Error::custom(format!("duplicate task `{name}`")));
                 }
-                let Source(mut step) = map.next_value()?;
-                step.name = name;
-                steps.push(step);
+                let Source(mut task) = map.next_value()?;
+                task.name = name;
+                tasks.push(task);
             }
-            Ok(steps)
+            Ok(tasks)
         }
     }
 
     deserializer.deserialize_map(NamedVisitor)
 }
 
-/// Parses `yaml`, a map of step name to step, without resolving step files.
+/// Parses `yaml`, a map of task name to task, without resolving task files.
 #[cfg(test)]
-pub(crate) fn parse_named(yaml: &str) -> Result<Vec<Step>, serde_yaml::Error> {
+pub(crate) fn parse_named(yaml: &str) -> Result<Vec<Task>, serde_yaml::Error> {
     named(serde_yaml::Deserializer::from_str(yaml))
 }
 
-/// An entry's value: a step file path, or the step's fields inline.
-struct Source(Step);
+/// An entry's value: a task file path, or the task's fields inline.
+struct Source(Task);
 
-/// Picks the variant by YAML shape, so a mistake in an inline step reports the real cause
+/// Picks the variant by YAML shape, so a mistake in an inline task reports the real cause
 /// and line instead of a generic untagged-enum error.
 impl<'de> Deserialize<'de> for Source {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
@@ -176,18 +176,18 @@ impl<'de> Deserialize<'de> for Source {
             type Value = Source;
 
             fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
-                f.write_str("a step file path or a step")
+                f.write_str("a task file path or a task")
             }
 
             fn visit_str<E: de::Error>(self, path: &str) -> Result<Source, E> {
-                Ok(Source(Step {
+                Ok(Source(Task {
                     r#use: Some(PathBuf::from(path)),
-                    ..Step::default()
+                    ..Task::default()
                 }))
             }
 
             fn visit_map<A: MapAccess<'de>>(self, map: A) -> Result<Source, A::Error> {
-                Step::deserialize(de::value::MapAccessDeserializer::new(map)).map(Source)
+                Task::deserialize(de::value::MapAccessDeserializer::new(map)).map(Source)
             }
         }
 
@@ -195,10 +195,10 @@ impl<'de> Deserialize<'de> for Source {
     }
 }
 
-impl Step {
+impl Task {
     /// Whether any key is set.
     fn has_fields(&self) -> bool {
-        self.has_step_fields()
+        self.has_task_fields()
             || self.cwd.is_some()
             || self.stdin.is_some()
             || !self.env.is_empty()
@@ -217,121 +217,121 @@ impl Step {
         self.switch.is_some() || !self.cases.is_empty() || !self.default.is_empty()
     }
 
-    fn has_step_fields(&self) -> bool {
+    fn has_task_fields(&self) -> bool {
         self.http.is_some() || self.cmd.is_some() || self.timeout.is_some() || self.allow_failure
     }
 }
 
-/// Validates steps (recursively through branches and loops) and resolves their paths against `dir`.
-pub fn resolve(steps: &mut [Step], dir: &Path) -> Result<(), Error> {
-    resolve_all(steps, dir, &mut Vec::new())
+/// Validates tasks (recursively through branches and loops) and resolves their paths against `dir`.
+pub fn resolve(tasks: &mut [Task], dir: &Path) -> Result<(), Error> {
+    resolve_all(tasks, dir, &mut Vec::new())
 }
 
-/// [`resolve`], with `stack` holding the step files being loaded, to detect step file cycles.
-fn resolve_all(steps: &mut [Step], dir: &Path, stack: &mut Vec<PathBuf>) -> Result<(), Error> {
-    for step in steps {
-        resolve_one(step, dir, stack)?;
+/// [`resolve`], with `stack` holding the task files being loaded, to detect task file cycles.
+fn resolve_all(tasks: &mut [Task], dir: &Path, stack: &mut Vec<PathBuf>) -> Result<(), Error> {
+    for task in tasks {
+        resolve_one(task, dir, stack)?;
     }
     Ok(())
 }
 
-fn resolve_one(step: &mut Step, dir: &Path, stack: &mut Vec<PathBuf>) -> Result<(), Error> {
-    let name = step.name.clone();
+fn resolve_one(task: &mut Task, dir: &Path, stack: &mut Vec<PathBuf>) -> Result<(), Error> {
+    let name = task.name.clone();
     if !var_name::is_valid(&name) {
-        return Err(Error::InvalidStep(format!(
-            "step name `{name}` {}",
+        return Err(Error::InvalidTask(format!(
+            "task name `{name}` {}",
             var_name::RULE
         )));
     }
-    resolve_method(step, &name)?;
-    if let Some(path) = step.r#use.take() {
-        return resolve_use(step, path, dir, stack);
+    resolve_method(task, &name)?;
+    if let Some(path) = task.r#use.take() {
+        return resolve_use(task, path, dir, stack);
     }
-    if let Some(set) = step.set.take() {
-        return resolve_set(step, set, &name);
+    if let Some(set) = task.set.take() {
+        return resolve_set(task, set, &name);
     }
     for (field, set) in [
-        ("cwd", step.cwd.is_some()),
-        ("stdin", step.stdin.is_some()),
-        ("env", !step.env.is_empty()),
-        ("capture_stdout", step.capture_stdout.is_some()),
+        ("cwd", task.cwd.is_some()),
+        ("stdin", task.stdin.is_some()),
+        ("env", !task.env.is_empty()),
+        ("capture_stdout", task.capture_stdout.is_some()),
     ] {
-        if set && step.cmd.is_none() {
-            return Err(Error::InvalidStep(format!(
+        if set && task.cmd.is_none() {
+            return Err(Error::InvalidTask(format!(
                 "`{name}` has `{field}`, which only works with `cmd`"
             )));
         }
     }
-    step.dir = dir.to_path_buf();
-    if step.for_each.is_some() {
-        return resolve_loop(step, &name, dir, stack);
+    task.dir = dir.to_path_buf();
+    if task.for_each.is_some() {
+        return resolve_loop(task, &name, dir, stack);
     }
-    if !step.body.is_empty() || step.item_var.is_some() {
-        return Err(Error::InvalidStep(format!(
+    if !task.body.is_empty() || task.item_var.is_some() {
+        return Err(Error::InvalidTask(format!(
             "`{name}` has `do`/`as` but no `for_each`"
         )));
     }
-    if step.switch.is_some() {
-        return resolve_switch(step, &name, dir, stack);
+    if task.switch.is_some() {
+        return resolve_switch(task, &name, dir, stack);
     }
-    if !step.cases.is_empty() || !step.default.is_empty() {
-        return Err(Error::InvalidStep(format!(
+    if !task.cases.is_empty() || !task.default.is_empty() {
+        return Err(Error::InvalidTask(format!(
             "`{name}` has `cases`/`default` but no `switch`"
         )));
     }
-    if step.condition.is_some() {
-        return resolve_branch(step, &name, dir, stack);
+    if task.condition.is_some() {
+        return resolve_branch(task, &name, dir, stack);
     }
-    if !step.then.is_empty() || !step.otherwise.is_empty() {
-        return Err(Error::InvalidStep(format!(
+    if !task.then.is_empty() || !task.otherwise.is_empty() {
+        return Err(Error::InvalidTask(format!(
             "`{name}` has `then`/`else` but no `if`"
         )));
     }
-    resolve_leaf(step, &name)
+    resolve_leaf(task, &name)
 }
 
 /// Moves a `get`/`post`/`put`/`patch`/`delete` request into `http`, with its method set, and
 /// checks that an `http` request has a `method`.
-fn resolve_method(step: &mut Step, name: &str) -> Result<(), Error> {
+fn resolve_method(task: &mut Task, name: &str) -> Result<(), Error> {
     let shorthands = [
-        ("get", step.get.take()),
-        ("post", step.post.take()),
-        ("put", step.put.take()),
-        ("patch", step.patch.take()),
-        ("delete", step.delete.take()),
+        ("get", task.get.take()),
+        ("post", task.post.take()),
+        ("put", task.put.take()),
+        ("patch", task.patch.take()),
+        ("delete", task.delete.take()),
     ];
     for (key, shorthand) in shorthands {
         let Some(Shorthand(mut spec)) = shorthand else {
             continue;
         };
-        if step.http.is_some() {
-            return Err(Error::InvalidStep(format!(
+        if task.http.is_some() {
+            return Err(Error::InvalidTask(format!(
                 "`{name}` must have only one of `http`, `get`, `post`, `put`, `patch`, `delete`"
             )));
         }
         if !spec.method.is_empty() {
-            return Err(Error::InvalidStep(format!(
+            return Err(Error::InvalidTask(format!(
                 "`{name}`: `{key}` sets the method, so it can't have `method`"
             )));
         }
         spec.method = key.to_uppercase();
-        step.http = Some(spec);
+        task.http = Some(spec);
     }
-    if step
+    if task
         .http
         .as_ref()
         .is_some_and(|spec| spec.method.is_empty())
     {
-        return Err(Error::InvalidStep(format!(
+        return Err(Error::InvalidTask(format!(
             "`{name}`: `http` needs a `method`"
         )));
     }
     Ok(())
 }
 
-/// Replaces `step` with the step file at `path`, named by `step`'s key.
+/// Replaces `task` with the task file at `path`, named by `task`'s key.
 fn resolve_use(
-    step: &mut Step,
+    task: &mut Task,
     path: PathBuf,
     dir: &Path,
     stack: &mut Vec<PathBuf>,
@@ -342,129 +342,129 @@ fn resolve_use(
         source,
     })?;
     if stack.contains(&canonical) {
-        return Err(Error::InvalidStep(format!(
-            "`{}`: step file cycle through {}",
-            step.name,
+        return Err(Error::InvalidTask(format!(
+            "`{}`: task file cycle through {}",
+            task.name,
             path.display()
         )));
     }
-    let mut loaded: Step = project::read_yaml(&path)?;
-    loaded.name = std::mem::take(&mut step.name);
+    let mut loaded: Task = project::read_yaml(&path)?;
+    loaded.name = std::mem::take(&mut task.name);
     let file_dir = path.parent().unwrap_or(Path::new(""));
     stack.push(canonical);
     resolve_one(&mut loaded, file_dir, stack)?;
     stack.pop();
-    *step = loaded;
+    *task = loaded;
     Ok(())
 }
 
-fn resolve_set(step: &mut Step, set: Set, name: &str) -> Result<(), Error> {
+fn resolve_set(task: &mut Task, set: Set, name: &str) -> Result<(), Error> {
     if set.states.is_empty() {
-        return Err(Error::InvalidStep(format!(
+        return Err(Error::InvalidTask(format!(
             "`{name}`: `set` needs `states`"
         )));
     }
-    if step.has_fields() {
-        return Err(Error::InvalidStep(format!(
-            "`{name}` is a `set` step and can't have other fields"
+    if task.has_fields() {
+        return Err(Error::InvalidTask(format!(
+            "`{name}` is a `set` task and can't have other fields"
         )));
     }
-    step.set = Some(set);
+    task.set = Some(set);
     Ok(())
 }
 
 fn resolve_loop(
-    step: &mut Step,
+    task: &mut Task,
     name: &str,
     dir: &Path,
     stack: &mut Vec<PathBuf>,
 ) -> Result<(), Error> {
-    if step.has_step_fields()
-        || step.condition.is_some()
-        || !step.then.is_empty()
-        || !step.otherwise.is_empty()
-        || step.has_switch_fields()
+    if task.has_task_fields()
+        || task.condition.is_some()
+        || !task.then.is_empty()
+        || !task.otherwise.is_empty()
+        || task.has_switch_fields()
     {
-        return Err(Error::InvalidStep(format!(
+        return Err(Error::InvalidTask(format!(
             "`{name}` is a loop (`for_each`) and cannot have `http`, `cmd`, `timeout`, `allow_failure`, `if`, `then`, `else`, `switch`, `cases` or `default`"
         )));
     }
-    if step.body.is_empty() {
-        return Err(Error::InvalidStep(format!(
+    if task.body.is_empty() {
+        return Err(Error::InvalidTask(format!(
             "`{name}` needs a non-empty `do`"
         )));
     }
-    check_names(name, "as", step.item_var.iter())?;
-    resolve_all(&mut step.body, dir, stack)
+    check_names(name, "as", task.item_var.iter())?;
+    resolve_all(&mut task.body, dir, stack)
 }
 
 fn resolve_branch(
-    step: &mut Step,
+    task: &mut Task,
     name: &str,
     dir: &Path,
     stack: &mut Vec<PathBuf>,
 ) -> Result<(), Error> {
-    if step.has_step_fields() {
-        return Err(Error::InvalidStep(format!(
+    if task.has_task_fields() {
+        return Err(Error::InvalidTask(format!(
             "`{name}` is a branch (`if`) and cannot have `http`, `cmd`, `timeout` or `allow_failure`"
         )));
     }
-    if step.then.is_empty() && step.otherwise.is_empty() {
-        return Err(Error::InvalidStep(format!(
+    if task.then.is_empty() && task.otherwise.is_empty() {
+        return Err(Error::InvalidTask(format!(
             "`{name}` needs a non-empty `then` or `else`"
         )));
     }
-    if let Some(condition) = &step.condition {
+    if let Some(condition) = &task.condition {
         condition
             .validate()
-            .map_err(|source| Error::InvalidStep(format!("`{name}`: {source}")))?;
+            .map_err(|source| Error::InvalidTask(format!("`{name}`: {source}")))?;
     }
-    resolve_all(&mut step.then, dir, stack)?;
-    resolve_all(&mut step.otherwise, dir, stack)
+    resolve_all(&mut task.then, dir, stack)?;
+    resolve_all(&mut task.otherwise, dir, stack)
 }
 
 fn resolve_switch(
-    step: &mut Step,
+    task: &mut Task,
     name: &str,
     dir: &Path,
     stack: &mut Vec<PathBuf>,
 ) -> Result<(), Error> {
-    if step.has_step_fields()
-        || step.condition.is_some()
-        || !step.then.is_empty()
-        || !step.otherwise.is_empty()
+    if task.has_task_fields()
+        || task.condition.is_some()
+        || !task.then.is_empty()
+        || !task.otherwise.is_empty()
     {
-        return Err(Error::InvalidStep(format!(
+        return Err(Error::InvalidTask(format!(
             "`{name}` is a switch (`switch`) and cannot have `http`, `cmd`, `timeout`, `allow_failure`, `if`, `then` or `else`"
         )));
     }
-    if step.cases.is_empty() {
-        return Err(Error::InvalidStep(format!(
+    if task.cases.is_empty() {
+        return Err(Error::InvalidTask(format!(
             "`{name}` needs a non-empty `cases`"
         )));
     }
-    for case in &mut step.cases {
+    for case in &mut task.cases {
         if case.body.is_empty() {
-            return Err(Error::InvalidStep(format!(
-                "`{name}` case {} needs at least one step",
+            return Err(Error::InvalidTask(format!(
+                "`{name}` case {} needs at least one task",
                 case.value
             )));
         }
         resolve_all(&mut case.body, dir, stack)?;
     }
-    resolve_all(&mut step.default, dir, stack)
+    resolve_all(&mut task.default, dir, stack)
 }
 
-/// Checks an `http` or `cmd` step.
-fn resolve_leaf(step: &Step, name: &str) -> Result<(), Error> {
-    match (&step.http, &step.cmd) {
+/// Checks an `http` or `cmd` task.
+fn resolve_leaf(task: &Task, name: &str) -> Result<(), Error> {
+    match (&task.http, &task.cmd) {
         (Some(_), None) => {}
         (None, Some(argv)) if !argv.is_empty() => {}
         (None, Some(_)) => {
-            return Err(Error::InvalidStep(format!("`{name}` has an empty `cmd`")));
+            return Err(Error::InvalidTask(format!("`{name}` has an empty `cmd`")));
         }
         _ => {
-            return Err(Error::InvalidStep(format!(
+            return Err(Error::InvalidTask(format!(
                 "`{name}` must have exactly one of `http` (or `get`, `post`, `put`, `patch`, `delete`) or `cmd`"
             )));
         }
@@ -472,14 +472,14 @@ fn resolve_leaf(step: &Step, name: &str) -> Result<(), Error> {
     Ok(())
 }
 
-/// Checks that every name in the `field` (`as`) of step `name` is a valid var name.
+/// Checks that every name in the `field` (`as`) of task `name` is a valid var name.
 fn check_names<'a>(
     name: &str,
     field: &str,
     mut vars: impl Iterator<Item = &'a String>,
 ) -> Result<(), Error> {
     match vars.find(|var| !var_name::is_valid_var(var)) {
-        Some(var) => Err(Error::InvalidStep(format!(
+        Some(var) => Err(Error::InvalidTask(format!(
             "`{name}`: `{field}` name `{var}` {}",
             var_name::VAR_RULE
         ))),
@@ -491,51 +491,51 @@ fn check_names<'a>(
 mod tests {
     use super::*;
 
-    fn resolve_in(dir: &Path, yaml: &str) -> Result<Vec<Step>, Error> {
-        let mut steps = parse_named(yaml).unwrap();
-        resolve(&mut steps, dir)?;
-        Ok(steps)
+    fn resolve_in(dir: &Path, yaml: &str) -> Result<Vec<Task>, Error> {
+        let mut tasks = parse_named(yaml).unwrap();
+        resolve(&mut tasks, dir)?;
+        Ok(tasks)
     }
 
-    /// The steps in `yaml`, resolved against the current directory.
-    fn resolve_here(yaml: &str) -> Result<Vec<Step>, Error> {
+    /// The tasks in `yaml`, resolved against the current directory.
+    fn resolve_here(yaml: &str) -> Result<Vec<Task>, Error> {
         resolve_in(Path::new(""), yaml)
     }
 
-    /// The message of the invalid-step error that resolving `yaml` must give.
-    fn invalid_step(yaml: &str) -> String {
+    /// The message of the invalid-task error that resolving `yaml` must give.
+    fn invalid_task(yaml: &str) -> String {
         match resolve_here(yaml) {
-            Err(Error::InvalidStep(msg)) => msg,
-            Err(err) => panic!("{yaml}: expected an invalid step, got {err}"),
-            Ok(_) => panic!("{yaml}: expected an invalid step, got none"),
+            Err(Error::InvalidTask(msg)) => msg,
+            Err(err) => panic!("{yaml}: expected an invalid task, got {err}"),
+            Ok(_) => panic!("{yaml}: expected an invalid task, got none"),
         }
     }
 
     #[test]
     fn resolves_paths_against_project_dir() {
         let dir = Path::new("/project");
-        let steps = resolve_in(
+        let tasks = resolve_in(
             dir,
             "login:\n  http: {method: GET, url: x}\n\
              get:\n  http:\n    method: GET\n    url: ${BASE}\n  allow_failure: true\n\
              echo:\n  cmd: [echo, '${BASE}']\n  cwd: work\n",
         )
         .unwrap();
-        let login = &steps[0];
+        let login = &tasks[0];
         assert!(!login.allow_failure);
-        assert_eq!(steps[1].name, "get");
-        assert!(steps[1].allow_failure);
-        assert_eq!(steps[2].cwd, Some("work".into()));
-        assert_eq!(steps[2].dir, dir);
+        assert_eq!(tasks[1].name, "get");
+        assert!(tasks[1].allow_failure);
+        assert_eq!(tasks[2].cwd, Some("work".into()));
+        assert_eq!(tasks[2].dir, dir);
     }
 
     #[test]
     fn keeps_map_order_and_rejects_lists_and_duplicates() {
-        let steps = parse_named("z: {cmd: [echo]}\na: {cmd: [echo]}\nm: {cmd: [echo]}\n").unwrap();
-        let names: Vec<_> = steps.iter().map(|a| a.name.as_str()).collect();
+        let tasks = parse_named("z: {cmd: [echo]}\na: {cmd: [echo]}\nm: {cmd: [echo]}\n").unwrap();
+        let names: Vec<_> = tasks.iter().map(|a| a.name.as_str()).collect();
         assert_eq!(names, ["z", "a", "m"]);
         let err = parse_named("- cmd: [echo]\n").unwrap_err();
-        assert!(err.to_string().contains("a map of step name"), "{err}");
+        assert!(err.to_string().contains("a map of task name"), "{err}");
         let err = parse_named("a: {cmd: [echo]}\na: {cmd: [echo]}\n").unwrap_err();
         assert!(err.to_string().contains("duplicate"), "{err}");
         let err = parse_named("a: {name: b, cmd: [echo]}\n").unwrap_err();
@@ -543,7 +543,7 @@ mod tests {
     }
 
     #[test]
-    fn step_needs_exactly_one_kind() {
+    fn task_needs_exactly_one_kind() {
         let neither = "`a` must have exactly one of `http`";
         for (yaml, expected) in [
             ("a: {}\n", neither),
@@ -553,17 +553,17 @@ mod tests {
             ),
             ("a:\n  cmd: []\n", "`a` has an empty `cmd`"),
         ] {
-            let msg = invalid_step(yaml);
+            let msg = invalid_task(yaml);
             assert!(msg.contains(expected), "{yaml}: {msg}");
         }
     }
 
     #[test]
     fn method_keys_become_http() {
-        let steps =
+        let tasks =
             resolve_here("a:\n  get: x\nb:\n  post: {url: y, json: {k: 1}}\nc:\n  delete: z\n")
                 .unwrap();
-        let specs: Vec<_> = steps.iter().filter_map(|a| a.http.as_ref()).collect();
+        let specs: Vec<_> = tasks.iter().filter_map(|a| a.http.as_ref()).collect();
         assert_eq!(specs.len(), 3);
         assert_eq!(
             (specs[0].method.as_str(), specs[0].url.as_str()),
@@ -600,7 +600,7 @@ mod tests {
                 "`a` is a branch (`if`) and cannot have `http`",
             ),
         ] {
-            let msg = invalid_step(yaml);
+            let msg = invalid_task(yaml);
             assert!(msg.contains(expected), "{yaml}: {msg}");
         }
     }
@@ -621,7 +621,7 @@ mod tests {
                 "capture_stdout",
             ),
         ] {
-            let msg = invalid_step(yaml);
+            let msg = invalid_task(yaml);
             assert!(
                 msg.contains(&format!("`a` has `{field}`, which only works with `cmd`")),
                 "{yaml}: {msg}"
@@ -630,7 +630,7 @@ mod tests {
     }
 
     #[test]
-    fn timeout_works_on_every_step_kind_but_not_branches_or_loops() {
+    fn timeout_works_on_every_task_kind_but_not_branches_or_loops() {
         resolve_here(
             "h:\n  http: {method: GET, url: x}\n  timeout: 5\ns:\n  cmd: [echo]\n  timeout: 5\n",
         )
@@ -639,7 +639,7 @@ mod tests {
             "a:\n  if: {this: X, eq: 1}\n  then: {b: {cmd: [echo]}}\n  timeout: 1\n",
             "a:\n  for_each: X\n  do: {b: {cmd: [echo]}}\n  timeout: 1\n",
         ] {
-            let msg = invalid_step(yaml);
+            let msg = invalid_task(yaml);
             assert!(
                 msg.contains("`a` is a") && msg.contains("`timeout`"),
                 "{yaml}: {msg}"
@@ -672,7 +672,7 @@ mod tests {
             ),
         ] {
             assert_eq!(
-                invalid_step(yaml),
+                invalid_task(yaml),
                 format!("`a`: `{field}` name `{var}` {}", var_name::VAR_RULE),
                 "{yaml}"
             );
@@ -680,7 +680,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_invalid_step_name() {
+    fn rejects_invalid_task_name() {
         for (yaml, name) in [
             ("a.b:\n  cmd: [echo]\n", "a.b"),
             ("a.b: x.yaml\n", "a.b"),
@@ -689,8 +689,8 @@ mod tests {
             ("states:\n  cmd: [echo]\n", "states"),
         ] {
             assert_eq!(
-                invalid_step(yaml),
-                format!("step name `{name}` {}", var_name::RULE),
+                invalid_task(yaml),
+                format!("task name `{name}` {}", var_name::RULE),
                 "{yaml}"
             );
         }
@@ -699,18 +699,18 @@ mod tests {
     #[test]
     fn resolves_paths_inside_nested_branches_and_loops() {
         let dir = Path::new("/project");
-        let steps = resolve_in(
+        let tasks = resolve_in(
             dir,
             "r:\n  if: {this: X, gt: 1}\n  then:\n    a:\n      cmd: [a]\n      cwd: a\n  else:\n\
              \x20   l:\n      for_each: IDS\n      do:\n        b:\n          cmd: [b]\n          cwd: b\n",
         )
         .unwrap();
-        assert_eq!(steps[0].then[0].dir, dir);
-        assert_eq!(steps[0].otherwise[0].body[0].dir, dir);
+        assert_eq!(tasks[0].then[0].dir, dir);
+        assert_eq!(tasks[0].otherwise[0].body[0].dir, dir);
     }
 
     #[test]
-    fn rejects_mixed_branch_and_step_fields() {
+    fn rejects_mixed_branch_and_task_fields() {
         let branch = "`r` is a branch (`if`) and cannot have";
         for (yaml, expected) in [
             (
@@ -730,7 +730,7 @@ mod tests {
                 "`r` has `then`/`else` but no `if`",
             ),
         ] {
-            let msg = invalid_step(yaml);
+            let msg = invalid_task(yaml);
             assert!(msg.contains(expected), "{yaml}: {msg}");
         }
     }
@@ -767,7 +767,7 @@ mod tests {
                 "`l` has an empty `cmd`",
             ),
         ] {
-            let msg = invalid_step(&yaml);
+            let msg = invalid_task(&yaml);
             assert!(msg.contains(expected), "{yaml}: {msg}");
         }
     }
@@ -775,14 +775,14 @@ mod tests {
     #[test]
     fn resolves_paths_inside_switch_cases() {
         let dir = Path::new("/project");
-        let steps = resolve_in(
+        let tasks = resolve_in(
             dir,
             "s:\n  switch: X\n  cases:\n    1: {a: {cmd: [a], cwd: a}}\n\
              \x20 default: {b: {cmd: [b], cwd: b}}\n",
         )
         .unwrap();
-        assert_eq!(steps[0].cases[0].body[0].dir, dir);
-        assert_eq!(steps[0].default[0].dir, dir);
+        assert_eq!(tasks[0].cases[0].body[0].dir, dir);
+        assert_eq!(tasks[0].default[0].dir, dir);
     }
 
     #[test]
@@ -802,7 +802,7 @@ mod tests {
             ),
             (
                 "s:\n  switch: X\n  cases: {1: {}}\n".to_string(),
-                "`s` case 1 needs at least one step",
+                "`s` case 1 needs at least one task",
             ),
             (format!("s:\n{case}"), no_switch),
             (
@@ -821,7 +821,7 @@ mod tests {
                 "`s` has an empty `cmd`",
             ),
         ] {
-            let msg = invalid_step(&yaml);
+            let msg = invalid_task(&yaml);
             assert!(msg.contains(expected), "{yaml}: {msg}");
         }
         assert!(
@@ -838,9 +838,9 @@ mod tests {
     }
 
     #[test]
-    fn step_files_load_relative_to_themselves_named_by_key() {
+    fn task_files_load_relative_to_themselves_named_by_key() {
         let dir = tempfile::tempdir().unwrap();
-        let sub = dir.path().join("steps");
+        let sub = dir.path().join("tasks");
         std::fs::create_dir(&sub).unwrap();
         std::fs::write(sub.join("login.yaml"), "http: {method: GET, url: x}\n").unwrap();
         std::fs::write(
@@ -848,20 +848,20 @@ mod tests {
             "for_each: IDS\ndo:\n  inner: login.yaml\n  echo:\n    cmd: [echo]\n    cwd: w\n",
         )
         .unwrap();
-        let steps = resolve_in(
+        let tasks = resolve_in(
             dir.path(),
-            "login: steps/login.yaml\nagain: steps/login.yaml\neach: steps/each.yaml\n",
+            "login: tasks/login.yaml\nagain: tasks/login.yaml\neach: tasks/each.yaml\n",
         )
         .unwrap();
-        assert_eq!(steps[0].name, "login");
-        assert_eq!(steps[1].name, "again");
-        assert_eq!(steps[2].name, "each");
-        assert_eq!(steps[2].body[0].name, "inner");
-        assert_eq!(steps[2].body[1].dir, sub);
+        assert_eq!(tasks[0].name, "login");
+        assert_eq!(tasks[1].name, "again");
+        assert_eq!(tasks[2].name, "each");
+        assert_eq!(tasks[2].body[0].name, "inner");
+        assert_eq!(tasks[2].body[1].dir, sub);
     }
 
     #[test]
-    fn step_files_reject_names_missing_files_and_cycles() {
+    fn task_files_reject_names_missing_files_and_cycles() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("named.yaml"), "name: a\ncmd: [echo]\n").unwrap();
         let err = resolve_in(dir.path(), "a: named.yaml\n").unwrap_err();
@@ -880,15 +880,15 @@ mod tests {
         std::fs::write(dir.path().join("b.yaml"), "for_each: X\ndo: {a: a.yaml}\n").unwrap();
         let err = resolve_in(dir.path(), "a: a.yaml\n").unwrap_err();
         assert!(
-            matches!(&err, Error::InvalidStep(msg) if msg.contains("step file cycle through")),
+            matches!(&err, Error::InvalidTask(msg) if msg.contains("task file cycle through")),
             "{err}"
         );
     }
 
     #[test]
     fn set_goes_alone() {
-        let steps = resolve_here("s:\n  set: {states: {N: '${A}'}}\n").unwrap();
-        let set = steps[0].set.as_ref().unwrap();
+        let tasks = resolve_here("s:\n  set: {states: {N: '${A}'}}\n").unwrap();
+        let set = tasks[0].set.as_ref().unwrap();
         assert_eq!(set.states["N"], Value::from("${A}"));
         for yaml in [
             "s:\n  set: {states: {N: 1}}\n  cmd: [echo]\n",
@@ -898,9 +898,9 @@ mod tests {
             "s:\n  set: {states: {N: 1}}\n  cwd: w\n",
             "s:\n  set: {states: {N: 1}}\n  env: {A: b}\n",
         ] {
-            let msg = invalid_step(yaml);
+            let msg = invalid_task(yaml);
             assert!(
-                msg.contains("`s` is a `set` step and can't have other fields"),
+                msg.contains("`s` is a `set` task and can't have other fields"),
                 "{yaml}: {msg}"
             );
         }
@@ -909,7 +909,7 @@ mod tests {
     #[test]
     fn set_needs_states() {
         for yaml in ["s:\n  set: {}\n", "s:\n  set: {states: {}}\n"] {
-            let msg = invalid_step(yaml);
+            let msg = invalid_task(yaml);
             assert!(msg.contains("`s`: `set` needs `states`"), "{yaml}: {msg}");
         }
         assert!(parse_named("s:\n  set: {state: {N: 1}}\n").is_err());
@@ -918,7 +918,7 @@ mod tests {
 
     #[test]
     fn rejects_invalid_condition() {
-        let msg = invalid_step(
+        let msg = invalid_task(
             "r:\n  if: {this: X, gt: ten}\n  then: {a: {http: {method: GET, url: x}}}\n",
         );
         assert!(

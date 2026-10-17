@@ -7,7 +7,7 @@ use crate::error::Error;
 pub enum Kind {
     Project,
     Job,
-    Step { http: bool },
+    Task { http: bool },
 }
 
 const PROJECT: &str = "\
@@ -15,27 +15,27 @@ const PROJECT: &str = "\
 #   rocky exec <this file> example
 jobs:
   example:
-    steps:
+    tasks:
       hello:
         cmd: [echo, hello]
 ";
 
 const JOB: &str = "\
 # A job in its own file. Add it to a project's `jobs`: `name: path/to/this.yaml`.
-steps:
+tasks:
   hello:
     cmd: [echo, hello]
 ";
 
-const STEP_HEADER: &str = "\
-# One step in its own file. Add it to a job's `steps`: `name: path/to/this.yaml`.
+const TASK_HEADER: &str = "\
+# One task in its own file. Add it to a job's `tasks`: `name: path/to/this.yaml`.
 ";
 
-const CMD_STEP: &str = "\
+const CMD_TASK: &str = "\
 cmd: [echo, hello]
 ";
 
-const HTTP_STEP: &str = "\
+const HTTP_TASK: &str = "\
 get: https://httpbin.org/get
 ";
 
@@ -44,7 +44,7 @@ const FULL_PROJECT_HEADER: &str = "\
 #   rocky exec <this file> example   runs one job once
 #   rocky run <this file>            runs the jobs in `schedules` until stopped
 
-# Fixed values read as ${NAME} in every job's steps: any YAML value (string, number, boolean,
+# Fixed values read as ${NAME} in every job's tasks: any YAML value (string, number, boolean,
 # list, object). Names are uppercase letters, digits and `_`. A job's own `values` win over these.
 values:
   REGION: us-east-1                 # the `example` job's own REGION wins
@@ -62,21 +62,21 @@ schedules:
     every: 1h
     delay: 10s
 
-# Job name: its steps, or the path of a job file (`report: jobs/report.yaml`).
+# Job name: its tasks, or the path of a job file (`report: jobs/report.yaml`).
 jobs:
   example:
 ";
 
 const FULL_JOB_HEADER: &str = "\
-# A job in its own file, with every kind of step. Add it to a project's `jobs`:
+# A job in its own file, with every kind of task. Add it to a project's `jobs`:
 # `name: path/to/this.yaml`. ${USER} comes from the project's env_file or the environment.
 ";
 
-const FULL_STEP_HEADER: &str = "\
+const FULL_TASK_HEADER: &str = "\
 # Every field is shown; delete what you don't need. ${USER} comes from the env_file or the environment.
 ";
 
-const FULL_HTTP_STEP: &str = "\
+const FULL_HTTP_TASK: &str = "\
 post:                               # or get, put, patch, delete; others: `http:` with `method:`
   url: https://httpbin.org/anything/login   # must include the scheme
   headers:
@@ -93,7 +93,7 @@ timeout: 10                         # seconds (default 30)
 allow_failure: false                # true continues after a 4xx/5xx, a timeout or a network error
 ";
 
-const FULL_CMD_STEP: &str = "\
+const FULL_CMD_TASK: &str = "\
 cmd: [sh, -c, 'printf \"%s, \" \"$GREETING\"; tr a-z A-Z']     # program + arguments; no shell unless you call one
 stdin: ${USER}                      # standard input; a non-string is written as compact JSON
 env:                                # added to the command's environment, read as $GREETING; a non-string as compact JSON
@@ -108,30 +108,30 @@ const FULL_CONTROL: &str = "
   # A branch: `then` runs when the condition holds, `else` otherwise. Either may be left out.
   check:
     if:                                 # a list: all must hold (also `all`, `any`, `not`)
-      - {this: steps.login.status, eq: 200}   # a name or dot path, without ${}
-      - {this: steps.shout.stdout, contains: ALICE}   # also ne, gt, gte, lt, lte, matches
-      - {this: steps.login.body.json.token, exists: true}   # defined at all; never fails
+      - {this: tasks.login.status, eq: 200}   # a name or dot path, without ${}
+      - {this: tasks.shout.stdout, contains: ALICE}   # also ne, gt, gte, lt, lte, matches
+      - {this: tasks.login.body.json.token, exists: true}   # defined at all; never fails
     then:
       greet:
-        cmd: [echo, \"logged in with ${steps.login.body.json.token}\"]
+        cmd: [echo, \"logged in with ${tasks.login.body.json.token}\"]
     else:
       complain:
         cmd: [echo, login failed]
 
-  # A switch: runs the steps of the first case whose value equals the variable.
+  # A switch: runs the tasks of the first case whose value equals the variable.
   route:
-    switch: steps.login.status
+    switch: tasks.login.status
     cases:
       200:
         ok:
           cmd: [echo, ok]
     default:                            # when no case matches
       unexpected:
-        cmd: [echo, \"unexpected status ${steps.login.status}\"]
+        cmd: [echo, \"unexpected status ${tasks.login.status}\"]
 
   # A loop: runs `do` once for each element of a list.
   each_tag:
-    for_each: steps.login.body.json.tags   # a list, without ${}
+    for_each: tasks.login.body.json.tags   # a list, without ${}
     as: TAG                             # default ITEM
     do:
       tag:
@@ -142,10 +142,10 @@ const FULL_CONTROL: &str = "
     set:
       states:
         PREVIOUS_STATUS: ${states.LAST_STATUS}  # every value is read before any is set
-        LAST_STATUS: ${steps.login.status}
+        LAST_STATUS: ${tasks.login.status}
 
-  # A step file: one step kept in its own file, relative to this file.
-  # notify: steps/notify.yaml
+  # A task file: one task kept in its own file, relative to this file.
+  # notify: tasks/notify.yaml
 ";
 
 /// How much a starter file shows.
@@ -164,7 +164,7 @@ pub fn create(kind: Kind, level: Level, path: &Path) -> Result<String, Error> {
     let (text, hint) = match kind {
         Kind::Project => (
             if full {
-                format!("{FULL_PROJECT_HEADER}{}", indent(&full_steps(), 4))
+                format!("{FULL_PROJECT_HEADER}{}", indent(&full_tasks(), 4))
             } else {
                 PROJECT.to_string()
             },
@@ -174,7 +174,7 @@ pub fn create(kind: Kind, level: Level, path: &Path) -> Result<String, Error> {
             let name = path.file_stem().unwrap_or_default().to_string_lossy();
             (
                 if full {
-                    format!("{FULL_JOB_HEADER}{}", full_steps())
+                    format!("{FULL_JOB_HEADER}{}", full_tasks())
                 } else {
                     JOB.to_string()
                 },
@@ -184,20 +184,20 @@ pub fn create(kind: Kind, level: Level, path: &Path) -> Result<String, Error> {
                 ),
             )
         }
-        Kind::Step { http } => {
+        Kind::Task { http } => {
             let name = path.file_stem().unwrap_or_default().to_string_lossy();
             (
                 match (full, http) {
-                    (false, true) => format!("{STEP_HEADER}{HTTP_STEP}"),
-                    (false, false) => format!("{STEP_HEADER}{CMD_STEP}"),
+                    (false, true) => format!("{TASK_HEADER}{HTTP_TASK}"),
+                    (false, false) => format!("{TASK_HEADER}{CMD_TASK}"),
                     (true, true) => {
-                        format!("{STEP_HEADER}{FULL_STEP_HEADER}{FULL_HTTP_STEP}")
+                        format!("{TASK_HEADER}{FULL_TASK_HEADER}{FULL_HTTP_TASK}")
                     }
                     (true, false) => {
-                        format!("{STEP_HEADER}{FULL_STEP_HEADER}{FULL_CMD_STEP}")
+                        format!("{TASK_HEADER}{FULL_TASK_HEADER}{FULL_CMD_TASK}")
                     }
                 },
-                format!("add it to a job:\n  steps:\n    {name}: {}", path.display()),
+                format!("add it to a job:\n  tasks:\n    {name}: {}", path.display()),
             )
         }
     };
@@ -205,10 +205,10 @@ pub fn create(kind: Kind, level: Level, path: &Path) -> Result<String, Error> {
     Ok(format!("created {}\n{hint}", path.display()))
 }
 
-/// Asks on `out` whether a step is HTTP or cmd, reading answers from `input` until one is
+/// Asks on `out` whether a task is HTTP or cmd, reading answers from `input` until one is
 /// `http`, `cmd` or empty (cmd). End of input counts as empty.
 pub fn ask_http(mut input: impl BufRead, mut out: impl Write) -> Result<bool, Error> {
-    write!(out, "step type [cmd/http] (default cmd): ").map_err(Error::Prompt)?;
+    write!(out, "task type [cmd/http] (default cmd): ").map_err(Error::Prompt)?;
     loop {
         out.flush().map_err(Error::Prompt)?;
         let mut answer = String::new();
@@ -221,25 +221,25 @@ pub fn ask_http(mut input: impl BufRead, mut out: impl Write) -> Result<bool, Er
     }
 }
 
-/// A job's `steps` with one step of every kind, using every field.
-fn full_steps() -> String {
+/// A job's `tasks` with one task of every kind, using every field.
+fn full_tasks() -> String {
     format!(
-        "values:                             # fixed values for this job's steps, read as ${{NAME}}\n  \
+        "values:                             # fixed values for this job's tasks, read as ${{NAME}}\n  \
          REGION: eu-west-1\n  \
          LIMITS: {{retries: 3}}             # an object: read inside it with ${{LIMITS.retries}}\n\
          states:                             # kept between runs in states/<job>.json, read as ${{states.NAME}}\n  \
          LAST_STATUS: none                 # the default, used until `set` changes it\n  \
          PREVIOUS_STATUS: none\n\
-         steps:\n  \
-         # An HTTP request. Later steps read its result by name: ${{steps.login.status}}.\n  \
+         tasks:\n  \
+         # An HTTP request. Later tasks read its result by name: ${{tasks.login.status}}.\n  \
          login:\n{}\n  \
          # A command.\n  \
          shout:\n{}\n  \
          # A command reading `values`.\n  \
          region:\n    \
          cmd: [echo, \"${{REGION}}, ${{LIMITS.retries}} retries\"]\n{FULL_CONTROL}",
-        indent(FULL_HTTP_STEP, 4),
-        indent(FULL_CMD_STEP, 4),
+        indent(FULL_HTTP_TASK, 4),
+        indent(FULL_CMD_TASK, 4),
     )
 }
 
@@ -291,7 +291,7 @@ mod tests {
         if matches!(level, Level::Full) {
             assert_eq!(example.values["REGION"], "eu-west-1");
             assert_eq!(example.values["LIMITS"]["retries"], 3);
-            assert!(example.steps.iter().any(|a| {
+            assert!(example.tasks.iter().any(|a| {
                 a.set
                     .as_ref()
                     .is_some_and(|s| s.states.contains_key("LAST_STATUS"))
@@ -299,14 +299,14 @@ mod tests {
         }
 
         create(Kind::Job, level, &dir.path().join("jobs/w.yaml")).unwrap();
-        let step = |http| Kind::Step { http };
-        create(step(false), level, &dir.path().join("a/cmd.yaml")).unwrap();
-        create(step(true), level, &dir.path().join("a/http.yaml")).unwrap();
+        let task = |http| Kind::Task { http };
+        create(task(false), level, &dir.path().join("a/cmd.yaml")).unwrap();
+        create(task(true), level, &dir.path().join("a/http.yaml")).unwrap();
         let project_file = dir.path().join("files.yaml");
         std::fs::write(
             &project_file,
             "jobs:\n  w: jobs/w.yaml\n  \
-             a: {steps: {sh: a/cmd.yaml, web: a/http.yaml}}\n",
+             a: {tasks: {sh: a/cmd.yaml, web: a/http.yaml}}\n",
         )
         .unwrap();
         let mut project = project::load(&project_file).unwrap();
@@ -314,16 +314,16 @@ mod tests {
         if matches!(level, Level::Full) {
             assert_eq!(w.values["REGION"], "eu-west-1");
             assert!(w.states.contains_key("LAST_STATUS"));
-            assert!(w.steps.iter().any(|a| {
+            assert!(w.tasks.iter().any(|a| {
                 a.set
                     .as_ref()
                     .is_some_and(|s| s.states.contains_key("LAST_STATUS"))
             }));
         }
         let a = project.take("a").unwrap();
-        assert!(a.steps[0].cmd.is_some() && a.steps[1].http.is_some());
-        assert_eq!(a.steps[0].name, "sh");
-        assert_eq!(a.steps[1].name, "web");
+        assert!(a.tasks[0].cmd.is_some() && a.tasks[1].http.is_some());
+        assert_eq!(a.tasks[0].name, "sh");
+        assert_eq!(a.tasks[1].name, "web");
     }
 
     #[test]

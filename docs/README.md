@@ -7,17 +7,17 @@ One page per feature. For installing and a first run, see the [project README](.
 | Page | What it covers |
 |---|---|
 | [Command line](cli.md) | `rocky exec`, `rocky run`, `rocky validate` and `rocky new`, their flags, output, and exit codes |
-| [Projects](projects.md) | The project file: jobs, steps, fields, job and step files, validation, and using earlier steps' output |
+| [Projects](projects.md) | The project file: jobs, tasks, fields, job and task files, validation, and using earlier tasks' output |
 
-## Steps
+## Tasks
 
 | Page | What it covers |
 |---|---|
-| [HTTP steps](http-steps.md) | HTTP requests (`get:`, `post:`, … or `http:`): their fields and behaviour |
-| [Responses](responses.md) | The `{status, headers, body}` result of an HTTP step |
-| [Cmd steps](cmd-steps.md) | Running programs with `cmd:`, `stdin`, reading and writing files |
+| [HTTP tasks](http-tasks.md) | HTTP requests (`get:`, `post:`, … or `http:`): their fields and behaviour |
+| [Responses](responses.md) | The `{status, headers, body}` result of an HTTP task |
+| [Cmd tasks](cmd-tasks.md) | Running programs with `cmd:`, `stdin`, reading and writing files |
 
-## Data between steps
+## Data between tasks
 
 | Page | What it covers |
 |---|---|

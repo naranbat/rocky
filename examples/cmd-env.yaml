@@ -3,7 +3,7 @@
 env_file: example.env
 jobs:
   greet:
-    steps:
+    tasks:
       # Commands don't see the env file unless it is listed under `env`: prints nothing.
       hidden:
         cmd: [sh, -c, 'printf "%s" "$API_TOKEN"']

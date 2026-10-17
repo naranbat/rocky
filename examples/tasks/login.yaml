@@ -1,4 +1,4 @@
-# One step in its own file. Add it to a job's `steps`: `login: path/to/login.yaml`.
+# One task in its own file. Add it to a job's `tasks`: `login: path/to/login.yaml`.
 post:
   url: ${BASE}/anything/login
   json:

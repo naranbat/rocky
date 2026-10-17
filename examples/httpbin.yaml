@@ -16,7 +16,7 @@ schedules:
 jobs:
   # List, "log in", then use their results.
   login:
-    steps:
+    tasks:
       list:
         get:
           url: ${BASE}/get
@@ -35,13 +35,13 @@ jobs:
         get:
           url: ${BASE}/headers
           headers:
-            Authorization: Bearer ${steps.login.body.json.token}
-            X-Page: ${steps.list.body.args.page}
+            Authorization: Bearer ${tasks.login.body.json.token}
+            X-Page: ${tasks.list.body.args.page}
 
-  # HTTP and cmd steps together, including writing and reading a file. Any step can read an earlier step's
-  # result with ${steps.NAME.path}.
+  # HTTP and cmd tasks together, including writing and reading a file. Any task can read an earlier task's
+  # result with ${tasks.NAME.path}.
   mixed:
-    steps:
+    tasks:
       today:
         cmd: [date, +%Y-%m-%d]        # program + arguments, run without a shell
 
@@ -56,9 +56,9 @@ jobs:
         cmd: [sh, -c, 'cat > "$1"', _, report.json]
         cwd: .                        # relative to this file, not your current directory
         stdin:                        # written as JSON
-          user: ${steps.shout.stdout}
-          date: ${steps.today.stdout}
-          version: ${steps.version.stdout}
+          user: ${tasks.shout.stdout}
+          date: ${tasks.today.stdout}
+          version: ${tasks.version.stdout}
 
       load:
         cmd: [cat, report.json]       # JSON stdout is parsed
@@ -67,11 +67,11 @@ jobs:
       report:
         post:
           url: ${BASE}/anything/report
-          json: ${steps.load.stdout}
+          json: ${tasks.load.stdout}
 
   # Branching: if count > 10 call /big, else check the message.
   conditional:
-    steps:
+    tasks:
       stats:
         get:
           url: ${BASE}/anything/stats
@@ -81,7 +81,7 @@ jobs:
 
       # httpbin echoes query values as strings ("15"); numeric strings compare as numbers.
       route:
-        if: { this: steps.stats.body.args.count, gt: 10 }
+        if: { this: tasks.stats.body.args.count, gt: 10 }
         then:
           big:
             post: "${BASE}/anything/big"
@@ -89,32 +89,32 @@ jobs:
           check:
             if:
               all:
-                - { this: steps.stats.body.args.message, contains: warning }
-                - not: { this: steps.stats.body.args.message, matches: "^ignore" }
+                - { this: tasks.stats.body.args.message, contains: warning }
+                - not: { this: tasks.stats.body.args.message, matches: "^ignore" }
             then:
               warn:
                 post: "${BASE}/anything/warn"
 
   # Tolerating a timeout: `allow_failure` keeps going and the result is just `{error: ...}`; `exists` checks for it.
   health:
-    steps:
+    tasks:
       ping:
         get: "${BASE}/delay/3"        # httpbin waits 3s before answering
         timeout: 1                    # set to 5 to take the `else` branch
         allow_failure: true
 
       report:
-        if: { this: steps.ping.error, exists: true }   # never fails on an undefined variable
+        if: { this: tasks.ping.error, exists: true }   # never fails on an undefined variable
         then:
           failed:
-            cmd: [echo, 'ping failed: ${steps.ping.error}']
+            cmd: [echo, 'ping failed: ${tasks.ping.error}']
         else:
           ok:
-            cmd: [echo, 'ping returned ${steps.ping.status}']
+            cmd: [echo, 'ping returned ${tasks.ping.status}']
 
   # Looping: fetch a list, then POST once per element.
   loop:
-    steps:
+    tasks:
       users:
         post:
           url: ${BASE}/anything/users
@@ -124,7 +124,7 @@ jobs:
               - { id: 2, name: bob }
 
       notify_all:
-        for_each: steps.users.body.json.users   # must be a list
+        for_each: tasks.users.body.json.users   # must be a list
         as: USER                      # optional; defaults to ITEM
         do:
           notify:
@@ -133,5 +133,5 @@ jobs:
               json:
                 name: ${USER.name}
 
-  # A job file that uses a step file, with `timeout`.
+  # A job file that uses a task file, with `timeout`.
   files: jobs/files.yaml

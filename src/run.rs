@@ -14,7 +14,7 @@ use crate::{exec, progress, project};
 /// Runs every job listed in the project's `schedules` until all schedules are done (only `at`
 /// jobs ever finish). Every log line is one JSON object on stdout (also appended to
 /// `logs/<date>.log`) with `job`, `time` and `event` fields. Each run reloads the
-/// project and prints a line per step, branch and loop, then a `done` line (with `failed_step` and its `reason` if a step
+/// project and prints a line per task, branch and loop, then a `done` line (with `failed_task` and its `reason` if a task
 /// failed); a run that errors or panics prints an `error` line. Either way the job's next
 /// runs still happen. An `at` job whose time has passed (without `run_on_start`) prints a
 /// `skipped` line instead of running. A job whose schedule fails prints a `stopped` line and stops;
@@ -111,10 +111,10 @@ async fn run_once(path: &Path, name: &str) {
     let event = match outcome {
         Ok(Ok(outcome)) => {
             let reason = outcome
-                .failed_step
+                .failed_task
                 .as_ref()
-                .and(outcome.result.as_ref().and_then(exec::StepResult::failure));
-            json!({"event": "done", "failed_step": outcome.failed_step, "reason": reason})
+                .and(outcome.result.as_ref().and_then(exec::TaskResult::failure));
+            json!({"event": "done", "failed_task": outcome.failed_task, "reason": reason})
         }
         Ok(Err(err)) => {
             let error = err.chain();

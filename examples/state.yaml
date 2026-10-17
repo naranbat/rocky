@@ -4,14 +4,14 @@ jobs:
   counter:
     states:
       COUNT: 0                          # the default, used on the first run
-    steps:
+    tasks:
       inc:
         cmd: [expr, '${states.COUNT}', +, '1']
 
       save:
         set:
           states:                       # written to the state file right away
-            COUNT: ${steps.inc.stdout}
+            COUNT: ${tasks.inc.stdout}
 
       print:
         cmd: [echo, 'run number ${states.COUNT}']

@@ -17,6 +17,6 @@ pub mod response;
 pub mod run;
 pub mod schedule;
 pub mod state;
-pub mod step;
+pub mod task;
 pub mod var_name;
 pub mod vars;

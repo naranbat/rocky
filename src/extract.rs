@@ -1,7 +1,7 @@
 use serde_json::{Map, Value};
 
 /// Looks up a variable by exact name, or by dot path when the name contains `.`:
-/// `steps.login.body.token` selects `login.body.token` from the `steps` variable.
+/// `tasks.login.body.token` selects `login.body.token` from the `tasks` variable.
 pub fn lookup(values: &Map<String, Value>, name: &str) -> Option<Value> {
     if let Some(value) = values.get(name) {
         return Some(value.clone());
@@ -67,13 +67,13 @@ mod tests {
 
     #[test]
     fn lookup_prefers_exact_name_then_dot_path() {
-        let values = json!({"A": 1, "a.b": "exact", "steps": {"login": envelope()}});
+        let values = json!({"A": 1, "a.b": "exact", "tasks": {"login": envelope()}});
         let values = values.as_object().unwrap();
         assert_eq!(lookup(values, "A"), Some(json!(1)));
         assert_eq!(lookup(values, "a.b"), Some(json!("exact")));
-        assert_eq!(lookup(values, "steps.login.body.token"), Some(json!("abc")));
-        assert_eq!(lookup(values, "steps.login.status"), Some(json!(200)));
-        assert_eq!(lookup(values, "steps.other.status"), None);
+        assert_eq!(lookup(values, "tasks.login.body.token"), Some(json!("abc")));
+        assert_eq!(lookup(values, "tasks.login.status"), Some(json!(200)));
+        assert_eq!(lookup(values, "tasks.other.status"), None);
         assert_eq!(lookup(values, "NOPE"), None);
     }
 

@@ -3,7 +3,7 @@
 env_file: example.env
 jobs:
   user:
-    steps:
+    tasks:
       user:
         get:
           url: https://httpbin.org/anything/users/42

@@ -9,7 +9,7 @@ use std::time::Duration;
 use jiff::Zoned;
 use serde_json::{Map, Value, json};
 
-use crate::exec::StepResult;
+use crate::exec::TaskResult;
 
 /// Prints `event` as one JSON line, prefixed with the job name and the current time,
 /// and appends it to `logs/<date>.log`. A failed log file write is reported on stderr; a
@@ -47,12 +47,12 @@ fn append(dir: &Path, date: &str, line: &str) -> std::io::Result<()> {
     file.write_all(format!("{line}\n").as_bytes())
 }
 
-pub fn step(name: &str, result: &StepResult, elapsed: Duration, allowed: bool) -> Value {
-    let mut event = json!({"event": "step", "step": name});
+pub fn task(name: &str, result: &TaskResult, elapsed: Duration, allowed: bool) -> Value {
+    let mut event = json!({"event": "task", "task": name});
     match result {
-        StepResult::Http(response) => event["status"] = json!(response.status),
-        StepResult::Cmd(result) => event["exit_code"] = json!(result.exit_code),
-        StepResult::Errored { error } => event["error"] = json!(error),
+        TaskResult::Http(response) => event["status"] = json!(response.status),
+        TaskResult::Cmd(result) => event["exit_code"] = json!(result.exit_code),
+        TaskResult::Errored { error } => event["error"] = json!(error),
     }
     event["ms"] = json!(elapsed.as_millis());
     let ok = result.failure().is_none();
@@ -65,23 +65,23 @@ pub fn step(name: &str, result: &StepResult, elapsed: Duration, allowed: bool) -
 
 pub fn branch(name: &str, taken: bool, count: usize) -> Value {
     let arm = if taken { "then" } else { "else" };
-    json!({"event": "branch", "step": name, "arm": arm, "steps": count})
+    json!({"event": "branch", "task": name, "arm": arm, "tasks": count})
 }
 
 /// `case` is the 1-based index of the matching case, or `None` for `default`.
 pub fn switch(name: &str, case: Option<usize>, count: usize) -> Value {
     let case = case.map_or(json!("default"), |index| json!(index));
-    json!({"event": "switch", "step": name, "case": case, "steps": count})
+    json!({"event": "switch", "task": name, "case": case, "tasks": count})
 }
 
 pub fn for_each(name: &str, var: &str, count: usize) -> Value {
-    json!({"event": "for_each", "step": name, "var": var, "items": count})
+    json!({"event": "for_each", "task": name, "var": var, "items": count})
 }
 
-/// Names only: like `step` lines, it leaves values out.
+/// Names only: like `task` lines, it leaves values out.
 pub fn set(name: &str, states: &Map<String, Value>) -> Value {
     let states: Vec<&String> = states.keys().collect();
-    json!({"event": "set", "step": name, "states": states})
+    json!({"event": "set", "task": name, "states": states})
 }
 
 #[cfg(test)]
@@ -89,32 +89,32 @@ mod tests {
     use super::*;
 
     #[test]
-    fn formats_http_and_cmd_steps() {
-        let http = StepResult::http;
+    fn formats_http_and_cmd_tasks() {
+        let http = TaskResult::http;
         let ms = Duration::from_millis(412);
         assert_eq!(
-            step("login", &http(200), ms, false),
-            json!({"event": "step", "step": "login", "status": 200, "ms": 412, "ok": true})
+            task("login", &http(200), ms, false),
+            json!({"event": "task", "task": "login", "status": 200, "ms": 412, "ok": true})
         );
         assert_eq!(
-            step("login", &http(404), ms, false),
-            json!({"event": "step", "step": "login", "status": 404, "ms": 412, "ok": false})
+            task("login", &http(404), ms, false),
+            json!({"event": "task", "task": "login", "status": 404, "ms": 412, "ok": false})
         );
         assert_eq!(
-            step("login", &http(404), ms, true),
-            json!({"event": "step", "step": "login", "status": 404, "ms": 412, "ok": false, "allowed": true})
+            task("login", &http(404), ms, true),
+            json!({"event": "task", "task": "login", "status": 404, "ms": 412, "ok": false, "allowed": true})
         );
-        let cmd = StepResult::cmd(3);
+        let cmd = TaskResult::cmd(3);
         assert_eq!(
-            step("check", &cmd, Duration::from_millis(5), false),
-            json!({"event": "step", "step": "check", "exit_code": 3, "ms": 5, "ok": false})
+            task("check", &cmd, Duration::from_millis(5), false),
+            json!({"event": "task", "task": "check", "exit_code": 3, "ms": 5, "ok": false})
         );
-        let errored = StepResult::Errored {
+        let errored = TaskResult::Errored {
             error: "request timed out after 5s".to_string(),
         };
         assert_eq!(
-            step("ping", &errored, Duration::from_millis(5003), true),
-            json!({"event": "step", "step": "ping", "error": "request timed out after 5s", "ms": 5003, "ok": false, "allowed": true})
+            task("ping", &errored, Duration::from_millis(5003), true),
+            json!({"event": "task", "task": "ping", "error": "request timed out after 5s", "ms": 5003, "ok": false, "allowed": true})
         );
     }
 
@@ -132,28 +132,28 @@ mod tests {
     fn formats_control_flow_events() {
         assert_eq!(
             branch("route", true, 1),
-            json!({"event": "branch", "step": "route", "arm": "then", "steps": 1})
+            json!({"event": "branch", "task": "route", "arm": "then", "tasks": 1})
         );
         assert_eq!(
             branch("route", false, 0),
-            json!({"event": "branch", "step": "route", "arm": "else", "steps": 0})
+            json!({"event": "branch", "task": "route", "arm": "else", "tasks": 0})
         );
         assert_eq!(
             switch("route", Some(2), 1),
-            json!({"event": "switch", "step": "route", "case": 2, "steps": 1})
+            json!({"event": "switch", "task": "route", "case": 2, "tasks": 1})
         );
         assert_eq!(
             switch("route", None, 0),
-            json!({"event": "switch", "step": "route", "case": "default", "steps": 0})
+            json!({"event": "switch", "task": "route", "case": "default", "tasks": 0})
         );
         assert_eq!(
             for_each("each", "IDS", 3),
-            json!({"event": "for_each", "step": "each", "var": "IDS", "items": 3})
+            json!({"event": "for_each", "task": "each", "var": "IDS", "items": 3})
         );
         let states = Map::from_iter([("A".to_string(), json!(1)), ("B".to_string(), json!("x"))]);
         assert_eq!(
             set("save", &states),
-            json!({"event": "set", "step": "save", "states": ["A", "B"]})
+            json!({"event": "set", "task": "save", "states": ["A", "B"]})
         );
     }
 }

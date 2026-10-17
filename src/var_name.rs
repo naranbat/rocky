@@ -1,15 +1,15 @@
-/// How a step or state name is checked, worded for error messages.
-pub const RULE: &str = "must start with a letter or `_`, contain only letters, digits and `_`, and not be `steps` or `states`";
+/// How a task or state name is checked, worded for error messages.
+pub const RULE: &str = "must start with a letter or `_`, contain only letters, digits and `_`, and not be `tasks` or `states`";
 
-/// Whether `name` can name a step or state: an identifier (`[A-Za-z_][A-Za-z0-9_]*`) other than
-/// `steps` and `states`, which the run sets itself.
+/// Whether `name` can name a task or state: an identifier (`[A-Za-z_][A-Za-z0-9_]*`) other than
+/// `tasks` and `states`, which the run sets itself.
 pub fn is_valid(name: &str) -> bool {
     let mut chars = name.chars();
     chars
         .next()
         .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
-        && !matches!(name, "steps" | "states")
+        && !matches!(name, "tasks" | "states")
 }
 
 /// How a loop `as` name is checked, worded for error messages.
@@ -38,7 +38,7 @@ mod tests {
 
     #[test]
     fn rejects_non_identifiers_and_reserved_names() {
-        for name in ["", "1A", "a.b", "a-b", "a}", "a b", "é", "steps", "states"] {
+        for name in ["", "1A", "a.b", "a-b", "a}", "a b", "é", "tasks", "states"] {
             assert!(!is_valid(name), "{name}");
         }
     }
@@ -48,7 +48,7 @@ mod tests {
         for name in ["A", "_X", "USER_ID2", "ITEM"] {
             assert!(is_valid_var(name), "{name}");
         }
-        for name in ["", "a", "Item", "1A", "A.B", "A-B", "É", "steps"] {
+        for name in ["", "a", "Item", "1A", "A.B", "A-B", "É", "tasks"] {
             assert!(!is_valid_var(name), "{name}");
         }
     }

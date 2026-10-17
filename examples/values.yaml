@@ -1,4 +1,4 @@
-# Fixed values: the project's are seen by every job, a job's only by its own steps.
+# Fixed values: the project's are seen by every job, a job's only by its own tasks.
 #   rocky exec examples/values.yaml greet
 values:
   GREETING: hello
@@ -10,7 +10,7 @@ jobs:
   greet:
     values:
       GREETING: hi            # wins over the project's GREETING in this job
-    steps:
+    tasks:
       say:
         cmd: [echo, '${GREETING} from ${SITE.name}, ${SITE.retries} retries']
       site:

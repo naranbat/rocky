@@ -1,6 +1,6 @@
 # Responses
 
-Every HTTP step produces the same JSON shape. It is what `rocky exec` prints when the step is last, and what `${steps.NAME...}` reads. The exception is a timeout or network error with `allow_failure`, whose result is just `{"error": "..."}`; see [Projects](projects.md#failures-and-allow_failure).
+Every HTTP task produces the same JSON shape. It is what `rocky exec` prints when the task is last, and what `${tasks.NAME...}` reads. The exception is a timeout or network error with `allow_failure`, whose result is just `{"error": "..."}`; see [Projects](projects.md#failures-and-allow_failure).
 
 ```json
 {
@@ -31,7 +31,7 @@ rocky exec project.yaml report | jq '.headers["x-request-id"]'
 rocky exec project.yaml report | jq .body
 ```
 
-Inside a job, use `${steps.NAME.status}`, `${steps.NAME.headers.x-request-id}` or `${steps.NAME.body.user.id}`. See [Projects](projects.md#using-earlier-steps-output).
+Inside a job, use `${tasks.NAME.status}`, `${tasks.NAME.headers.x-request-id}` or `${tasks.NAME.body.user.id}`. See [Projects](projects.md#using-earlier-tasks-output).
 
 ## Limitations
 

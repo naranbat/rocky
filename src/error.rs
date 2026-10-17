@@ -32,7 +32,7 @@ pub enum Error {
         source: Box<dyn std::error::Error + Send + Sync>,
     },
     #[error(
-        "variable `{0}` is not defined (checked steps, states, loop items, values, env_file, environment)"
+        "variable `{0}` is not defined (checked tasks, states, loop items, values, env_file, environment)"
     )]
     UndefinedVar(String),
     #[error("unclosed `${{` in `{0}`")]
@@ -41,16 +41,16 @@ pub enum Error {
     InvalidMethod(String),
     #[error("invalid header `{0}`")]
     InvalidHeader(String),
-    #[error("invalid step: {0}")]
-    InvalidStep(String),
+    #[error("invalid task: {0}")]
+    InvalidTask(String),
     #[error("invalid condition: {0}")]
     InvalidCondition(String),
     #[error("condition: {0}")]
     Condition(String),
     #[error("for_each: {0}")]
     Loop(String),
-    #[error("step `{name}` failed")]
-    Step {
+    #[error("task `{name}` failed")]
+    Task {
         name: String,
         #[source]
         source: Box<Error>,

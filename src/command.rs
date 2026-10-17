@@ -33,7 +33,7 @@ pub async fn run(
 ) -> Result<CommandResult, Error> {
     let (program, arguments) = argv
         .split_first()
-        .ok_or_else(|| Error::InvalidStep("`cmd` is empty".to_string()))?;
+        .ok_or_else(|| Error::InvalidTask("`cmd` is empty".to_string()))?;
     let spawn_error = |source| Error::Spawn {
         command: program.clone(),
         source,
@@ -311,7 +311,7 @@ mod tests {
     async fn empty_argv_is_invalid() {
         assert!(matches!(
             run_cmd(&[], None).await.unwrap_err(),
-            Error::InvalidStep(_)
+            Error::InvalidTask(_)
         ));
     }
 }

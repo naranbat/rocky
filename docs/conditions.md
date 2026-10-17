@@ -1,21 +1,21 @@
 # Conditions
 
-A step with `if` is a branch. If the condition holds, its `then` steps run; otherwise its `else` steps run. Either map may be left out, but not both. The job then continues with the step after the branch.
+A task with `if` is a branch. If the condition holds, its `then` tasks run; otherwise its `else` tasks run. Either map may be left out, but not both. The job then continues with the task after the branch.
 
 ```yaml
-steps:
+tasks:
   A:
     get: "${BASE}/stats"
   route:
-    if: { this: steps.A.body.count, gt: 10 }
+    if: { this: tasks.A.body.count, gt: 10 }
     then:
       B:
         post: "${BASE}/big"
     else:
       warn:                                   # else-if: nest a branch
         if:                                   # a list: every condition must hold
-          - { this: steps.A.body.message, contains: warning }
-          - not: { this: steps.A.body.message, matches: "^ignore" }
+          - { this: tasks.A.body.message, contains: warning }
+          - not: { this: tasks.A.body.message, matches: "^ignore" }
         then:
           C:
             post: "${BASE}/warn"
@@ -30,10 +30,10 @@ Example: the `conditional` job in [`examples/httpbin.yaml`](../examples/httpbin.
 | Field | Notes |
 |---|---|
 | `if` | The condition. |
-| `then` | Steps to run when it is true. |
-| `else` | Steps to run when it is false. |
+| `then` | Tasks to run when it is true. |
+| `else` | Tasks to run when it is false. |
 
-Like every step, a branch is named by its key, which labels it in errors and `run`'s log lines; a branch has no result to save.
+Like every task, a branch is named by its key, which labels it in errors and `run`'s log lines; a branch has no result to save.
 
 A branch can't also have `http`, `cmd`, `timeout` or `allow_failure`.
 
@@ -44,43 +44,43 @@ A condition is either `this` with **one or more** operators, or exactly one of `
 - **Several operators** must all hold, checked in the table's order and stopping at the first false: `{this: X, gt: 1, lt: 10}` is a range. `exists` can't be combined with other operators.
 - **A list** is shorthand for `all`: `if: [{this: A, eq: 1}, {this: B, eq: 2}]` is `if: {all: [...]}`. It works anywhere a condition does, including inside `all`, `any` and `not`.
 
-`this` names the variable or dot path to test, **without** `${}`: `this: steps.login.status`.
+`this` names the variable or dot path to test, **without** `${}`: `this: tasks.login.status`.
 
 | Operator | True when |
 |---|---|
-| `gt` / `gte` / `lt` / `lte`: number | The variable is `>` / `>=` / `<` / `<=` the number. The number may also be written as a numeric string (`gt: "10"`) or a `${...}` that expands to one (`gt: "${states.LAST_ID}"`). The variable must be a number or a numeric string (`"15"` counts, surrounding spaces are ignored); otherwise the step fails with ``condition: `X` is not a number (<value>)``. |
+| `gt` / `gte` / `lt` / `lte`: number | The variable is `>` / `>=` / `<` / `<=` the number. The number may also be written as a numeric string (`gt: "10"`) or a `${...}` that expands to one (`gt: "${states.LAST_ID}"`). The variable must be a number or a numeric string (`"15"` counts, surrounding spaces are ignored); otherwise the task fails with ``condition: `X` is not a number (<value>)``. |
 | `eq` / `ne`: value | Equal / not equal. If both sides are strings, they compare as text (`"1.1"` ≠ `"1.10"`). Otherwise, if both sides are numbers or numeric strings, they compare as numbers (`200` = `"200"` = `200.0`; integers compare exactly, however large). Otherwise, if either side is a string, they compare as text. Otherwise JSON equality (bool, null, arrays, objects). |
-| `contains`: value | String: contains the value as a substring. Array: some element `eq` the value. Object: has that key. Any other type fails the step. |
+| `contains`: value | String: contains the value as a substring. Array: some element `eq` the value. Object: has that key. Any other type fails the task. |
 | `matches`: regex | The regex matches anywhere in the variable's text (use `^`/`$` to anchor). Non-strings are matched against their compact JSON. |
-| `exists`: `true` / `false` | The variable is / isn't defined (a `null` value counts as defined). Never fails on an undefined variable, so `{this: steps.ping.error, exists: true}` tells whether a step with `allow_failure` hit a timeout or network error. |
+| `exists`: `true` / `false` | The variable is / isn't defined (a `null` value counts as defined). Never fails on an undefined variable, so `{this: tasks.ping.error, exists: true}` tells whether a task with `allow_failure` hit a timeout or network error. |
 | `all: [cond, …]` | Every condition is true. Stops at the first false. `all: []` is true. Same as the bare list `[cond, …]`. |
 | `any: [cond, …]` | At least one condition is true. Stops at the first true. `any: []` is false. |
 | `not: cond` | The condition is false. |
 
 ## Variable lookup
 
-`this` is looked up in this order: loop variables, `steps.NAME...` and `states.NAME`; then job `values`; then project `values`; then the project `env_file`; then the environment. An undefined variable fails the step, except with `exists`.
+`this` is looked up in this order: loop variables, `tasks.NAME...` and `states.NAME`; then job `values`; then project `values`; then the project `env_file`; then the environment. An undefined variable fails the task, except with `exists`.
 
 Values from env files and the environment are strings, which is why numeric strings are accepted by the number operators.
 
 ## Behaviour
 
-- Operator values other than `matches` may use `${...}`, expanded when the condition runs, to compare two variables: `{this: ID, gt: "${states.LAST_ID}"}`. A value that is exactly `"${NAME}"` keeps its JSON type; `$${` is a literal `${`. If a number operator's value doesn't expand to a number, the step fails with ``condition: `gt` needs a number, got ...``. `matches` is fixed.
-- Steps inside `then`/`else` are named by their keys and can contain further branches and [loops](loops.md). Their results are available to later steps.
+- Operator values other than `matches` may use `${...}`, expanded when the condition runs, to compare two variables: `{this: ID, gt: "${states.LAST_ID}"}`. A value that is exactly `"${NAME}"` keeps its JSON type; `$${` is a literal `${`. If a number operator's value doesn't expand to a number, the task fails with ``condition: `gt` needs a number, got ...``. `matches` is fixed.
+- Tasks inside `then`/`else` are named by their keys and can contain further branches and [loops](loops.md). Their results are available to later tasks.
 - If the chosen map is empty (only `then` given and the condition is false), nothing runs and the job continues.
 
 ## Switch
 
-A step with `switch` compares one variable against each key of `cases`, in order, and runs the steps of the first case that matches. If none matches, its `default` steps run. The job then continues with the step after the switch.
+A task with `switch` compares one variable against each key of `cases`, in order, and runs the tasks of the first case that matches. If none matches, its `default` tasks run. The job then continues with the task after the switch.
 
 ```yaml
-steps:
+tasks:
   check:
     get: "${BASE}/health"
     allow_failure: true
   route:
-    switch: steps.check.status                # a variable or dot path, without ${}
-    cases:                                    # value: steps to run
+    switch: tasks.check.status                # a variable or dot path, without ${}
+    cases:                                    # value: tasks to run
       200:
         healthy:
           cmd: [echo, healthy]
@@ -94,19 +94,19 @@ steps:
 
 | Field | Notes |
 |---|---|
-| `switch` | Required. The variable to compare, looked up like a condition's [`this`](#variable-lookup). An undefined variable fails the step. |
-| `cases` | Required, non-empty. A map of value → steps, tried in order. Each value is compared with the [`eq`](#condition-shape) rules, so `200` matches `"200"`; it's fixed (`${...}` isn't expanded). The exact same key can't appear twice; keys that are only equal by these rules (`200` and `"200"`) both load, and only the first can match. Each case needs at least one step. |
-| `default` | Optional. The steps to run when no case matches. Without it, nothing runs. |
+| `switch` | Required. The variable to compare, looked up like a condition's [`this`](#variable-lookup). An undefined variable fails the task. |
+| `cases` | Required, non-empty. A map of value → tasks, tried in order. Each value is compared with the [`eq`](#condition-shape) rules, so `200` matches `"200"`; it's fixed (`${...}` isn't expanded). The exact same key can't appear twice; keys that are only equal by these rules (`200` and `"200"`) both load, and only the first can match. Each case needs at least one task. |
+| `default` | Optional. The tasks to run when no case matches. Without it, nothing runs. |
 
-A switch can't also have `http`, `cmd`, `timeout`, `allow_failure`, `if`, `then` or `else`. Steps inside a case or `default` behave like those inside `then`/`else`.
+A switch can't also have `http`, `cmd`, `timeout`, `allow_failure`, `if`, `then` or `else`. Tasks inside a case or `default` behave like those inside `then`/`else`.
 
 ## Errors
 
-Conditions are checked when the project loads, before any step runs. A non-boolean for `exists`, an invalid regex or an unknown key fails as ``invalid YAML in <file>``, with the cause. An operator without `this`, `exists` combined with another operator, `this` mixed with `all`/`any`/`not`, or a non-number for `gt`/`gte`/`lt`/`lte` (other than a `${...}`) fails as an invalid condition, e.g.:
+Conditions are checked when the project loads, before any task runs. A non-boolean for `exists`, an invalid regex or an unknown key fails as ``invalid YAML in <file>``, with the cause. An operator without `this`, `exists` combined with another operator, `this` mixed with `all`/`any`/`not`, or a non-number for `gt`/`gte`/`lt`/`lte` (other than a `${...}`) fails as an invalid condition, e.g.:
 
 ```
 Error: job `w`
 
 Caused by:
-    invalid step: `route`: invalid condition: `gt` needs a number, got "ten"
+    invalid task: `route`: invalid condition: `gt` needs a number, got "ten"
 ```

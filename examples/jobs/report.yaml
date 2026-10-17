@@ -1,7 +1,7 @@
 # A job in its own file, used by imports.yaml. Paths are relative to this file.
 #   rocky exec examples/imports.yaml report
-steps:
-  login: ../steps/login.yaml         # a step from its own file
+tasks:
+  login: ../tasks/login.yaml         # a task from its own file
 
   today:
     cmd: [date, +%Y-%m-%d]
@@ -14,7 +14,7 @@ steps:
     post:
       url: ${BASE}/anything/report
       headers:
-        Authorization: Bearer ${steps.login.body.json.token}
+        Authorization: Bearer ${tasks.login.body.json.token}
       json:
-        user: ${steps.shout.stdout}
-        date: ${steps.today.stdout}
+        user: ${tasks.shout.stdout}
+        date: ${tasks.today.stdout}

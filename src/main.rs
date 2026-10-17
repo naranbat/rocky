@@ -18,7 +18,7 @@ struct Cli {
 enum Command {
     /// Run one job of a project.
     ///
-    /// Runs `http` and `cmd` steps in order, where later steps read earlier results as `${steps.NAME...}`. Prints the last result.
+    /// Runs `http` and `cmd` tasks in order, where later tasks read earlier results as `${tasks.NAME...}`. Prints the last result.
     Exec {
         file: PathBuf,
         /// The job to run.
@@ -26,13 +26,13 @@ enum Command {
     },
     /// Run a project's scheduled jobs.
     ///
-    /// Runs until stopped. Prints one JSON line per step, branch, switch, loop, state update and run, also appended to `logs/<date>.log`.
+    /// Runs until stopped. Prints one JSON line per task, branch, switch, loop, state update and run, also appended to `logs/<date>.log`.
     Run { file: PathBuf },
     /// Check a project for errors without running it.
     ///
-    /// Loads the project and its job and step files, and reports whether they are valid. Sends no requests and runs no commands.
+    /// Loads the project and its job and task files, and reports whether they are valid. Sends no requests and runs no commands.
     Validate { file: PathBuf },
-    /// Create a starter project, job or step file.
+    /// Create a starter project, job or task file.
     ///
     /// Never overwrites a file.
     New {
@@ -50,8 +50,8 @@ enum NewKind {
     Project { path: PathBuf },
     /// A job file, to list in a project's `jobs`.
     Job { path: PathBuf },
-    /// A step file, to list under a job's `steps` (`name: path`). Asks whether it's an HTTP or cmd step.
-    Step { path: PathBuf },
+    /// A task file, to list under a job's `tasks` (`name: path`). Asks whether it's an HTTP or cmd task.
+    Task { path: PathBuf },
 }
 
 #[tokio::main]
@@ -60,13 +60,13 @@ async fn main() -> anyhow::Result<()> {
         Command::Exec { file, job } => {
             let outcome = until_stopped(exec::exec(project::load(&file)?, &job, false)).await?;
             println!("{}", serde_json::to_string_pretty(&outcome.result)?);
-            if let Some(step) = outcome.failed_step {
+            if let Some(task) = outcome.failed_task {
                 let reason = outcome
                     .result
                     .as_ref()
-                    .and_then(exec::StepResult::failure)
+                    .and_then(exec::TaskResult::failure)
                     .unwrap_or_default();
-                anyhow::bail!("step `{step}` {reason}");
+                anyhow::bail!("task `{task}` {reason}");
             }
         }
         Command::Run { file } => until_stopped(run::run(&file)).await?,
@@ -79,12 +79,12 @@ async fn main() -> anyhow::Result<()> {
             let (kind, path) = match kind {
                 NewKind::Project { path } => (new::Kind::Project, path),
                 NewKind::Job { path } => (new::Kind::Job, path),
-                NewKind::Step { path } => {
+                NewKind::Task { path } => {
                     if path.exists() {
                         return Err(error::Error::Exists(path).into());
                     }
                     let http = new::ask_http(std::io::stdin().lock(), std::io::stderr())?;
-                    (new::Kind::Step { http }, path)
+                    (new::Kind::Task { http }, path)
                 }
             };
             println!("{}", new::create(kind, level, &path)?);

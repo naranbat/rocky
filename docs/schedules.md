@@ -7,9 +7,9 @@ schedules:
   poll: {every: 5m}
   report: {daily: "09:30"}
 jobs:
-  poll: {steps: {date: {cmd: [date]}}}
+  poll: {tasks: {date: {cmd: [date]}}}
   report: jobs/report.yaml
-  manual: {steps: {date: {cmd: [date]}}}     # not scheduled: `exec` only
+  manual: {tasks: {date: {cmd: [date]}}}     # not scheduled: `exec` only
 ```
 
 A job has at most one schedule. A name that isn't in `jobs` is an error: ``invalid project: schedule for unknown job `x` ``.

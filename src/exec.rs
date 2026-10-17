@@ -9,40 +9,40 @@ use crate::error::Error;
 use crate::project::Project;
 use crate::request::RequestSpec;
 use crate::response::Response;
-use crate::step::Step;
+use crate::task::Task;
 use crate::{condition, env_file, extract, http, progress, state, vars};
 
-/// What one step produced: an HTTP response, a finished command, or (with `allow_failure`)
+/// What one task produced: an HTTP response, a finished command, or (with `allow_failure`)
 /// the timeout or network error that stopped it.
 #[derive(Debug, Serialize)]
 #[serde(untagged)]
-pub enum StepResult {
+pub enum TaskResult {
     Http(Response),
     Cmd(CommandResult),
     Errored { error: String },
 }
 
-impl StepResult {
-    /// Why the step counts as failed: HTTP 4xx/5xx, a non-zero exit, or an error.
+impl TaskResult {
+    /// Why the task counts as failed: HTTP 4xx/5xx, a non-zero exit, or an error.
     pub fn failure(&self) -> Option<String> {
         match self {
-            StepResult::Http(response) if response.status >= 400 => {
+            TaskResult::Http(response) if response.status >= 400 => {
                 Some(format!("returned HTTP {}", response.status))
             }
-            StepResult::Cmd(result) if result.exit_code != 0 => {
+            TaskResult::Cmd(result) if result.exit_code != 0 => {
                 Some(format!("exited with code {}", result.exit_code))
             }
-            StepResult::Errored { error } => Some(error.clone()),
+            TaskResult::Errored { error } => Some(error.clone()),
             _ => None,
         }
     }
 }
 
 #[cfg(test)]
-impl StepResult {
+impl TaskResult {
     /// An HTTP result with `status`, no headers and no body.
     pub(crate) fn http(status: u16) -> Self {
-        StepResult::Http(Response {
+        TaskResult::Http(Response {
             status,
             headers: BTreeMap::new(),
             body: Value::Null,
@@ -52,7 +52,7 @@ impl StepResult {
 
     /// A command result with `exit_code` and no output.
     pub(crate) fn cmd(exit_code: i32) -> Self {
-        StepResult::Cmd(CommandResult {
+        TaskResult::Cmd(CommandResult {
             exit_code,
             stdout: Value::Null,
             stderr: String::new(),
@@ -61,45 +61,45 @@ impl StepResult {
 }
 
 pub struct Outcome {
-    /// The last step that ran, if any.
-    pub result: Option<StepResult>,
-    /// Set when a step failed without `allow_failure`; later steps did not run.
-    pub failed_step: Option<String>,
+    /// The last task that ran, if any.
+    pub result: Option<TaskResult>,
+    /// Set when a task failed without `allow_failure`; later tasks did not run.
+    pub failed_task: Option<String>,
 }
 
-/// Queued work: a step to run with its label, or a loop's remaining items.
+/// Queued work: a task to run with its label, or a loop's remaining items.
 enum Work {
-    Step { step: Box<Step>, name: String },
+    Task { task: Box<Task>, name: String },
     Loop(Box<Loop>),
 }
 
 /// Per remaining item, bind `var` to it and run `body`; then restore `var` to `previous`
 /// (`None` unbinds it). Expanded one item at a time, so memory stays O(`body`).
 struct Loop {
-    body: Vec<Step>,
+    body: Vec<Task>,
     var: String,
     items: std::vec::IntoIter<Value>,
     previous: Option<Value>,
 }
 
-/// `steps` as work, in order.
-fn queued(steps: Vec<Step>) -> impl DoubleEndedIterator<Item = Work> {
-    steps.into_iter().map(|step| Work::Step {
-        name: step.name.clone(),
-        step: Box::new(step),
+/// `tasks` as work, in order.
+fn queued(tasks: Vec<Task>) -> impl DoubleEndedIterator<Item = Work> {
+    tasks.into_iter().map(|task| Work::Task {
+        name: task.name.clone(),
+        task: Box::new(task),
     })
 }
 
-/// Runs the project's `job` steps in order; later steps read earlier results as
-/// `steps.NAME`. A branch's chosen `then`/`else` steps, or a switch's matching case or
-/// `default`, run in its place; a loop's `do` steps run once per list element, with the
+/// Runs the project's `job` tasks in order; later tasks read earlier results as
+/// `tasks.NAME`. A branch's chosen `then`/`else` tasks, or a switch's matching case or
+/// `default`, run in its place; a loop's `do` tasks run once per list element, with the
 /// element bound to its `as` variable.
 /// The job's `values` (the project's merged in at load) are read as `${NAME}`.
 /// The job's `states` defaults are read from `states/<job>.json` next to the project (created from
 /// the defaults if missing) as `states.NAME`, and each `set.states` writes it back right away.
-/// With `log`, one JSON line per step, branch or switch decision, and loop is printed to stdout.
+/// With `log`, one JSON line per task, branch or switch decision, and loop is printed to stdout.
 pub async fn exec(mut project: Project, job: &str, log: bool) -> Result<Outcome, Error> {
-    let steps = project.take(job)?;
+    let tasks = project.take(job)?;
     let env: Map<String, Value> = match project.env_file.clone() {
         Some(path) => tokio::task::spawn_blocking(move || env_file::load(&path)).await??,
         None => BTreeMap::new(),
@@ -108,21 +108,21 @@ pub async fn exec(mut project: Project, job: &str, log: bool) -> Result<Outcome,
     .map(|(name, value)| (name, Value::String(value)))
     .collect();
 
-    let mut values: Map<String, Value> = steps.values.into_iter().collect();
+    let mut values: Map<String, Value> = tasks.values.into_iter().collect();
     let state_path = project.dir.join("states").join(format!("{job}.json"));
     let mut state = Map::new();
-    if !steps.states.is_empty() {
-        let (path, defaults) = (state_path.clone(), steps.states.clone());
+    if !tasks.states.is_empty() {
+        let (path, defaults) = (state_path.clone(), tasks.states.clone());
         state = tokio::task::spawn_blocking(move || state::load(&path, &defaults)).await??;
         values.insert("states".to_string(), Value::Object(state.clone()));
     }
     let mut last = None;
     let mut clients = http::Clients::default();
-    // Next work last, so nested steps are pushed in reverse to run in place.
-    let mut stack: Vec<Work> = queued(steps.steps).rev().collect();
+    // Next work last, so nested tasks are pushed in reverse to run in place.
+    let mut stack: Vec<Work> = queued(tasks.tasks).rev().collect();
     while let Some(work) = stack.pop() {
-        let (mut step, name) = match work {
-            Work::Step { step, name } => (*step, name),
+        let (mut task, name) = match work {
+            Work::Task { task, name } => (*task, name),
             Work::Loop(mut each) => {
                 if let Some(item) = each.items.next() {
                     values.insert(each.var.clone(), item);
@@ -138,21 +138,21 @@ pub async fn exec(mut project: Project, job: &str, log: bool) -> Result<Outcome,
                 continue;
             }
         };
-        let to_step_error = |source| Error::Step {
+        let to_task_error = |source| Error::Task {
             name: name.clone(),
             source: Box::new(source),
         };
 
-        if let Some(set) = step.set.take() {
+        if let Some(set) = task.set.take() {
             let mut states = Map::new();
             for (var, mut value) in set.states {
                 vars::substitute_value(&mut value, &|var| lookup(var, &values, &env))
-                    .map_err(to_step_error)?;
+                    .map_err(to_task_error)?;
                 states.insert(var, value);
             }
             let mut saved = state.clone();
             saved.extend(states.clone());
-            state::save(&state_path, &saved).map_err(to_step_error)?;
+            state::save(&state_path, &saved).map_err(to_task_error)?;
             state = saved;
             values.insert("states".to_string(), Value::Object(state.clone()));
             // Logged once the states are saved, so a failed save isn't logged as set.
@@ -162,11 +162,11 @@ pub async fn exec(mut project: Project, job: &str, log: bool) -> Result<Outcome,
             continue;
         }
 
-        if let Some(condition) = step.condition.take() {
+        if let Some(condition) = task.condition.take() {
             let taken = condition
                 .evaluate(&|var| lookup(var, &values, &env))
-                .map_err(to_step_error)?;
-            let chosen = if taken { step.then } else { step.otherwise };
+                .map_err(to_task_error)?;
+            let chosen = if taken { task.then } else { task.otherwise };
             if log {
                 progress::emit(job, progress::branch(&name, taken, chosen.len())).await;
             }
@@ -174,17 +174,17 @@ pub async fn exec(mut project: Project, job: &str, log: bool) -> Result<Outcome,
             continue;
         }
 
-        if let Some(var) = step.switch.take() {
+        if let Some(var) = task.switch.take() {
             let value = lookup(&var, &values, &env)
-                .ok_or_else(|| to_step_error(Error::UndefinedVar(var)))?;
-            let matched = step
+                .ok_or_else(|| to_task_error(Error::UndefinedVar(var)))?;
+            let matched = task
                 .cases
                 .into_iter()
                 .enumerate()
                 .find(|(_, case)| condition::loose_eq(&value, &case.value));
             let (case, chosen) = match matched {
                 Some((index, case)) => (Some(index + 1), case.body),
-                None => (None, step.default),
+                None => (None, task.default),
             };
             if log {
                 progress::emit(job, progress::switch(&name, case, chosen.len())).await;
@@ -193,22 +193,22 @@ pub async fn exec(mut project: Project, job: &str, log: bool) -> Result<Outcome,
             continue;
         }
 
-        if let Some(list_var) = step.for_each.take() {
+        if let Some(list_var) = task.for_each.take() {
             let items = match lookup(&list_var, &values, &env) {
                 Some(Value::Array(items)) => items,
                 Some(other) => {
-                    return Err(to_step_error(Error::Loop(format!(
+                    return Err(to_task_error(Error::Loop(format!(
                         "`{list_var}` is not a list ({other})"
                     ))));
                 }
-                None => return Err(to_step_error(Error::UndefinedVar(list_var))),
+                None => return Err(to_task_error(Error::UndefinedVar(list_var))),
             };
             if log {
                 progress::emit(job, progress::for_each(&name, &list_var, items.len())).await;
             }
-            let var = step.item_var.unwrap_or_else(|| "ITEM".to_string());
+            let var = task.item_var.unwrap_or_else(|| "ITEM".to_string());
             stack.push(Work::Loop(Box::new(Loop {
-                body: step.body,
+                body: task.body,
                 previous: values.get(&var).cloned(),
                 var,
                 items: items.into_iter(),
@@ -216,71 +216,71 @@ pub async fn exec(mut project: Project, job: &str, log: bool) -> Result<Outcome,
             continue;
         }
 
-        let allow_failure = step.allow_failure;
+        let allow_failure = task.allow_failure;
         let started = Instant::now();
-        let result = run_step(step, &mut values, &env, &mut clients)
+        let result = run_task(task, &mut values, &env, &mut clients)
             .await
-            .map_err(to_step_error)?;
+            .map_err(to_task_error)?;
         if log {
             progress::emit(
                 job,
-                progress::step(&name, &result, started.elapsed(), allow_failure),
+                progress::task(&name, &result, started.elapsed(), allow_failure),
             )
             .await;
         }
         if result.failure().is_some() && !allow_failure {
             return Ok(Outcome {
                 result: Some(result),
-                failed_step: Some(name),
+                failed_task: Some(name),
             });
         }
         last = Some(result);
     }
     Ok(Outcome {
         result: last,
-        failed_step: None,
+        failed_task: None,
     })
 }
 
-/// Runs one step and records its result as `steps.<name>` in `values`. With `allow_failure`, a
-/// timeout or network error becomes an [`StepResult::Errored`] result instead of an error.
-async fn run_step(
-    mut step: Step,
+/// Runs one task and records its result as `tasks.<name>` in `values`. With `allow_failure`, a
+/// timeout or network error becomes an [`TaskResult::Errored`] result instead of an error.
+async fn run_task(
+    mut task: Task,
     values: &mut Map<String, Value>,
     env: &Map<String, Value>,
     clients: &mut http::Clients,
-) -> Result<StepResult, Error> {
-    let request = step.http.take();
-    let result = match perform(&step, request, values, env, clients).await {
-        // A request that couldn't be built (a bad URL or header) is a mistake in the step,
+) -> Result<TaskResult, Error> {
+    let request = task.http.take();
+    let result = match perform(&task, request, values, env, clients).await {
+        // A request that couldn't be built (a bad URL or header) is a mistake in the task,
         // not a network error.
         Err(err @ (Error::Timeout(_) | Error::CommandTimeout { .. }))
         | Err(err @ Error::Http(_))
-            if step.allow_failure && !matches!(&err, Error::Http(e) if e.is_builder()) =>
+            if task.allow_failure && !matches!(&err, Error::Http(e) if e.is_builder()) =>
         {
-            StepResult::Errored { error: err.chain() }
+            TaskResult::Errored { error: err.chain() }
         }
         result => result?,
     };
-    if let Value::Object(steps) = values.entry("steps").or_insert_with(|| json!({})) {
-        steps.insert(step.name.clone(), json!(result));
+    if let Value::Object(tasks) = values.entry("tasks").or_insert_with(|| json!({})) {
+        tasks.insert(task.name.clone(), json!(result));
     }
     Ok(result)
 }
 
-/// Performs an HTTP (`request`) or cmd step.
+/// Performs an HTTP (`request`) or cmd task.
 async fn perform(
-    step: &Step,
+    task: &Task,
     request: Option<RequestSpec>,
     values: &Map<String, Value>,
     env: &Map<String, Value>,
     clients: &mut http::Clients,
-) -> Result<StepResult, Error> {
+) -> Result<TaskResult, Error> {
     let find = |var: &str| lookup(var, values, env);
-    match (request, &step.cmd) {
-        (Some(spec), None) => send(spec, step.timeout, &find, clients).await,
-        (None, Some(argv)) => execute(argv, step, &find).await,
-        _ => Err(Error::InvalidStep(
+    match (request, &task.cmd) {
+        (Some(spec), None) => send(spec, task.timeout, &find, clients).await,
+        (None, Some(argv)) => execute(argv, task, &find).await,
+        _ => Err(Error::InvalidTask(
             "must have exactly one of `http` or `cmd`".to_string(),
         )),
     }
@@ -292,31 +292,31 @@ async fn send(
     timeout: Option<u64>,
     find: &(dyn Fn(&str) -> Option<Value> + Sync),
     clients: &mut http::Clients,
-) -> Result<StepResult, Error> {
+) -> Result<TaskResult, Error> {
     let spec = vars::apply_with(spec, find)?;
     let response = http::send(clients, &spec, timeout).await?;
-    Ok(StepResult::Http(response))
+    Ok(TaskResult::Http(response))
 }
 
-/// Runs `argv` with `step`'s `stdin`, `env`, `cwd`, `timeout` and `capture_stdout`.
+/// Runs `argv` with `task`'s `stdin`, `env`, `cwd`, `timeout` and `capture_stdout`.
 async fn execute(
     argv: &[String],
-    step: &Step,
+    task: &Task,
     find: &(dyn Fn(&str) -> Option<Value> + Sync),
-) -> Result<StepResult, Error> {
+) -> Result<TaskResult, Error> {
     let substitute = |text: &str| vars::substitute(text, find);
-    let cwd = step
+    let cwd = task
         .cwd
         .as_deref()
-        .map(|path| substitute(&path.to_string_lossy()).map(|path| step.dir.join(path)))
+        .map(|path| substitute(&path.to_string_lossy()).map(|path| task.dir.join(path)))
         .transpose()?;
     let argv = argv
         .iter()
         .map(|arg| substitute(arg))
         .collect::<Result<Vec<_>, _>>()?;
-    let stdin = render(step.stdin.clone(), find)?;
+    let stdin = render(task.stdin.clone(), find)?;
     let mut rendered = BTreeMap::new();
-    for (name, value) in &step.env {
+    for (name, value) in &task.env {
         if let Some(text) = render(Some(value.clone()), find)? {
             rendered.insert(name.clone(), text);
         }
@@ -326,11 +326,11 @@ async fn execute(
         stdin.as_deref(),
         &rendered,
         cwd.as_deref(),
-        step.timeout,
-        step.capture_stdout.unwrap_or(true),
+        task.timeout,
+        task.capture_stdout.unwrap_or(true),
     )
     .await?;
-    Ok(StepResult::Cmd(result))
+    Ok(TaskResult::Cmd(result))
 }
 
 /// Substitutes `${VAR}` in `value` and turns it into text: a string as-is, anything else as JSON.
@@ -345,8 +345,8 @@ fn render(
     Ok(Some(extract::text(&value)))
 }
 
-/// Looks `var` up in `steps`, `states`, loop items and `values` (dot paths such as
-/// `steps.login.body.token` included), then the env_file in `env`, then the process environment.
+/// Looks `var` up in `tasks`, `states`, loop items and `values` (dot paths such as
+/// `tasks.login.body.token` included), then the env_file in `env`, then the process environment.
 fn lookup(var: &str, values: &Map<String, Value>, env: &Map<String, Value>) -> Option<Value> {
     extract::lookup(values, var)
         .or_else(|| env.get(var).cloned())
@@ -371,7 +371,7 @@ mod tests {
     /// Like [`project`], with the job's paths relative to `dir`.
     fn project_in(dir: &Path, yaml: &str) -> Project {
         let mut job: Job = serde_yaml::from_str(yaml).unwrap();
-        crate::step::resolve(&mut job.steps, dir).unwrap();
+        crate::task::resolve(&mut job.tasks, dir).unwrap();
         Project {
             dir: dir.to_path_buf(),
             env_file: None,
@@ -384,12 +384,12 @@ mod tests {
         super::exec(project, "w", false).await
     }
 
-    /// The failing step's name and its error, for a run that must fail in a step.
-    async fn step_error(project: Project) -> (String, Error) {
+    /// The failing task's name and its error, for a run that must fail in a task.
+    async fn task_error(project: Project) -> (String, Error) {
         match exec(project).await {
-            Err(Error::Step { name, source }) => (name, *source),
-            Err(err) => panic!("expected a step error, got {err}"),
-            Ok(_) => panic!("expected a step error, got success"),
+            Err(Error::Task { name, source }) => (name, *source),
+            Err(err) => panic!("expected a task error, got {err}"),
+            Ok(_) => panic!("expected a task error, got success"),
         }
     }
 
@@ -419,15 +419,15 @@ mod tests {
         }
     }
 
-    /// A first step `seed` that prints `values`, so later steps read them as
-    /// `steps.seed.stdout.NAME`, keeping their JSON type.
+    /// A first task `seed` that prints `values`, so later tasks read them as
+    /// `tasks.seed.stdout.NAME`, keeping their JSON type.
     fn seed(values: Value) -> String {
-        format!("steps:\n  seed:\n    cmd: [echo, '{values}']\n")
+        format!("tasks:\n  seed:\n    cmd: [echo, '{values}']\n")
     }
 
     fn stdout(outcome: &Outcome) -> &Value {
         match &outcome.result {
-            Some(StepResult::Cmd(result)) => &result.stdout,
+            Some(TaskResult::Cmd(result)) => &result.stdout,
             _ => panic!("expected a cmd result"),
         }
     }
@@ -435,7 +435,7 @@ mod tests {
     #[tokio::test]
     async fn substituted_values_stay_one_argument() {
         let (project, _dir) = project_with_env(
-            "steps:\n  e:\n    cmd: [echo, '${X}']\n",
+            "tasks:\n  e:\n    cmd: [echo, '${X}']\n",
             &[("X", "a; echo injected  b")],
         );
         let outcome = exec(project).await.unwrap();
@@ -443,49 +443,49 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn step_files_are_recorded_under_their_key() {
+    async fn task_files_are_recorded_under_their_key() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("greet.yaml"), "cmd: [echo, 'hi file']\n").unwrap();
         let project = project_in(
             dir.path(),
-            "steps:\n  hello: greet.yaml\n  print:\n    cmd: [echo, '${steps.hello.stdout}!']\n",
+            "tasks:\n  hello: greet.yaml\n  print:\n    cmd: [echo, '${tasks.hello.stdout}!']\n",
         );
         let outcome = exec(project).await.unwrap();
         assert_eq!(stdout(&outcome), &json!("hi file!"));
     }
 
     #[tokio::test]
-    async fn skipped_branch_with_no_step_run_succeeds_without_result() {
+    async fn skipped_branch_with_no_task_run_succeeds_without_result() {
         let (project, _dir) = project_with_env(
-            "steps:\n  r:\n    if: {this: X, eq: 1}\n    then: {a: {cmd: [echo, hi]}}\n",
+            "tasks:\n  r:\n    if: {this: X, eq: 1}\n    then: {a: {cmd: [echo, hi]}}\n",
             &[("X", "2")],
         );
         let outcome = exec(project).await.unwrap();
         assert!(outcome.result.is_none());
-        assert_eq!(outcome.failed_step, None);
+        assert_eq!(outcome.failed_task, None);
     }
 
     /// Both runs wait for a 1s timeout, so they run concurrently.
     #[tokio::test]
     async fn timeout_fails_unless_allowed_then_exists_sees_the_error() {
-        let allowed = "steps:\n\
+        let allowed = "tasks:\n\
                        \x20 slow:\n    cmd: [sleep, '5']\n    timeout: 1\n    allow_failure: true\n\
-                       \x20 check:\n    if: {this: steps.slow.error, exists: true}\n\
-                       \x20   then: {errored: {cmd: [echo, '${steps.slow.error}']}}\n    else: {ok: {cmd: [echo, ok]}}\n";
+                       \x20 check:\n    if: {this: tasks.slow.error, exists: true}\n\
+                       \x20   then: {errored: {cmd: [echo, '${tasks.slow.error}']}}\n    else: {ok: {cmd: [echo, ok]}}\n";
         let (allowed, failed) = tokio::join!(
             exec(project(allowed)),
             exec(project(
-                "steps:\n  slow:\n    cmd: [sleep, '5']\n    timeout: 1\n"
+                "tasks:\n  slow:\n    cmd: [sleep, '5']\n    timeout: 1\n"
             )),
         );
         let outcome = allowed.unwrap();
-        assert_eq!(outcome.failed_step, None);
+        assert_eq!(outcome.failed_task, None);
         assert_eq!(
             stdout(&outcome),
             &json!("command `sleep` timed out after 1s")
         );
-        let Err(Error::Step { source, .. }) = failed else {
-            panic!("expected a step error");
+        let Err(Error::Task { source, .. }) = failed else {
+            panic!("expected a task error");
         };
         assert!(matches!(*source, Error::CommandTimeout { .. }), "{source}");
     }
@@ -494,7 +494,7 @@ mod tests {
     async fn branch_runs_chosen_arm() {
         let outcome = exec(
             project(&format!(
-                "{}  size:\n    if: {{this: steps.seed.stdout.N, gt: 3}}\n    then: {{big: {{cmd: [echo, big]}}}}\n    else: {{small: {{cmd: [echo, small]}}}}\n",
+                "{}  size:\n    if: {{this: tasks.seed.stdout.N, gt: 3}}\n    then: {{big: {{cmd: [echo, big]}}}}\n    else: {{small: {{cmd: [echo, small]}}}}\n",
                 seed(json!({"N": 5}))
             )))
         .await
@@ -513,7 +513,7 @@ mod tests {
         };
         project(&format!(
             "{}\
-             \x20 route:\n    switch: steps.seed.stdout.N\n    cases:\n\
+             \x20 route:\n    switch: tasks.seed.stdout.N\n    cases:\n\
              \x20     200: {}\n\
              \x20     \"404\": {}\n\
              \x20     404: {}\n\
@@ -547,8 +547,8 @@ mod tests {
 
     #[tokio::test]
     async fn switch_on_undefined_var_errors() {
-        let (name, err) = step_error(project(
-            "steps:\n  s:\n    switch: NOPE_UNDEFINED\n    cases: {1: {e: {cmd: [echo]}}}\n",
+        let (name, err) = task_error(project(
+            "tasks:\n  s:\n    switch: NOPE_UNDEFINED\n    cases: {1: {e: {cmd: [echo]}}}\n",
         ))
         .await;
         assert_eq!(name, "s");
@@ -562,7 +562,7 @@ mod tests {
             dir.path(),
             &format!(
                 "states: {{ACC: start}}\n{}\
-                     \x20 each:\n    for_each: steps.seed.stdout.IDS\n    as: ID\n    do:\n\
+                     \x20 each:\n    for_each: tasks.seed.stdout.IDS\n    as: ID\n    do:\n\
                      \x20     add:\n        set: {{states: {{ACC: '${{states.ACC}}-${{ID}}'}}}}\n\
                      \x20 print:\n    cmd: [echo, '${{states.ACC}}']\n",
                 seed(json!({"IDS": [1, 2, 3]}))
@@ -578,9 +578,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let outcome = exec(project_in(
             dir.path(),
-            "states: {ACC: ''}\nsteps:\n\
+            "states: {ACC: ''}\ntasks:\n\
              \x20 list:\n    cmd: [echo, '[{\"id\": 1, \"ok\": true}, {\"id\": 2, \"ok\": false}]']\n\
-             \x20 each:\n    for_each: steps.list.stdout\n    do:\n\
+             \x20 each:\n    for_each: tasks.list.stdout\n    do:\n\
              \x20     check:\n        if: {this: ITEM.ok, eq: true}\n        then:\n\
              \x20         plus:\n            set: {states: {ACC: '${states.ACC}+${ITEM.id}'}}\n        else:\n\
              \x20         minus:\n            set: {states: {ACC: '${states.ACC}-${ITEM.id}'}}\n\
@@ -598,8 +598,8 @@ mod tests {
             dir.path(),
             &format!(
                 "states: {{ACC: ''}}\n{}\
-                 \x20 go:\n    if: {{this: steps.seed.stdout.GO, eq: true}}\n    then:\n\
-                 \x20     rows:\n        for_each: steps.seed.stdout.ROWS\n        as: ROW\n        do:\n\
+                 \x20 go:\n    if: {{this: tasks.seed.stdout.GO, eq: true}}\n    then:\n\
+                 \x20     rows:\n        for_each: tasks.seed.stdout.ROWS\n        as: ROW\n        do:\n\
                  \x20         cells:\n            for_each: ROW\n            as: CELL\n            do:\n\
                  \x20             add:\n                set: {{states: {{ACC: '${{states.ACC}}${{CELL}}'}}}}\n\
                  \x20 print:\n    cmd: [echo, '${{states.ACC}}']\n",
@@ -616,8 +616,8 @@ mod tests {
         let outcome = exec(
             project(&format!(
                 "{}\
-                 \x20 outer:\n    for_each: steps.seed.stdout.OUTER\n    as: X\n    do:\n\
-                 \x20     inner:\n        for_each: steps.seed.stdout.INNER\n        as: X\n        do: {{e: {{cmd: [echo, '${{X}}']}}}}\n\
+                 \x20 outer:\n    for_each: tasks.seed.stdout.OUTER\n    as: X\n    do:\n\
+                 \x20     inner:\n        for_each: tasks.seed.stdout.INNER\n        as: X\n        do: {{e: {{cmd: [echo, '${{X}}']}}}}\n\
                  \x20     print:\n        cmd: [echo, '${{X}}']\n",
                 seed(json!({"OUTER": ["before"], "INNER": [1, 2]}))
             )))
@@ -625,10 +625,10 @@ mod tests {
         .unwrap();
         assert_eq!(stdout(&outcome), &json!("before"));
 
-        let (_, err) = step_error(
+        let (_, err) = task_error(
             project(&format!(
                 "{}\
-                 \x20 each:\n    for_each: steps.seed.stdout.IDS\n    as: NOPE_X\n    do: {{e: {{cmd: [echo, '${{NOPE_X}}']}}}}\n\
+                 \x20 each:\n    for_each: tasks.seed.stdout.IDS\n    as: NOPE_X\n    do: {{e: {{cmd: [echo, '${{NOPE_X}}']}}}}\n\
                  \x20 print:\n    cmd: [echo, '${{NOPE_X}}']\n",
                 seed(json!({"IDS": [1]}))
             )))
@@ -641,41 +641,41 @@ mod tests {
 
     #[tokio::test]
     async fn for_each_needs_a_defined_list() {
-        let yaml = "steps:\n  each:\n    for_each: NOPE_L\n    do: {e: {cmd: [echo]}}\n";
+        let yaml = "tasks:\n  each:\n    for_each: NOPE_L\n    do: {e: {cmd: [echo]}}\n";
         let (strings, _dir) = project_with_env(yaml, &[("NOPE_L", "a,b")]);
-        let (name, err) = step_error(strings).await;
+        let (name, err) = task_error(strings).await;
         assert_eq!(name, "each");
         assert!(matches!(err, Error::Loop(_)), "{err}");
-        let (name, err) = step_error(project(yaml)).await;
+        let (name, err) = task_error(project(yaml)).await;
         assert_eq!(name, "each");
         assert!(matches!(err, Error::UndefinedVar(_)), "{err}");
     }
 
     #[tokio::test]
-    async fn failing_step_in_loop_stops_job() {
+    async fn failing_task_in_loop_stops_job() {
         let outcome = exec(
             project(&format!(
                 "{}\
-                 \x20 each:\n    for_each: steps.seed.stdout.CODES\n    do:\n      check:\n        cmd: [sh, -c, 'exit ${{ITEM}}']\n\
+                 \x20 each:\n    for_each: tasks.seed.stdout.CODES\n    do:\n      check:\n        cmd: [sh, -c, 'exit ${{ITEM}}']\n\
                  \x20 never:\n    cmd: [echo, never]\n",
                 seed(json!({"CODES": [0, 5, 0]}))
             )))
         .await
         .unwrap();
-        assert_eq!(outcome.failed_step.as_deref(), Some("check"));
+        assert_eq!(outcome.failed_task.as_deref(), Some("check"));
         assert_eq!(
             outcome
                 .result
                 .as_ref()
-                .and_then(StepResult::failure)
+                .and_then(TaskResult::failure)
                 .as_deref(),
             Some("exited with code 5")
         );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-    async fn cmd_step_does_not_block_other_tasks() {
-        let cmd = tokio::spawn(exec(project("steps:\n  sleep:\n    cmd: [sleep, '1']\n")));
+    async fn cmd_task_does_not_block_other_tasks() {
+        let cmd = tokio::spawn(exec(project("tasks:\n  sleep:\n    cmd: [sleep, '1']\n")));
         let started = Instant::now();
         let timer = tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
@@ -689,7 +689,7 @@ mod tests {
     #[tokio::test]
     async fn capture_stdout_false_discards_stdout() {
         let outcome = exec(project(
-            "steps:\n  e:\n    cmd: [echo, hi]\n    capture_stdout: false\n",
+            "tasks:\n  e:\n    cmd: [echo, hi]\n    capture_stdout: false\n",
         ))
         .await
         .unwrap();
@@ -697,9 +697,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cmd_errors_carry_step_name() {
-        let (name, err) = step_error(project(
-            "steps:\n  r:\n    if: {this: NOPE_UNDEFINED, exists: false}\n    then:\n\
+    async fn cmd_errors_carry_task_name() {
+        let (name, err) = task_error(project(
+            "tasks:\n  r:\n    if: {this: NOPE_UNDEFINED, exists: false}\n    then:\n\
                  \x20     inner:\n        cmd: [echo, '${NOPE_UNDEFINED}']\n",
         ))
         .await;
@@ -711,14 +711,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn named_steps_are_readable_by_path_and_stdin() {
+    async fn named_tasks_are_readable_by_path_and_stdin() {
         let outcome = exec(
             project(
-                "steps:\n\
+                "tasks:\n\
                  \x20 produce:\n    cmd: [echo, '{\"items\": [1, 2, 3]}']\n\
-                 \x20 piped:\n    cmd: [cat]\n    stdin: ${steps.produce.stdout}\n\
-                 \x20 check:\n    if: {this: steps.piped.stdout.items.2, eq: 3}\n    then:\n\
-                 \x20     print:\n        cmd: [echo, 'first=${steps.produce.stdout.items.0} code=${steps.piped.exit_code}']\n",
+                 \x20 piped:\n    cmd: [cat]\n    stdin: ${tasks.produce.stdout}\n\
+                 \x20 check:\n    if: {this: tasks.piped.stdout.items.2, eq: 3}\n    then:\n\
+                 \x20     print:\n        cmd: [echo, 'first=${tasks.produce.stdout.items.0} code=${tasks.piped.exit_code}']\n",
             ))
         .await
         .unwrap();
@@ -726,15 +726,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn failed_step_with_allow_failure_is_recorded() {
+    async fn failed_task_with_allow_failure_is_recorded() {
         let outcome = exec(project(
-            "steps:\n\
+            "tasks:\n\
                  \x20 check:\n    cmd: [sh, -c, 'echo nope >&2; exit 4']\n    allow_failure: true\n\
-                 \x20 print:\n    cmd: [echo, '${steps.check.exit_code}:${steps.check.stderr}']\n",
+                 \x20 print:\n    cmd: [echo, '${tasks.check.exit_code}:${tasks.check.stderr}']\n",
         ))
         .await
         .unwrap();
-        assert_eq!(outcome.failed_step, None);
+        assert_eq!(outcome.failed_task, None);
         assert_eq!(stdout(&outcome), &json!("4:nope"));
     }
 
@@ -742,7 +742,7 @@ mod tests {
     async fn stdin_is_substituted_and_non_strings_become_json() {
         let outcome = exec(
             project(&format!(
-                "{}  cat:\n    cmd: [cat]\n    stdin: {{n: '${{steps.seed.stdout.N}}', s: 'x=${{steps.seed.stdout.N}}'}}\n",
+                "{}  cat:\n    cmd: [cat]\n    stdin: {{n: '${{tasks.seed.stdout.N}}', s: 'x=${{tasks.seed.stdout.N}}'}}\n",
                 seed(json!({"N": 5}))
             )))
         .await
@@ -754,7 +754,7 @@ mod tests {
     async fn env_is_substituted_and_non_strings_become_json() {
         let outcome = exec(
             project(&format!(
-                "{}  env:\n    cmd: [sh, -c, 'printf \"%s|%s\" \"$A\" \"$B\"']\n    env: {{A: 'x=${{steps.seed.stdout.N}}', B: {{n: '${{steps.seed.stdout.N}}'}}}}\n",
+                "{}  env:\n    cmd: [sh, -c, 'printf \"%s|%s\" \"$A\" \"$B\"']\n    env: {{A: 'x=${{tasks.seed.stdout.N}}', B: {{n: '${{tasks.seed.stdout.N}}'}}}}\n",
                 seed(json!({"N": 5}))
             )))
         .await
@@ -769,9 +769,9 @@ mod tests {
             dir.path(),
             &format!(
                 "{}\
-                 \x20 write:\n    cmd: [sh, -c, 'cat > \"$1\"', _, '${{steps.seed.stdout.NAME}}.json']\n    stdin: {{n: '${{steps.seed.stdout.N}}'}}\n    cwd: .\n\
+                 \x20 write:\n    cmd: [sh, -c, 'cat > \"$1\"', _, '${{tasks.seed.stdout.NAME}}.json']\n    stdin: {{n: '${{tasks.seed.stdout.N}}'}}\n    cwd: .\n\
                  \x20 read:\n    cmd: [cat, out.json]\n    cwd: .\n\
-                 \x20 print:\n    cmd: [echo, '${{steps.read.stdout.n}}']\n",
+                 \x20 print:\n    cmd: [echo, '${{tasks.read.stdout.n}}']\n",
                 seed(json!({"NAME": "out", "N": 7}))
             ),
         );
@@ -792,8 +792,8 @@ mod tests {
             dir.path(),
             &format!(
                 "{}\
-                 \x20 rel:\n    cmd: [touch, rel]\n    cwd: '${{steps.seed.stdout.SUB}}'\n\
-                 \x20 abs:\n    cmd: [touch, abs]\n    cwd: '${{steps.seed.stdout.ABS}}'\n",
+                 \x20 rel:\n    cmd: [touch, rel]\n    cwd: '${{tasks.seed.stdout.SUB}}'\n\
+                 \x20 abs:\n    cmd: [touch, abs]\n    cwd: '${{tasks.seed.stdout.ABS}}'\n",
                 seed(json!({"SUB": "work", "ABS": other.path()}))
             ),
         );
@@ -813,7 +813,7 @@ mod tests {
             .mount(&server)
             .await;
         let project = project(&format!(
-            "steps:\n  img:\n    http: {{method: GET, url: \"{}\"}}\n  print:\n    cmd: [echo, \"${{steps.img.body_encoding}}\"]\n",
+            "tasks:\n  img:\n    http: {{method: GET, url: \"{}\"}}\n  print:\n    cmd: [echo, \"${{tasks.img.body_encoding}}\"]\n",
             server.uri()
         ));
         let outcome = exec(project).await.unwrap();
@@ -829,9 +829,9 @@ mod tests {
     async fn state_persists_across_runs() {
         let dir = tempfile::tempdir().unwrap();
         let yaml = "states: {COUNT: 0, KEEP: k}\n\
-                    steps:\n\
+                    tasks:\n\
                     \x20 inc:\n    cmd: [expr, '${states.COUNT}', +, '1']\n\
-                    \x20 save:\n    set: {states: {COUNT: '${steps.inc.stdout}'}}\n\
+                    \x20 save:\n    set: {states: {COUNT: '${tasks.inc.stdout}'}}\n\
                     \x20 check:\n    if: {this: states.COUNT, gt: 1}\n    then: {again: {cmd: [echo, 'again ${states.COUNT} ${states.KEEP}']}}\n    else: {first: {cmd: [echo, 'first ${states.COUNT} ${states.KEEP}']}}\n";
         let outcome = exec(project_in(dir.path(), yaml)).await.unwrap();
         assert_eq!(stdout(&outcome), &json!("first 1 k"));
@@ -846,7 +846,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let yaml = format!(
             "states: {{LATEST: 2, ACC: ''}}\n{}\
-             \x20 each:\n    for_each: steps.seed.stdout.IDS\n    as: ID\n    do:\n\
+             \x20 each:\n    for_each: tasks.seed.stdout.IDS\n    as: ID\n    do:\n\
              \x20     check:\n        if: {{this: ID, gt: '${{states.LATEST}}'}}\n        then:\n\
              \x20         plus:\n            set: {{states: {{ACC: '${{states.ACC}}+${{ID}}'}}}}\n        else:\n\
              \x20         minus:\n            set: {{states: {{ACC: '${{states.ACC}}-${{ID}}'}}}}\n\
@@ -859,8 +859,8 @@ mod tests {
 
     #[tokio::test]
     async fn allow_failure_does_not_hide_an_invalid_url() {
-        let (_, err) = step_error(project(
-            "steps:\n  bad:\n    get: 'not a url'\n    allow_failure: true\n",
+        let (_, err) = task_error(project(
+            "tasks:\n  bad:\n    get: 'not a url'\n    allow_failure: true\n",
         ))
         .await;
         assert!(matches!(err, Error::Http(_)), "{err}");
@@ -871,7 +871,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let states = dir.path().join("states");
         let yaml = format!(
-            "states: {{N: 0}}\nsteps:\n\
+            "states: {{N: 0}}\ntasks:\n\
              \x20 lock:\n    cmd: [chmod, '555', '{}']\n\
              \x20 save:\n    set: {{states: {{N: 1}}}}\n",
             states.display()
@@ -888,27 +888,27 @@ mod tests {
         let outcome = exec(project_in(
             dir.path(),
             "states: {N: 0}\n\
-                 steps:\n\
+                 tasks:\n\
                  \x20 save:\n    set: {states: {N: 'n=${states.N}'}}\n\
                  \x20 bad:\n    cmd: [sh, -c, 'exit 1']\n",
         ))
         .await
         .unwrap();
-        assert_eq!(outcome.failed_step.as_deref(), Some("bad"));
+        assert_eq!(outcome.failed_task.as_deref(), Some("bad"));
         assert_eq!(state_file(dir.path()), json!({"N": "n=0"}));
     }
 
     #[tokio::test]
     async fn job_without_state_writes_no_file() {
         let dir = tempfile::tempdir().unwrap();
-        let project = project_in(dir.path(), "steps:\n  e:\n    cmd: [echo]\n");
+        let project = project_in(dir.path(), "tasks:\n  e:\n    cmd: [echo]\n");
         exec(project).await.unwrap();
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
     }
 
     #[tokio::test]
     async fn env_file_beats_the_process_environment() {
-        let yaml = "steps:\n  e:\n    cmd: [echo, '${CARGO_PKG_NAME}']\n";
+        let yaml = "tasks:\n  e:\n    cmd: [echo, '${CARGO_PKG_NAME}']\n";
         let outcome = exec(project(yaml)).await.unwrap();
         assert_eq!(stdout(&outcome), &json!("rocky"));
         let (project, _dir) = project_with_env(yaml, &[("CARGO_PKG_NAME", "rb")]);
@@ -921,7 +921,7 @@ mod tests {
         let (project, _dir) = project_with_env(
             &format!(
                 "{}\
-                 \x20 each:\n    for_each: steps.seed.stdout.IDS\n    as: ID\n    do:\n\
+                 \x20 each:\n    for_each: tasks.seed.stdout.IDS\n    as: ID\n    do:\n\
                  \x20     e:\n        cmd: [echo, '${{ID}}']\n",
                 seed(json!({"IDS": [1]}))
             ),
@@ -935,7 +935,7 @@ mod tests {
     async fn values_keep_their_type_and_are_not_expanded() {
         let project = project(
             "values: {A: a, B: 1, CONF: {n: 2, tags: [x]}, LIT: '${UNDEFINED}'}\n\
-             steps:\n  e:\n    cmd: [cat]\n    stdin: {text: '${A} ${B} ${CONF.n} ${LIT}', conf: '${CONF}'}\n",
+             tasks:\n  e:\n    cmd: [cat]\n    stdin: {text: '${A} ${B} ${CONF.n} ${LIT}', conf: '${CONF}'}\n",
         );
         let outcome = exec(project).await.unwrap();
         assert_eq!(
@@ -949,7 +949,7 @@ mod tests {
         let (project, _dir) = project_with_env(
             &format!(
                 "values: {{ID: value, TOKEN: value}}\n{}\
-                 \x20 each:\n    for_each: steps.seed.stdout.IDS\n    as: ID\n    do:\n\
+                 \x20 each:\n    for_each: tasks.seed.stdout.IDS\n    as: ID\n    do:\n\
                  \x20     e:\n        cmd: [echo, '${{ID}}']\n\
                  \x20 after:\n    cmd: [echo, '${{ID}}-${{TOKEN}}']\n",
                 seed(json!({"IDS": [1]}))
@@ -963,7 +963,7 @@ mod tests {
     #[tokio::test]
     async fn default_cwd_is_the_current_directory_not_the_project_dir() {
         let dir = tempfile::tempdir().unwrap();
-        let outcome = exec(project_in(dir.path(), "steps:\n  e:\n    cmd: [pwd]\n"))
+        let outcome = exec(project_in(dir.path(), "tasks:\n  e:\n    cmd: [pwd]\n"))
             .await
             .unwrap();
         let printed = std::path::PathBuf::from(stdout(&outcome).as_str().unwrap());
@@ -977,7 +977,7 @@ mod tests {
     async fn set_works_out_every_value_before_setting_any() {
         let dir = tempfile::tempdir().unwrap();
         let yaml = "states: {A: 1, B: 2}\n\
-                    steps:\n\
+                    tasks:\n\
                     \x20 swap:\n    set: {states: {A: '${states.B}', B: '${states.A}'}}\n\
                     \x20 print:\n    cmd: [echo, '${states.A}-${states.B}']\n";
         let outcome = exec(project_in(dir.path(), yaml)).await.unwrap();
@@ -987,7 +987,7 @@ mod tests {
 
     #[tokio::test]
     async fn switch_case_keys_are_not_expanded() {
-        let yaml = "steps:\n  s:\n    switch: V\n    cases: {'${X}': {lit: {cmd: [echo, literal]}}}\n\
+        let yaml = "tasks:\n  s:\n    switch: V\n    cases: {'${X}': {lit: {cmd: [echo, literal]}}}\n\
                     \x20   default: {other: {cmd: [echo, other]}}\n";
         for (v, expected) in [("a", "other"), ("${X}", "literal")] {
             let (project, _dir) = project_with_env(yaml, &[("X", "a"), ("V", v)]);
@@ -998,21 +998,21 @@ mod tests {
 
     #[test]
     fn failure_is_http_400_or_more_a_non_zero_exit_or_an_error() {
-        assert_eq!(StepResult::http(399).failure(), None);
+        assert_eq!(TaskResult::http(399).failure(), None);
         assert_eq!(
-            StepResult::http(400).failure().as_deref(),
+            TaskResult::http(400).failure().as_deref(),
             Some("returned HTTP 400")
         );
         assert_eq!(
-            StepResult::http(404).failure().as_deref(),
+            TaskResult::http(404).failure().as_deref(),
             Some("returned HTTP 404")
         );
-        assert_eq!(StepResult::cmd(0).failure(), None);
+        assert_eq!(TaskResult::cmd(0).failure(), None);
         assert_eq!(
-            StepResult::cmd(3).failure().as_deref(),
+            TaskResult::cmd(3).failure().as_deref(),
             Some("exited with code 3")
         );
-        let errored = StepResult::Errored {
+        let errored = TaskResult::Errored {
             error: "timed out".to_string(),
         };
         assert_eq!(errored.failure().as_deref(), Some("timed out"));

@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use serde_json::{Map, Value};
 
 use crate::error::Error;
-use crate::step::Step;
+use crate::task::Task;
 
 /// Reads a job's state file: each name in `defaults` takes its stored value, or its
 /// default if the file doesn't have it; stored names no longer in `defaults` are dropped.
@@ -84,38 +84,38 @@ fn write_synced(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     file.sync_all()
 }
 
-/// Checks that every `set.states` in `steps`, nested ones included, only sets names
+/// Checks that every `set.states` in `tasks`, nested ones included, only sets names
 /// declared in `defaults`.
-pub fn check(steps: &[Step], defaults: &BTreeMap<String, Value>) -> Result<(), Error> {
-    match undeclared(steps, defaults, |step| {
-        step.set.as_ref().map(|set| &set.states)
+pub fn check(tasks: &[Task], defaults: &BTreeMap<String, Value>) -> Result<(), Error> {
+    match undeclared(tasks, defaults, |task| {
+        task.set.as_ref().map(|set| &set.states)
     }) {
-        Some(name) => Err(Error::InvalidStep(format!(
+        Some(name) => Err(Error::InvalidTask(format!(
             "`set.states` sets `{name}`, which the job's `states` doesn't declare"
         ))),
         None => Ok(()),
     }
 }
 
-/// The first name that `updates` of a step in `steps`, nested ones included, sets
+/// The first name that `updates` of a task in `tasks`, nested ones included, sets
 /// without it being declared in `defaults`.
 pub(crate) fn undeclared<V>(
-    steps: &[Step],
+    tasks: &[Task],
     defaults: &BTreeMap<String, V>,
-    updates: fn(&Step) -> Option<&BTreeMap<String, Value>>,
+    updates: fn(&Task) -> Option<&BTreeMap<String, Value>>,
 ) -> Option<String> {
-    for step in steps {
+    for task in tasks {
         if let Some(name) =
-            updates(step).and_then(|set| set.keys().find(|n| !defaults.contains_key(*n)))
+            updates(task).and_then(|set| set.keys().find(|n| !defaults.contains_key(*n)))
         {
             return Some(name.clone());
         }
-        for nested in [&step.then, &step.otherwise, &step.body, &step.default] {
+        for nested in [&task.then, &task.otherwise, &task.body, &task.default] {
             if let Some(name) = undeclared(nested, defaults, updates) {
                 return Some(name);
             }
         }
-        for case in &step.cases {
+        for case in &task.cases {
             if let Some(name) = undeclared(&case.body, defaults, updates) {
                 return Some(name);
             }
@@ -198,7 +198,7 @@ mod tests {
     }
 
     #[test]
-    fn check_finds_undeclared_names_in_nested_steps() {
+    fn check_finds_undeclared_names_in_nested_tasks() {
         for (nested, name) in [
             (
                 "b:\n  if: {this: X, eq: 1}\n  then:\n    l:\n      for_each: L\n      do: {c: {set: {states: {C: 1}}}}\n",
@@ -213,12 +213,12 @@ mod tests {
                 "E",
             ),
         ] {
-            let steps =
-                crate::step::parse_named(&format!("a: {{set: {{states: {{A: 1}}}}}}\n{nested}"))
+            let tasks =
+                crate::task::parse_named(&format!("a: {{set: {{states: {{A: 1}}}}}}\n{nested}"))
                     .unwrap();
-            let err = check(&steps, &defaults()).unwrap_err();
+            let err = check(&tasks, &defaults()).unwrap_err();
             assert!(err.to_string().contains(&format!("`{name}`")), "{err}");
-            check(&steps[..1], &defaults()).unwrap();
+            check(&tasks[..1], &defaults()).unwrap();
         }
     }
 }

@@ -1,6 +1,6 @@
 # A job in its own file, used by imports.yaml.
 #   rocky exec examples/imports.yaml health
-steps:
+tasks:
   status:
     get: ${BASE}/status/200
     timeout: 5
@@ -9,4 +9,4 @@ steps:
     get:
       url: ${BASE}/get
       query:
-        status: ${steps.status.status}
+        status: ${tasks.status.status}

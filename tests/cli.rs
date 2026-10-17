@@ -189,7 +189,7 @@ fn lines_until(mut child: Child, enough: impl Fn(&[Value]) -> bool) -> Vec<Value
     lines
 }
 
-/// Waits for the pid a cmd step wrote to `pid_file`; kills `child` and panics if it
+/// Waits for the pid a cmd task wrote to `pid_file`; kills `child` and panics if it
 /// never appears.
 fn wait_for_pid(child: &mut Child, pid_file: &Path) -> i32 {
     let pid = (0..100).find_map(|_| {
@@ -231,7 +231,7 @@ fn missing_env_file_fails() {
     let dir = tempfile::tempdir().unwrap();
     let out = exec_yaml(
         dir.path(),
-        "env_file: missing.env\njobs:\n  w:\n    steps:\n      e:\n        cmd: [echo]\n",
+        "env_file: missing.env\njobs:\n  w:\n    tasks:\n      e:\n        cmd: [echo]\n",
     );
     assert_eq!(out.status.code(), Some(1));
     let err = stderr(&out);
@@ -240,7 +240,7 @@ fn missing_env_file_fails() {
 }
 
 #[tokio::test]
-async fn step_timeout_limits_request() {
+async fn task_timeout_limits_request() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .respond_with(ResponseTemplate::new(200).set_delay(std::time::Duration::from_secs(3)))
@@ -250,7 +250,7 @@ async fn step_timeout_limits_request() {
     let out = exec_yaml(
         dir.path(),
         &format!(
-            "jobs:\n  w:\n    steps:\n      slow:\n        http: {{method: GET, url: \"{}\"}}\n        timeout: 1\n",
+            "jobs:\n  w:\n    tasks:\n      slow:\n        http: {{method: GET, url: \"{}\"}}\n        timeout: 1\n",
             server.uri()
         ),
     );
@@ -260,18 +260,18 @@ async fn step_timeout_limits_request() {
 }
 
 #[test]
-fn invalid_condition_fails_at_load_before_any_step() {
+fn invalid_condition_fails_at_load_before_any_task() {
     let dir = tempfile::tempdir().unwrap();
     let out = exec_yaml(
         dir.path(),
-        "jobs:\n  w:\n    steps:\n\
+        "jobs:\n  w:\n    tasks:\n\
          \x20     first:\n        cmd: [touch, ran]\n        cwd: .\n\
-         \x20     route:\n        if: {this: steps.first.exit_code, gt: ten}\n        then: {again: {cmd: [echo]}}\n",
+         \x20     route:\n        if: {this: tasks.first.exit_code, gt: ten}\n        then: {again: {cmd: [echo]}}\n",
     );
     assert_eq!(out.status.code(), Some(1));
     let err = stderr(&out);
     assert!(
-        err.contains("invalid step: `route`: invalid condition: `gt` needs a number"),
+        err.contains("invalid task: `route`: invalid condition: `gt` needs a number"),
         "{err}"
     );
     assert!(!err.contains("failed"), "{err}");
@@ -279,7 +279,7 @@ fn invalid_condition_fails_at_load_before_any_step() {
 }
 
 #[tokio::test]
-async fn job_prints_failing_step_result() {
+async fn job_prints_failing_task_result() {
     let server = MockServer::start().await;
     Mock::given(path("/stats"))
         .respond_with(
@@ -293,7 +293,7 @@ async fn job_prints_failing_step_result() {
     let out = exec_yaml(
         dir.path(),
         &format!(
-            "jobs:\n  w:\n    steps:\n      stats:\n        http: {{method: GET, url: \"{}/stats\"}}\n",
+            "jobs:\n  w:\n    tasks:\n      stats:\n        http: {{method: GET, url: \"{}/stats\"}}\n",
             server.uri()
         ),
     );
@@ -303,8 +303,8 @@ async fn job_prints_failing_step_result() {
     assert_eq!(envelope["headers"]["x-request-id"], "r1");
     assert_eq!(envelope["body"], "gone");
     let err = stderr(&out);
-    assert!(err.contains("step `stats` returned HTTP 404"), "{err}");
-    assert!(!err.contains("step `stats`:"), "{err}");
+    assert!(err.contains("task `stats` returned HTTP 404"), "{err}");
+    assert!(!err.contains("task `stats`:"), "{err}");
 }
 
 /// Run from another directory, so the env file must be found next to the project.
@@ -315,9 +315,9 @@ fn cmd_output_branch_and_env_file() {
         dir.path(),
         "project.yaml",
         "env_file: .env\n\
-         jobs:\n  w:\n    steps:\n\
+         jobs:\n  w:\n    tasks:\n\
          \x20     count:\n        cmd: [echo, '{\"n\": 5}']\n\
-         \x20     size:\n        if: {this: steps.count.stdout.n, gt: 3}\n        then: {big: {cmd: [echo, '${GREETING} ${USER_NAME} n=${steps.count.stdout.n}']}}\n        else: {small: {cmd: [echo, small]}}\n",
+         \x20     size:\n        if: {this: tasks.count.stdout.n, gt: 3}\n        then: {big: {cmd: [echo, '${GREETING} ${USER_NAME} n=${tasks.count.stdout.n}']}}\n        else: {small: {cmd: [echo, small]}}\n",
     );
     write(dir.path(), ".env", "GREETING=hello\nUSER_NAME=alice\n");
     let other_cwd = tempfile::tempdir().unwrap();
@@ -330,15 +330,15 @@ fn cmd_output_branch_and_env_file() {
 }
 
 #[test]
-fn cmd_missing_program_fails_with_step_name() {
+fn cmd_missing_program_fails_with_task_name() {
     let dir = tempfile::tempdir().unwrap();
     let out = exec_yaml(
         dir.path(),
-        "jobs:\n  w:\n    steps:\n      nope:\n        cmd: [rocky-no-such-program]\n",
+        "jobs:\n  w:\n    tasks:\n      nope:\n        cmd: [rocky-no-such-program]\n",
     );
     assert_eq!(out.status.code(), Some(1));
     let log = stderr(&out);
-    assert!(log.contains("step `nope` failed"), "{log}");
+    assert!(log.contains("task `nope` failed"), "{log}");
     assert!(
         log.contains("failed to start command `rocky-no-such-program`"),
         "{log}"
@@ -346,7 +346,7 @@ fn cmd_missing_program_fails_with_step_name() {
 }
 
 #[tokio::test]
-async fn job_steps_read_earlier_results_via_args_and_stdin() {
+async fn job_tasks_read_earlier_results_via_args_and_stdin() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/users"))
@@ -374,11 +374,11 @@ async fn job_steps_read_earlier_results_via_args_and_stdin() {
     let out = exec_yaml(
         dir.path(),
         &format!(
-            "jobs:\n  w:\n    steps:\n\
+            "jobs:\n  w:\n    tasks:\n\
              \x20     fetch:\n        http: {{method: GET, url: \"{base}/users\"}}\n\
-             \x20     count:\n        cmd: [wc, -c]\n        stdin: ${{steps.fetch.body.users}}\n\
-             \x20     report:\n        http:\n          method: POST\n          url: {base}/report\n          headers:\n            Authorization: Bearer ${{steps.fetch.headers.x-token}}\n          json:\n            users: ${{steps.fetch.body}}\n            bytes: ${{steps.count.stdout}}\n            prev_status: ${{steps.fetch.status}}\n\
-             \x20     check:\n        if: {{this: steps.report.status, eq: 201}}\n        then:\n          print:\n            cmd: [echo, 'reported ${{steps.count.stdout}}']\n",
+             \x20     count:\n        cmd: [wc, -c]\n        stdin: ${{tasks.fetch.body.users}}\n\
+             \x20     report:\n        http:\n          method: POST\n          url: {base}/report\n          headers:\n            Authorization: Bearer ${{tasks.fetch.headers.x-token}}\n          json:\n            users: ${{tasks.fetch.body}}\n            bytes: ${{tasks.count.stdout}}\n            prev_status: ${{tasks.fetch.status}}\n\
+             \x20     check:\n        if: {{this: tasks.report.status, eq: 201}}\n        then:\n          print:\n            cmd: [echo, 'reported ${{tasks.count.stdout}}']\n",
             base = server.uri()
         ),
     );
@@ -394,8 +394,8 @@ fn run_runs_at_job_once_and_exits() {
         &format!(
             "schedules:\n  hello:\n    at: \"{at}\"\n\
              jobs:\n\
-             \x20 hello:\n    steps:\n      greet:\n        cmd: [echo, hi]\n\
-             \x20 manual:\n    steps:\n      never:\n        cmd: [echo, never]\n"
+             \x20 hello:\n    tasks:\n      greet:\n        cmd: [echo, hi]\n\
+             \x20 manual:\n    tasks:\n      never:\n        cmd: [echo, never]\n"
         ),
     );
     assert!(output.status.success(), "{}", stderr(&output));
@@ -406,13 +406,13 @@ fn run_runs_at_job_once_and_exits() {
         assert_eq!(line["job"], "hello", "{line}");
         assert!(line["time"].is_string(), "{line}");
     }
-    assert_eq!(lines[0]["event"], "step");
-    assert_eq!(lines[0]["step"], "greet");
+    assert_eq!(lines[0]["event"], "task");
+    assert_eq!(lines[0]["task"], "greet");
     assert_eq!(lines[0]["exit_code"], 0);
     assert_eq!(lines[0]["ok"], true);
     assert_eq!(lines[1]["event"], "done");
     assert_eq!(lines[1].get("result"), None);
-    assert_eq!(lines[1]["failed_step"], Value::Null);
+    assert_eq!(lines[1]["failed_task"], Value::Null);
     assert_eq!(lines[1]["reason"], Value::Null);
     let date = &lines[0]["time"].as_str().unwrap()[..10];
     let log = std::fs::read_to_string(dir.path().join("logs").join(format!("{date}.log"))).unwrap();
@@ -428,12 +428,12 @@ fn run_reports_unwritable_log_file_and_keeps_printing() {
         dir.path(),
         &format!(
             "schedules:\n  hello:\n    at: \"{at}\"\n\
-             jobs:\n  hello:\n    steps:\n      greet:\n        cmd: [echo, hi]\n"
+             jobs:\n  hello:\n    tasks:\n      greet:\n        cmd: [echo, hi]\n"
         ),
     );
     assert!(output.status.success(), "{}", stderr(&output));
     assert_stderr_contains(&output, "cannot write log file");
-    assert_eq!(events(&output), ["step", "done"]);
+    assert_eq!(events(&output), ["task", "done"]);
 }
 
 /// SIGINT is tested on `run` and the others on `exec`: both stop the same way.
@@ -454,14 +454,14 @@ fn stop_signals_stop_and_kill_running_commands() {
             let project = write(
                 dir.path(),
                 "project.yaml",
-                &format!("schedules:\n  w:\n    at: \"{at}\"\njobs:\n  w:\n    steps:\n{wait}"),
+                &format!("schedules:\n  w:\n    at: \"{at}\"\njobs:\n  w:\n    tasks:\n{wait}"),
             );
             spawn_run(&project, dir.path())
         } else {
             let file = write(
                 dir.path(),
                 "project.yaml",
-                &format!("jobs:\n  w:\n    steps:\n{wait}"),
+                &format!("jobs:\n  w:\n    tasks:\n{wait}"),
             );
             spawn_rocky(&["exec", path_str(&file), "w"], dir.path())
         };
@@ -488,7 +488,7 @@ fn run_keeps_logging_when_stdout_is_closed() {
         "project.yaml",
         &format!(
             "schedules:\n  hello:\n    at: \"{at}\"\n\
-             jobs:\n  hello:\n    steps:\n      greet:\n        cmd: [echo, hi]\n"
+             jobs:\n  hello:\n    tasks:\n      greet:\n        cmd: [echo, hi]\n"
         ),
     );
 
@@ -511,7 +511,7 @@ fn run_runs_at_late_when_the_start_run_overlaps_it() {
         dir.path(),
         &format!(
             "schedules:\n  slow:\n    at: \"{at}\"\n    run_on_start: true\n\
-             jobs:\n  slow:\n    steps:\n      wait:\n        cmd: [sleep, '1']\n"
+             jobs:\n  slow:\n    tasks:\n      wait:\n        cmd: [sleep, '1']\n"
         ),
     );
     let done = events(&output)
@@ -530,16 +530,16 @@ fn run_on_start_and_the_at_run_log_control_flow() {
         &format!(
             "schedules:\n  hello:\n    at: \"{at}\"\n    run_on_start: true\n\
              jobs:\n\
-             \x20 hello:\n    states: {{N: 0}}\n    steps:\n\
+             \x20 hello:\n    states: {{N: 0}}\n    tasks:\n\
              \x20     save:\n        set: {{states: {{N: 1}}}}\n\
              \x20     check:\n        if: {{this: states.N, eq: 1}}\n        then: {{hi: {{cmd: [echo, hi]}}}}\n\
              \x20     route:\n        switch: states.N\n        cases: {{1: {{one: {{cmd: [echo, one]}}}}}}\n\
              \x20     list:\n        cmd: [echo, '[1]']\n\
-             \x20     each:\n        for_each: steps.list.stdout\n        do: {{print: {{cmd: [echo, '${{ITEM}}']}}}}\n"
+             \x20     each:\n        for_each: tasks.list.stdout\n        do: {{print: {{cmd: [echo, '${{ITEM}}']}}}}\n"
         ),
     );
     let run = [
-        "set", "branch", "step", "switch", "step", "step", "for_each", "step", "done",
+        "set", "branch", "task", "switch", "task", "task", "for_each", "task", "done",
     ];
     assert_eq!(events(&output), [run, run].concat());
 }
@@ -547,7 +547,7 @@ fn run_on_start_and_the_at_run_log_control_flow() {
 #[test]
 fn run_rejects_a_project_without_schedules() {
     let dir = tempfile::tempdir().unwrap();
-    let output = run_yaml(dir.path(), "jobs:\n  a:\n    steps: {e: {cmd: [echo]}}\n");
+    let output = run_yaml(dir.path(), "jobs:\n  a:\n    tasks: {e: {cmd: [echo]}}\n");
     assert_eq!(output.status.code(), Some(1));
     assert_stderr_contains(&output, "project has no `schedules`");
 }
@@ -557,7 +557,7 @@ fn network_error_cause_is_printed_once() {
     let dir = tempfile::tempdir().unwrap();
     let out = exec_yaml(
         dir.path(),
-        "jobs:\n  w:\n    steps:\n      down:\n        http: {method: GET, url: \"http://127.0.0.1:1/\"}\n",
+        "jobs:\n  w:\n    tasks:\n      down:\n        http: {method: GET, url: \"http://127.0.0.1:1/\"}\n",
     );
     assert_eq!(out.status.code(), Some(1));
     assert_eq!(out.stdout, b"");
@@ -571,9 +571,9 @@ fn allow_failure_continues_after_network_error() {
     let dir = tempfile::tempdir().unwrap();
     let out = exec_yaml(
         dir.path(),
-        "jobs:\n  w:\n    steps:\n\
+        "jobs:\n  w:\n    tasks:\n\
          \x20     down:\n        http: {method: GET, url: \"http://127.0.0.1:1/\"}\n        allow_failure: true\n\
-         \x20     print:\n        cmd: [echo, '${steps.down.error}']\n",
+         \x20     print:\n        cmd: [echo, '${tasks.down.error}']\n",
     );
     assert!(out.status.success(), "{}", stderr(&out));
     let error = stdout_json(&out)["stdout"].as_str().unwrap().to_string();
@@ -590,7 +590,7 @@ fn run_reports_errored_run_on_stdout() {
     let output = run_yaml(
         dir.path(),
         &format!(
-            "schedules:\n  broken:\n    at: \"{at}\"\njobs:\n  broken:\n    steps:\n      e:\n        cmd: [echo, '${{ROCKY_TEST_UNDEFINED}}']\n"
+            "schedules:\n  broken:\n    at: \"{at}\"\njobs:\n  broken:\n    tasks:\n      e:\n        cmd: [echo, '${{ROCKY_TEST_UNDEFINED}}']\n"
         ),
     );
     let out = stdout_json(&output);
@@ -611,9 +611,9 @@ fn run_every_jobs_run_independently_and_survive_errors_and_failures() {
         "project.yaml",
         "schedules: {ok: {every: 1s}, broken: {every: 1s}, failing: {every: 1s}}\n\
          jobs:\n\
-         \x20 ok:\n    steps: {ok: {cmd: [echo, ok]}}\n\
-         \x20 broken:\n    steps: {e: {cmd: [echo, '${ROCKY_TEST_UNDEFINED}']}}\n\
-         \x20 failing:\n    steps: {check: {cmd: [sh, -c, 'exit 3']}, never: {cmd: [echo, never]}}\n",
+         \x20 ok:\n    tasks: {ok: {cmd: [echo, ok]}}\n\
+         \x20 broken:\n    tasks: {e: {cmd: [echo, '${ROCKY_TEST_UNDEFINED}']}}\n\
+         \x20 failing:\n    tasks: {check: {cmd: [sh, -c, 'exit 3']}, never: {cmd: [echo, never]}}\n",
     );
 
     let events = |lines: &[Value], job: &str, event: &str| {
@@ -623,23 +623,23 @@ fn run_every_jobs_run_independently_and_survive_errors_and_failures() {
             .cloned()
             .collect::<Vec<_>>()
     };
-    // Stops between runs of `failing`, so each of its `step` lines has its `done` line.
+    // Stops between runs of `failing`, so each of its `task` lines has its `done` line.
     let lines = lines_until(spawn_run(&project, dir.path()), |lines| {
         let failing = events(lines, "failing", "done").len();
         failing >= 2
             && events(lines, "ok", "done").len() >= 2
             && events(lines, "broken", "error").len() >= 2
-            && events(lines, "failing", "step").len() == failing
+            && events(lines, "failing", "task").len() == failing
     });
     for line in &lines {
         let event = line["event"].as_str().unwrap();
         assert!(
-            matches!(event, "step" | "done" | "error"),
+            matches!(event, "task" | "done" | "error"),
             "unexpected event {event}: {line}"
         );
     }
     for line in events(&lines, "ok", "done") {
-        assert_eq!(line["failed_step"], Value::Null, "{line}");
+        assert_eq!(line["failed_task"], Value::Null, "{line}");
         assert_eq!(line["reason"], Value::Null, "{line}");
     }
     for line in events(&lines, "broken", "error") {
@@ -650,13 +650,13 @@ fn run_every_jobs_run_independently_and_survive_errors_and_failures() {
     }
     let failing = events(&lines, "failing", "done");
     for line in &failing {
-        assert_eq!(line["failed_step"], "check", "{line}");
+        assert_eq!(line["failed_task"], "check", "{line}");
         assert_eq!(line["reason"], "exited with code 3", "{line}");
     }
-    let steps = events(&lines, "failing", "step");
-    assert_eq!(steps.len(), failing.len(), "{lines:?}");
-    for line in &steps {
-        assert_eq!(line["step"], "check", "{line}");
+    let tasks = events(&lines, "failing", "task");
+    assert_eq!(tasks.len(), failing.len(), "{lines:?}");
+    for line in &tasks {
+        assert_eq!(line["task"], "check", "{line}");
         assert_eq!(line["ok"], false, "{line}");
     }
 }
@@ -686,22 +686,22 @@ fn new_creates_dirs_and_never_overwrites() {
     assert!(out.status.success(), "{}", stderr(&out));
     assert!(String::from_utf8_lossy(&out.stdout).contains("deploy: sub/dir/deploy.yaml"));
 
-    let new_step = || rocky(&["new", "step", "steps/a.yaml"], dir.path());
-    assert!(new_step().status.success());
-    let before = std::fs::read_to_string(dir.path().join("steps/a.yaml")).unwrap();
-    let out = new_step();
+    let new_task = || rocky(&["new", "task", "tasks/a.yaml"], dir.path());
+    assert!(new_task().status.success());
+    let before = std::fs::read_to_string(dir.path().join("tasks/a.yaml")).unwrap();
+    let out = new_task();
     assert_eq!(out.status.code(), Some(1));
-    assert_stderr_contains(&out, "steps/a.yaml already exists");
+    assert_stderr_contains(&out, "tasks/a.yaml already exists");
     assert_eq!(
-        std::fs::read_to_string(dir.path().join("steps/a.yaml")).unwrap(),
+        std::fs::read_to_string(dir.path().join("tasks/a.yaml")).unwrap(),
         before
     );
 }
 
 #[test]
-fn new_step_asks_for_its_type() {
+fn new_task_asks_for_its_type() {
     let dir = tempfile::tempdir().unwrap();
-    let mut child = rocky_command(&["new", "step", "steps/login.yaml"], dir.path())
+    let mut child = rocky_command(&["new", "task", "tasks/login.yaml"], dir.path())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -711,13 +711,13 @@ fn new_step_asks_for_its_type() {
     let out = child.wait_with_output().unwrap();
     assert!(out.status.success(), "{}", stderr(&out));
     assert_stderr_contains(&out, "[cmd/http]");
-    let text = std::fs::read_to_string(dir.path().join("steps/login.yaml")).unwrap();
+    let text = std::fs::read_to_string(dir.path().join("tasks/login.yaml")).unwrap();
     assert!(
         !text.contains("\nname:") && text.contains("\nget:"),
         "{text}"
     );
     assert!(
-        String::from_utf8_lossy(&out.stdout).contains("login: steps/login.yaml"),
+        String::from_utf8_lossy(&out.stdout).contains("login: tasks/login.yaml"),
         "{}",
         String::from_utf8_lossy(&out.stdout)
     );
@@ -731,7 +731,7 @@ fn validate_accepts_a_valid_project_without_running_it() {
         dir.path(),
         "project.yaml",
         "schedules:\n  b: {at: '2000-01-01T00:00:00'}\n\
-         jobs:\n  b:\n    steps:\n      t:\n        cmd: [touch, ran]\n  a:\n    steps:\n      g:\n        http: {method: GET, url: 'http://127.0.0.1:1'}\n",
+         jobs:\n  b:\n    tasks:\n      t:\n        cmd: [touch, ran]\n  a:\n    tasks:\n      g:\n        http: {method: GET, url: 'http://127.0.0.1:1'}\n",
     );
     let out = validate(&file, dir.path());
     assert!(out.status.success(), "{}", stderr(&out));
@@ -748,7 +748,7 @@ fn validate_reports_the_load_error() {
     let file = write(
         dir.path(),
         "project.yaml",
-        "jobs:\n  w:\n    steps:\n      t:\n        if: {this: X, matches: '('}\n        then: {touch: {cmd: [touch, ran]}}\n",
+        "jobs:\n  w:\n    tasks:\n      t:\n        if: {this: X, matches: '('}\n        then: {touch: {cmd: [touch, ran]}}\n",
     );
     let out = validate(&file, dir.path());
     assert_eq!(out.status.code(), Some(1));
@@ -766,7 +766,7 @@ fn run_does_not_log_a_set_whose_states_could_not_be_saved() {
         dir.path(),
         &format!(
             "schedules:\n  w: {{at: \"{at}\"}}\n\
-             jobs:\n  w:\n    states: {{N: 0}}\n    steps:\n\
+             jobs:\n  w:\n    states: {{N: 0}}\n    tasks:\n\
              \x20     lock:\n        cmd: [chmod, '555', states]\n        cwd: .\n\
              \x20     save:\n        set: {{states: {{N: 1}}}}\n"
         ),
@@ -784,8 +784,8 @@ fn run_skips_an_at_schedule_in_the_past_and_runs_the_others() {
         dir.path(),
         &format!(
             "schedules:\n  old: {{at: '2000-01-01T00:00:00'}}\n  new: {{at: \"{at}\"}}\n\
-             jobs:\n  old:\n    steps:\n      t:\n        cmd: [touch, old]\n\
-             \x20 new:\n    steps:\n      t:\n        cmd: [touch, new]\n"
+             jobs:\n  old:\n    tasks:\n      t:\n        cmd: [touch, old]\n\
+             \x20 new:\n    tasks:\n      t:\n        cmd: [touch, new]\n"
         ),
     );
     assert!(output.status.success(), "{}", stderr(&output));

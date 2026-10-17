@@ -9,7 +9,7 @@ use serde_json::Value;
 
 use crate::error::Error;
 use crate::schedule::Schedule;
-use crate::step::{self, Step};
+use crate::task::{self, Task};
 use crate::{state, var_name};
 
 /// Named jobs sharing `values` and an `env_file`, described in a YAML file.
@@ -99,19 +99,19 @@ impl<'de> Deserialize<'de> for JobSource {
     }
 }
 
-/// Steps run in order, by `rocky exec`, or by `rocky run` on the project's `schedules`.
+/// Tasks run in order, by `rocky exec`, or by `rocky run` on the project's `schedules`.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Job {
-    /// Static values for `${NAME}` in this job's steps. Once loaded, the project's `values`
+    /// Static values for `${NAME}` in this job's tasks. Once loaded, the project's `values`
     /// are merged in, with the job's own winning.
     #[serde(default, deserialize_with = "unique")]
     pub values: BTreeMap<String, Value>,
     /// State names to their defaults, kept across runs in `states/<job>.json`.
     #[serde(default, deserialize_with = "unique")]
     pub states: BTreeMap<String, Value>,
-    #[serde(deserialize_with = "step::named")]
-    pub steps: Vec<Step>,
+    #[serde(deserialize_with = "task::named")]
+    pub tasks: Vec<Task>,
 }
 
 impl Project {
@@ -168,7 +168,7 @@ pub fn load(path: &Path) -> Result<Project, Error> {
     })
 }
 
-/// Reads a job file if `source` is a path, validates its steps, and merges the project's
+/// Reads a job file if `source` is a path, validates its tasks, and merges the project's
 /// `values` under its own.
 fn load_job(source: JobSource, dir: &Path, values: &BTreeMap<String, Value>) -> Result<Job, Error> {
     let (mut job, dir) = match source {
@@ -179,8 +179,8 @@ fn load_job(source: JobSource, dir: &Path, values: &BTreeMap<String, Value>) -> 
         }
         JobSource::Inline(job) => (job, dir.to_path_buf()),
     };
-    if job.steps.is_empty() {
-        return Err(Error::InvalidProject("job has no steps".to_string()));
+    if job.tasks.is_empty() {
+        return Err(Error::InvalidProject("job has no tasks".to_string()));
     }
     check_names(
         "values",
@@ -194,8 +194,8 @@ fn load_job(source: JobSource, dir: &Path, values: &BTreeMap<String, Value>) -> 
         var_name::is_valid,
         var_name::RULE,
     )?;
-    step::resolve(&mut job.steps, &dir)?;
-    state::check(&job.steps, &job.states)?;
+    task::resolve(&mut job.tasks, &dir)?;
+    state::check(&job.tasks, &job.states)?;
     job.values = values.clone().into_iter().chain(job.values).collect();
     Ok(job)
 }
@@ -259,16 +259,16 @@ mod tests {
             "env_file: .env\n\
              schedules: {a: {every: 5m}}\n\
              jobs:\n\
-             \x20 a:\n    steps:\n      e:\n        cmd: [echo]\n        cwd: work\n\
-             \x20 b:\n    steps: {e: {cmd: [echo]}}\n",
+             \x20 a:\n    tasks:\n      e:\n        cmd: [echo]\n        cwd: work\n\
+             \x20 b:\n    tasks: {e: {cmd: [echo]}}\n",
         )
         .unwrap();
         assert_eq!(project.env_file, Some(dir.path().join(".env")));
         let a = project.take("a").unwrap();
         assert!(project.schedules.contains_key("a"));
-        assert_eq!(a.steps[0].dir, dir.path());
+        assert_eq!(a.tasks[0].dir, dir.path());
         let b = project.take("b").unwrap();
-        assert!(b.steps[0].cmd.is_some() && !project.schedules.contains_key("b"));
+        assert!(b.tasks[0].cmd.is_some() && !project.schedules.contains_key("b"));
     }
 
     #[test]
@@ -276,11 +276,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let sub = dir.path().join("jobs");
         std::fs::create_dir(&sub).unwrap();
-        std::fs::write(sub.join("w.yaml"), "steps: {e: echo.yaml}\n").unwrap();
+        std::fs::write(sub.join("w.yaml"), "tasks: {e: echo.yaml}\n").unwrap();
         std::fs::write(sub.join("echo.yaml"), "cmd: [echo]\ncwd: w\n").unwrap();
         let mut project = load_in(dir.path(), "jobs:\n  w: jobs/w.yaml\n").unwrap();
         let w = project.take("w").unwrap();
-        assert_eq!(w.steps[0].dir, sub);
+        assert_eq!(w.tasks[0].dir, sub);
 
         let err = load_in(dir.path(), "jobs:\n  m: nope.yaml\n").unwrap_err();
         assert!(
@@ -294,7 +294,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut project = load_in(
             dir.path(),
-            "jobs:\n  a: {steps: {e: {cmd: [echo]}}}\n  b: {steps: {e: {cmd: [echo]}}}\n",
+            "jobs:\n  a: {tasks: {e: {cmd: [echo]}}}\n  b: {tasks: {e: {cmd: [echo]}}}\n",
         )
         .unwrap();
         let err = project.take("c").unwrap_err();
@@ -302,14 +302,14 @@ mod tests {
     }
 
     #[test]
-    fn step_errors_name_the_job() {
+    fn task_errors_name_the_job() {
         let dir = tempfile::tempdir().unwrap();
-        let err = load_in(dir.path(), "jobs:\n  w:\n    steps: {e: {cmd: []}}\n").unwrap_err();
+        let err = load_in(dir.path(), "jobs:\n  w:\n    tasks: {e: {cmd: []}}\n").unwrap_err();
         assert!(
-            matches!(&err, Error::Job { name, source } if name == "w" && matches!(**source, Error::InvalidStep(_))),
+            matches!(&err, Error::Job { name, source } if name == "w" && matches!(**source, Error::InvalidTask(_))),
             "{err}"
         );
-        let err = load_in(dir.path(), "jobs:\n  w: {steps: {}}\n").unwrap_err();
+        let err = load_in(dir.path(), "jobs:\n  w: {tasks: {}}\n").unwrap_err();
         assert!(
             matches!(&err, Error::Job { name, .. } if name == "w"),
             "{err}"
@@ -321,7 +321,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut project = load_in(
             dir.path(),
-            "jobs:\n  w:\n    states: {N: 0, L: [a]}\n    steps: {s: {set: {states: {N: 1}}}}\n",
+            "jobs:\n  w:\n    states: {N: 0, L: [a]}\n    tasks: {s: {set: {states: {N: 1}}}}\n",
         )
         .unwrap();
         assert_eq!(project.dir, dir.path());
@@ -331,19 +331,19 @@ mod tests {
         );
         for (yaml, bad) in [
             (
-                "jobs:\n  w:\n    states: {N: 0}\n    steps: {r: {if: {this: X, eq: 1}, then: {s: {set: {states: {M: 1}}}}}}\n",
+                "jobs:\n  w:\n    states: {N: 0}\n    tasks: {r: {if: {this: X, eq: 1}, then: {s: {set: {states: {M: 1}}}}}}\n",
                 "`M`",
             ),
             (
-                "jobs:\n  w:\n    steps: {s: {set: {states: {M: 1}}}}\n",
+                "jobs:\n  w:\n    tasks: {s: {set: {states: {M: 1}}}}\n",
                 "`M`",
             ),
             (
-                "jobs:\n  w:\n    states: {a.b: 0}\n    steps: {e: {cmd: [echo]}}\n",
+                "jobs:\n  w:\n    states: {a.b: 0}\n    tasks: {e: {cmd: [echo]}}\n",
                 "`a.b`",
             ),
             (
-                "jobs:\n  w:\n    states: {a-b: 0}\n    steps: {e: {cmd: [echo]}}\n",
+                "jobs:\n  w:\n    states: {a-b: 0}\n    tasks: {e: {cmd: [echo]}}\n",
                 "`a-b`",
             ),
         ] {
@@ -361,7 +361,7 @@ mod tests {
         let mut project = load_in(
             dir.path(),
             "values: {BASE: https://x, N: 3, CONF: {a: [1]}}\n\
-             jobs:\n  w: {values: {N: 4, _K2: k}, steps: {e: {cmd: [echo]}}}\n",
+             jobs:\n  w: {values: {N: 4, _K2: k}, tasks: {e: {cmd: [echo]}}}\n",
         )
         .unwrap();
         assert_eq!(
@@ -371,7 +371,7 @@ mod tests {
 
         let err = load_in(
             dir.path(),
-            "values: {a: x}\njobs:\n  w: {steps: {e: {cmd: [echo]}}}\n",
+            "values: {a: x}\njobs:\n  w: {tasks: {e: {cmd: [echo]}}}\n",
         )
         .unwrap_err();
         assert_eq!(
@@ -380,7 +380,7 @@ mod tests {
         );
         let err = load_in(
             dir.path(),
-            "jobs:\n  w: {values: {A-B: x}, steps: {e: {cmd: [echo]}}}\n",
+            "jobs:\n  w: {values: {A-B: x}, tasks: {e: {cmd: [echo]}}}\n",
         )
         .unwrap_err();
         assert!(
@@ -393,10 +393,10 @@ mod tests {
     fn rejects_vars() {
         let dir = tempfile::tempdir().unwrap();
         for yaml in [
-            "vars: {A: x}\njobs:\n  w: {steps: {e: {cmd: [echo]}}}\n",
-            "jobs:\n  w: {vars: {A: x}, steps: {e: {cmd: [echo]}}}\n",
-            "jobs:\n  w: {steps: {e: {vars: {A: x}, cmd: [echo]}}}\n",
-            "jobs:\n  w: {states: {N: 0}, steps: {s: {set: {states: {N: 1}, vars: {A: 1}}}}}\n",
+            "vars: {A: x}\njobs:\n  w: {tasks: {e: {cmd: [echo]}}}\n",
+            "jobs:\n  w: {vars: {A: x}, tasks: {e: {cmd: [echo]}}}\n",
+            "jobs:\n  w: {tasks: {e: {vars: {A: x}, cmd: [echo]}}}\n",
+            "jobs:\n  w: {states: {N: 0}, tasks: {s: {set: {states: {N: 1}, vars: {A: 1}}}}}\n",
         ] {
             let err = load_in(dir.path(), yaml).unwrap_err();
             let cause = std::error::Error::source(&err).unwrap().to_string();
@@ -407,7 +407,7 @@ mod tests {
     #[test]
     fn rejects_duplicate_keys() {
         let dir = tempfile::tempdir().unwrap();
-        let w = "w: {steps: {e: {cmd: [echo]}}}";
+        let w = "w: {tasks: {e: {cmd: [echo]}}}";
         for (yaml, expected) in [
             (
                 format!("jobs:\n  {w}\n  w: other.yaml\n"),
@@ -422,27 +422,27 @@ mod tests {
                 "values: duplicate key `A`",
             ),
             (
-                "jobs:\n  w: {values: {A: x, A: y}, steps: {e: {cmd: [echo]}}}\n".to_string(),
+                "jobs:\n  w: {values: {A: x, A: y}, tasks: {e: {cmd: [echo]}}}\n".to_string(),
                 "jobs.w.values: duplicate key `A`",
             ),
             (
-                "jobs:\n  w: {states: {N: 0, N: 1}, steps: {e: {cmd: [echo]}}}\n"
+                "jobs:\n  w: {states: {N: 0, N: 1}, tasks: {e: {cmd: [echo]}}}\n"
                     .to_string(),
                 "jobs.w.states: duplicate key `N`",
             ),
             (
-                "jobs:\n  w: {steps: {s: {set: {states: {A: 1, A: 2}}}}}\n".to_string(),
-                "jobs.w.steps.s.set.states: duplicate key `A`",
+                "jobs:\n  w: {tasks: {s: {set: {states: {A: 1, A: 2}}}}}\n".to_string(),
+                "jobs.w.tasks.s.set.states: duplicate key `A`",
             ),
             (
-                "jobs:\n  w: {steps: {g: {http: {method: GET, url: x, headers: {A: '1', A: '2'}}}}}\n"
+                "jobs:\n  w: {tasks: {g: {http: {method: GET, url: x, headers: {A: '1', A: '2'}}}}}\n"
                     .to_string(),
-                "jobs.w.steps.g.http.headers: duplicate key `A`",
+                "jobs.w.tasks.g.http.headers: duplicate key `A`",
             ),
             (
-                "jobs:\n  w: {steps: {g: {http: {method: GET, url: x, query: {A: '1', A: '2'}}}}}\n"
+                "jobs:\n  w: {tasks: {g: {http: {method: GET, url: x, query: {A: '1', A: '2'}}}}}\n"
                     .to_string(),
-                "jobs.w.steps.g.http.query: duplicate key `A`",
+                "jobs.w.tasks.g.http.query: duplicate key `A`",
             ),
         ] {
             let err = load_in(dir.path(), &yaml).unwrap_err();
@@ -459,11 +459,11 @@ mod tests {
             Error::InvalidProject(_)
         ));
         for yaml in [
-            "jobs:\n  w: {steps: {e: {cmd: [echo], extract: {}}}}\n",
+            "jobs:\n  w: {tasks: {e: {cmd: [echo], extract: {}}}}\n",
             "jobs: [\n",
-            "jobs:\n  w: {state: {N: 0}, steps: {e: {cmd: [echo]}}}\n",
-            "jobs:\n  w: {states: {N: 0}, steps: {s: {set_state: {N: 1}}}}\n",
-            "jobs:\n  w: {schedule: {every: 1s}, steps: {e: {cmd: [echo]}}}\n",
+            "jobs:\n  w: {state: {N: 0}, tasks: {e: {cmd: [echo]}}}\n",
+            "jobs:\n  w: {states: {N: 0}, tasks: {s: {set_state: {N: 1}}}}\n",
+            "jobs:\n  w: {schedule: {every: 1s}, tasks: {e: {cmd: [echo]}}}\n",
         ] {
             assert!(
                 matches!(load_in(dir.path(), yaml), Err(Error::Yaml { .. })),
@@ -472,7 +472,7 @@ mod tests {
         }
         let err = load_in(
             dir.path(),
-            "schedules: {x: {every: 1s}}\njobs: {w: {steps: {e: {cmd: [echo]}}}}\n",
+            "schedules: {x: {every: 1s}}\njobs: {w: {tasks: {e: {cmd: [echo]}}}}\n",
         )
         .unwrap_err();
         assert_eq!(
@@ -481,7 +481,7 @@ mod tests {
         );
         let err = load_in(
             dir.path(),
-            "jobs:\n  w:\n    steps: {e: {cmd: [echo]}}\n    actoins: 1\n",
+            "jobs:\n  w:\n    tasks: {e: {cmd: [echo]}}\n    actoins: 1\n",
         )
         .unwrap_err();
         let cause = std::error::Error::source(&err).unwrap().to_string();

@@ -1,12 +1,12 @@
 # Projects
 
-A project is a YAML file of named **jobs**. A job is a map of named **steps** that `rocky exec` executes in order, or that `rocky run` runs on the project's [schedules](schedules.md). Jobs and steps are both named by their key, and can be written inline or kept in their own YAML files (see [Job and step files](#job-and-step-files)). A step sends an **HTTP request** or runs a **command**, and every step can use the result of any earlier step. `exec` prints the result of the last step that ran as JSON.
+A project is a YAML file of named **jobs**. A job is a map of named **tasks** that `rocky exec` executes in order, or that `rocky run` runs on the project's [schedules](schedules.md). Jobs and tasks are both named by their key, and can be written inline or kept in their own YAML files (see [Job and task files](#job-and-task-files)). A task sends an **HTTP request** or runs a **command**, and every task can use the result of any earlier task. `exec` prints the result of the last task that ran as JSON.
 
 ```yaml
 jobs:
   report:
-    steps:
-      login:                       # the step's name
+    tasks:
+      login:                       # the task's name
         post:                      # an HTTP request
           url: https://httpbin.org/anything/login
           json:                    # sent as the JSON body
@@ -27,16 +27,16 @@ jobs:
         cmd: [sh, -c, 'cat > "$1"', _, report.json]
         cwd: .                     # relative to the project file
         stdin:
-          date: ${steps.today.stdout}
-          loud: ${steps.shout.stdout}
+          date: ${tasks.today.stdout}
+          loud: ${tasks.shout.stdout}
 
       send:
         post:
           url: https://httpbin.org/anything/report
           headers:
-            Authorization: Bearer ${steps.login.body.json.token}
+            Authorization: Bearer ${tasks.login.body.json.token}
           json:
-            date: ${steps.today.stdout}
+            date: ${tasks.today.stdout}
 ```
 
 ```sh
@@ -58,98 +58,98 @@ Examples: [`httpbin.yaml`](../examples/httpbin.yaml) (jobs `login`, `mixed`, `co
 
 | Field | Notes |
 |---|---|
-| `values` | Map of uppercase name → fixed value, read as `${NAME}` by this job's steps; wins over a project value of the same name. See [Env](env.md#values). |
+| `values` | Map of uppercase name → fixed value, read as `${NAME}` by this job's tasks; wins over a project value of the same name. See [Env](env.md#values). |
 | `states` | Map of name → default value, kept between runs in `states/<job>.json` and read as `${states.NAME}`. See [State](state.md). |
-| `steps` | Required, and must not be empty. Map of step name → step, or → the path of a step file. Steps run in the order they are written. |
+| `tasks` | Required, and must not be empty. Map of task name → task, or → the path of a task file. Tasks run in the order they are written. |
 
-## Step kinds
+## Task kinds
 
-Each entry in `steps` (and in `then`, `else`, `do`, each switch case and `default`) is exactly one of the following.
+Each entry in `tasks` (and in `then`, `else`, `do`, each switch case and `default`) is exactly one of the following.
 
 | Kind | Keys | Page |
 |---|---|---|
-| HTTP request | `http:`, or `get:` / `post:` / `put:` / `patch:` / `delete:` | [HTTP steps](http-steps.md) |
-| Command | `cmd:` | [Cmd steps](cmd-steps.md) |
+| HTTP request | `http:`, or `get:` / `post:` / `put:` / `patch:` / `delete:` | [HTTP tasks](http-tasks.md) |
+| Command | `cmd:` | [Cmd tasks](cmd-tasks.md) |
 | Branch | `if`, `then`, `else` | [Conditions](conditions.md) |
 | Switch | `switch`, `cases`, `default` | [Conditions](conditions.md#switch) |
 | Loop | `for_each`, `as`, `do` | [Loops](loops.md) |
-| Step file | a string: the path of a step file | [Job and step files](#job-and-step-files) |
+| Task file | a string: the path of a task file | [Job and task files](#job-and-task-files) |
 | Set state | `set:` with `states:` (a map of name → value) | [State](state.md#set) |
 
-## Step fields
+## Task fields
 
 | Field | Applies to | Notes |
 |---|---|---|
-| `http` / `cmd` | HTTP and cmd steps | Exactly one of them. `cmd` must not be empty. `get`, `post`, `put`, `patch` and `delete` [count as `http`](http-steps.md#method-keys). |
-| `timeout` | HTTP and cmd steps | Seconds before the step is stopped and fails. On an HTTP step the default is 30s; cmd steps have no default. |
-| `cwd`, `stdin`, `env`, `capture_stdout` | cmd steps | Working directory, standard input, environment variables, and whether stdout is kept. See [Cmd steps](cmd-steps.md#options). |
-| `allow_failure` | HTTP and cmd steps | `true` to continue when the step fails. |
+| `http` / `cmd` | HTTP and cmd tasks | Exactly one of them. `cmd` must not be empty. `get`, `post`, `put`, `patch` and `delete` [count as `http`](http-tasks.md#method-keys). |
+| `timeout` | HTTP and cmd tasks | Seconds before the task is stopped and fails. On an HTTP task the default is 30s; cmd tasks have no default. |
+| `cwd`, `stdin`, `env`, `capture_stdout` | cmd tasks | Working directory, standard input, environment variables, and whether stdout is kept. See [Cmd tasks](cmd-tasks.md#options). |
+| `allow_failure` | HTTP and cmd tasks | `true` to continue when the task fails. |
 | `if`, `then`, `else` | branches | A branch has no `http`, `cmd`, `timeout` or `allow_failure`. |
 | `switch`, `cases`, `default` | switches | Like a branch: no `http`, `cmd`, `timeout` or `allow_failure`, and no `if`, `then` or `else`. |
 | `for_each`, `as`, `do` | loops | A loop has none of those keys and no `if`, `then`, `else`, `switch`, `cases` or `default`. |
 | `set` | set state | No other key may go with it. Every `set.states` name must be declared in the job's `states`. |
 
-The step's name is its key. It saves an HTTP or cmd step's result as `steps.<name>`, and labels the step in errors and log lines (see [labels](cli.md#errors-and-exit-codes)). It must be a [variable name](env.md#names) other than `steps` or `states`, and two steps in the same map can't share it. There is no `name` field.
+The task's name is its key. It saves an HTTP or cmd task's result as `tasks.<name>`, and labels the task in errors and log lines (see [labels](cli.md#errors-and-exit-codes)). It must be a [variable name](env.md#names) other than `tasks` or `states`, and two tasks in the same map can't share it. There is no `name` field.
 
 Unknown keys are an error.
 
 ## Results
 
-What goes into a step is part of its kind: an HTTP request's `json` or a cmd step's `stdin`. What comes out is its result, saved as `steps.<name>`.
+What goes into a task is part of its kind: an HTTP request's `json` or a cmd task's `stdin`. What comes out is its result, saved as `tasks.<name>`.
 
 | Kind | Result |
 |---|---|
 | `http` | `{status, headers, body}` ([Responses](responses.md)) |
 | `cmd` | `{exit_code, stdout, stderr}` |
 
-`${...}` is substituted in `json` and `stdin`, and a field that is exactly `${NAME}` keeps its JSON type (see [typed values](env.md#typed-values)). For stdin, a string is used as-is and any other value is written as compact JSON, so `stdin: ${steps.fetch.body}` is ready for `jq`.
+`${...}` is substituted in `json` and `stdin`, and a field that is exactly `${NAME}` keeps its JSON type (see [typed values](env.md#typed-values)). For stdin, a string is used as-is and any other value is written as compact JSON, so `stdin: ${tasks.fetch.body}` is ready for `jq`.
 
-## Using earlier steps' output
+## Using earlier tasks' output
 
-Each HTTP or cmd step's result is saved as `steps.<key>`, and later steps read it with a dot path:
+Each HTTP or cmd task's result is saved as `tasks.<key>`, and later tasks read it with a dot path:
 
 | Reference | Value |
 |---|---|
-| `${steps.login.status}` | an HTTP step's status code |
-| `${steps.login.headers.x-token}` | a response header (lowercase name) |
-| `${steps.login.body.user.id}` | a field of the response body |
-| `${steps.today.stdout}` | a command's output (parsed JSON if it is valid JSON, otherwise text; `null` with `capture_stdout: false`) |
-| `${steps.check.exit_code}`, `${steps.check.stderr}` | a command's exit code and error output |
+| `${tasks.login.status}` | an HTTP task's status code |
+| `${tasks.login.headers.x-token}` | a response header (lowercase name) |
+| `${tasks.login.body.user.id}` | a field of the response body |
+| `${tasks.today.stdout}` | a command's output (parsed JSON if it is valid JSON, otherwise text; `null` with `capture_stdout: false`) |
+| `${tasks.check.exit_code}`, `${tasks.check.stderr}` | a command's exit code and error output |
 
-- **Where it works:** anywhere `${...}` works. In an `if` condition or `for_each`, write the path without `${}`: `if: { this: steps.login.status, eq: 200 }`.
-- **Typed values:** a `json` or `stdin` field that is exactly `${steps...}` keeps its JSON type, so `json: ${steps.fetch.body}` sends the whole object.
-- **Every step:** each HTTP or cmd step is saved under its key. Keys only need to be unique within one map, so a step nested in a branch or loop can share a name with another; the later result replaces the earlier one.
-- **`steps` is reserved:** a variable named `steps` fails when the project loads (see [names](env.md#names)). The same goes for `states` (see [State](state.md)).
+- **Where it works:** anywhere `${...}` works. In an `if` condition or `for_each`, write the path without `${}`: `if: { this: tasks.login.status, eq: 200 }`.
+- **Typed values:** a `json` or `stdin` field that is exactly `${tasks...}` keeps its JSON type, so `json: ${tasks.fetch.body}` sends the whole object.
+- **Every task:** each HTTP or cmd task is saved under its key. Keys only need to be unique within one map, so a task nested in a branch or loop can share a name with another; the later result replaces the earlier one.
+- **`tasks` is reserved:** a variable named `tasks` fails when the project loads (see [names](env.md#names)). The same goes for `states` (see [State](state.md)).
 
 ## Failures and `allow_failure`
 
-An HTTP step **fails** when the status is 4xx or 5xx. A cmd step fails when its exit code isn't `0`.
+An HTTP task **fails** when the status is 4xx or 5xx. A cmd task fails when its exit code isn't `0`.
 
-- **Without `allow_failure`:** the job stops. `rocky exec` prints the failed step's result, then reports ``step `name` returned HTTP 404`` or ``step `name` exited with code 3`` and exits `1`.
-- **With `allow_failure: true`:** the job continues. The result is still saved as `steps.<name>`, so you can branch on `${steps.x.status}` or `${steps.x.exit_code}`.
+- **Without `allow_failure`:** the job stops. `rocky exec` prints the failed task's result, then reports ``task `name` returned HTTP 404`` or ``task `name` exited with code 3`` and exits `1`.
+- **With `allow_failure: true`:** the job continues. The result is still saved as `tasks.<name>`, so you can branch on `${tasks.x.status}` or `${tasks.x.exit_code}`.
 
-`allow_failure: true` also lets the job continue after a **timeout or network error** (a request that can't connect, a request or command that runs past its `timeout`). The step has no status, body or exit code, so its result is just the error, e.g. `steps.<name>` is `{"error": "request timed out after 5s"}`. Branch on it with `if: {this: steps.<name>.error, exists: true}` (see [Conditions](conditions.md#condition-shape)).
+`allow_failure: true` also lets the job continue after a **timeout or network error** (a request that can't connect, a request or command that runs past its `timeout`). The task has no status, body or exit code, so its result is just the error, e.g. `tasks.<name>` is `{"error": "request timed out after 5s"}`. Branch on it with `if: {this: tasks.<name>.error, exists: true}` (see [Conditions](conditions.md#condition-shape)).
 
 Other errors stop the job no matter what `allow_failure` says: an undefined variable, a missing program. Without `allow_failure`, so do timeouts and network errors. See [Command line](cli.md#errors-and-exit-codes).
 
 ## Execution
 
-- Steps run one at a time, in order. There is no parallelism.
-- Branches, switches and loops run their nested steps in place, then continue with the next step.
-- The printed result is the last HTTP or cmd step that ran, including one inside a branch or loop. If no HTTP or cmd step ran at all (every branch skipped), the printed result is `null`.
+- Tasks run one at a time, in order. There is no parallelism.
+- Branches, switches and loops run their nested tasks in place, then continue with the next task.
+- The printed result is the last HTTP or cmd task that ran, including one inside a branch or loop. If no HTTP or cmd task ran at all (every branch skipped), the printed result is `null`.
 
 ## Validation
 
-The whole project, every job including nested branches and loops, is checked when it loads, before any step runs. `rocky validate <PROJECT>` runs these checks alone, without running anything. These fail immediately:
+The whole project, every job including nested branches and loops, is checked when it loads, before any task runs. `rocky validate <PROJECT>` runs these checks alone, without running anything. These fail immediately:
 
-- no `jobs`, an empty `steps`, an empty `cmd`, `do`, `cases`, or `then` *and* `else`
-- `steps`, `then`, `else`, `do` or `default` written as a list instead of a map, or two steps with the same key in one map
-- a step with none, or both, of `http` and `cmd`
+- no `jobs`, an empty `tasks`, an empty `cmd`, `do`, `cases`, or `then` *and* `else`
+- `tasks`, `then`, `else`, `do` or `default` written as a list instead of a map, or two tasks with the same key in one map
+- a task with none, or both, of `http` and `cmd`
 - `cwd`, `stdin`, `env` or `capture_stdout` without `cmd`; `timeout` on a branch, switch or loop; `then`/`else` without `if`; `cases`/`default` without `switch`; `do`/`as` without `for_each`
-- a missing step or job file, a step file with a `name` field, or a step file that uses itself, directly or through other files
-- a name that appears twice in `jobs`, `schedules`, `states`, a `set`, a request's `headers` or `query`, a cmd step's `env`, or a switch's `cases`; a `schedules` entry for a job that doesn't exist
-- a [variable name](env.md#names) in `as` that isn't uppercase (`A-Z`, `0-9`, `_`), or a step key or name under `states` that isn't an identifier or is `steps` or `states`
-- a `set` without `states`, or with any other step key
+- a missing task or job file, a task file with a `name` field, or a task file that uses itself, directly or through other files
+- a name that appears twice in `jobs`, `schedules`, `states`, a `set`, a request's `headers` or `query`, a cmd task's `env`, or a switch's `cases`; a `schedules` entry for a job that doesn't exist
+- a [variable name](env.md#names) in `as` that isn't uppercase (`A-Z`, `0-9`, `_`), or a task key or name under `states` that isn't an identifier or is `tasks` or `states`
+- a `set` without `states`, or with any other task key
 - a `set.states` name the job's `states` doesn't declare
 - an invalid [condition](conditions.md) or [schedule](schedules.md)
 - unknown keys anywhere, including `schedule` inside a job and `vars` anywhere
@@ -160,39 +160,39 @@ Errors inside a job are reported under its name:
 Error: job `report`
 
 Caused by:
-    invalid step: `today` has an empty `cmd`
+    invalid task: `today` has an empty `cmd`
 ```
 
-Some problems only show up when the job runs: a missing `env_file` (loaded when the job starts), an undefined variable (when its step runs).
+Some problems only show up when the job runs: a missing `env_file` (loaded when the job starts), an undefined variable (when its task runs).
 
-## Job and step files
+## Job and task files
 
-A job or a step can live in its own YAML file. All files are loaded and checked when the project loads, and again each time `run` runs a job.
+A job or a task can live in its own YAML file. All files are loaded and checked when the project loads, and again each time `run` runs a job.
 
 ```yaml
 # project.yaml
 jobs:
   report: jobs/report.yaml       # a job file
   quick:
-    steps:
-      login: steps/login.yaml    # a step file, named by its key
+    tasks:
+      login: tasks/login.yaml    # a task file, named by its key
 
 # jobs/report.yaml: the same fields as an inline job
-steps:
-  signin: ../steps/login.yaml    # relative to this file
+tasks:
+  signin: ../tasks/login.yaml    # relative to this file
   today:
     cmd: [date]
 
-# steps/login.yaml: one step of any kind, including a branch or loop; no `name`
+# tasks/login.yaml: one task of any kind, including a branch or loop; no `name`
 post: { url: "https://httpbin.org/anything/login", json: { token: demo-token } }
 ```
 
-- A step file holds one step, without a `name`: the key that points at it names it, so one file can be used under several names. It can use other step files, inside a branch or loop too, but not itself, directly or through other files.
-- The entry is just a path, so everything else goes in the file. To change a field for one use, write the step inline.
-- A job file has the job fields `states` and `steps`. The project keeps `env_file` and `schedules`.
+- A task file holds one task, without a `name`: the key that points at it names it, so one file can be used under several names. It can use other task files, inside a branch or loop too, but not itself, directly or through other files.
+- The entry is just a path, so everything else goes in the file. To change a field for one use, write the task inline.
+- A job file has the job fields `states` and `tasks`. The project keeps `env_file` and `schedules`.
 
 Example: [`imports.yaml`](../examples/imports.yaml), whose jobs all come from [`jobs/`](../examples/jobs/) and share its env file.
 
 ## Paths
 
-Relative paths are resolved against the directory of **the file they are written in**: the project, a job file or a step file. That covers step file paths and `cwd`. The project `env_file` and job file paths are relative to the project file. None are relative to your current directory. Commands in `cmd:` steps without `cwd` run in your current directory.
+Relative paths are resolved against the directory of **the file they are written in**: the project, a job file or a task file. That covers task file paths and `cwd`. The project `env_file` and job file paths are relative to the project file. None are relative to your current directory. Commands in `cmd:` tasks without `cwd` run in your current directory.
