@@ -27,15 +27,15 @@ Example: [`examples/state.yaml`](../examples/state.yaml).
 
 ## The `states` field
 
-`states` goes on a job (inline or in a job file), not on the project or a step. It is a map of name → default value, and a default can be any YAML value: a string, number, boolean, list or map. Names follow the [variable name rule](variables.md#names).
+`states` goes on a job (inline or in a job file), not on the project or a step. It is a map of name → default value, and a default can be any YAML value: a string, number, boolean, list or map. Names follow the [variable name rule](env.md#names).
 
 ## Reading state
 
-`states.NAME` works wherever a variable does: `${states.COUNT}` in `${...}`, and `states.COUNT` (without `${}`) in an `if` condition, a `switch` or a `for_each`. Values keep their JSON type, so `json: {after: "${states.LAST_ID}"}` sends a number if the state holds one. Dot paths reach inside: `${states.SEEN.0}`. See [Variables](variables.md).
+`states.NAME` works wherever a variable does: `${states.COUNT}` in `${...}`, and `states.COUNT` (without `${}`) in an `if` condition, a `switch` or a `for_each`. Values keep their JSON type, so `json: {after: "${states.LAST_ID}"}` sends a number if the state holds one. Dot paths reach inside: `${states.SEEN.0}`. See [Env](env.md).
 
 ## `set`
 
-A `set` step's `states` sets one or more state names. Each value has `${...}` substituted, and a value that is exactly `${NAME}` keeps its JSON type (see [typed values](variables.md#typed-values)).
+A `set` step's `states` sets one or more state names. Each value has `${...}` substituted, and a value that is exactly `${NAME}` keeps its JSON type (see [typed values](env.md#typed-values)).
 
 ```yaml
 remember:

@@ -23,7 +23,7 @@ Example: the `loop` job in [`examples/httpbin.yaml`](../examples/httpbin.yaml).
 | Field | Notes |
 |---|---|
 | `for_each` | Required. A variable name or dot path, **without** `${}`. Its value must be a list. |
-| `as` | Optional, default `ITEM`. The name of the current element inside `do`. Must be a [variable name](variables.md#names) other than `steps` or `states`. |
+| `as` | Optional, default `ITEM`. The name of the current element inside `do`. Must be a [variable name](env.md#names) other than `steps` or `states`. |
 | `do` | Required, non-empty. The steps to run for each element. |
 
 Like every step, a loop is named by its key, which labels it in errors and `run`'s log lines.
@@ -40,7 +40,7 @@ A loop can't also have `http`, `cmd`, `timeout`, `allow_failure`, `if`, `then`, 
 ## The current element
 
 - Inside `do`, the element is `${ITEM}` (or the `as` name). Dot paths work for objects: `${USER.id}`, `if: { this: USER.id, eq: 7 }`.
-- Where a value is exactly `${USER}`, the element keeps its JSON type; see [typed values](variables.md#typed-values).
+- Where a value is exactly `${USER}`, the element keeps its JSON type; see [typed values](env.md#typed-values).
 - When the loop ends, the `as` variable goes back to the value an outer loop gave it, or stops being set by the loop.
 
 ## Behaviour

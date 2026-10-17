@@ -46,7 +46,7 @@ The common step field `allow_failure` works as for HTTP steps. See [Projects](pr
 - `${...}` is substituted inside each list item. A value always stays **one** argument, however many spaces or quotes it contains, so it can't inject extra arguments or shell syntax.
 - Strings are inserted as-is. Numbers, objects and arrays are inserted as compact JSON.
 - For pipes, redirects or globbing, call a shell yourself: `cmd: [sh, -c, "ls | wc -l"]`. Don't put `${...}` inside the `sh -c` script, because the shell would interpret the value. Pass it as a positional argument, as in the `slug` example above.
-- Variables are looked up in earlier results (loop variables, `steps` and `states`), then the project `env_file`, then the environment. See [Variables](variables.md#lookup-order).
+- Variables are looked up in earlier results (loop variables, `steps` and `states`), then the project `env_file`, then the environment. See [Env](env.md#lookup-order).
 
 ## `stdin`
 

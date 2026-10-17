@@ -48,7 +48,7 @@ Each feature has its own page in [`docs/`](docs/README.md):
 - [HTTP steps](docs/http-steps.md): HTTP request fields (`get:`, `post:`, … or `http:`) and behaviour
 - [Responses](docs/responses.md): the `{status, headers, body}` result
 - [Cmd steps](docs/cmd-steps.md): running programs, `stdin`, reading and writing files
-- [Variables](docs/variables.md) and [env files](docs/env-files.md)
+- [Env](docs/env.md): `${NAME}` substitution and env files
 - [State](docs/state.md): values kept between runs with a job's `states` and `set`
 - [Conditions](docs/conditions.md): `if` / `then` / `else`, `switch`
 - [Loops](docs/loops.md): `for_each` / `as` / `do`

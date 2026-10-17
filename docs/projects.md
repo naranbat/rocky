@@ -49,7 +49,7 @@ Examples: [`httpbin.yaml`](../examples/httpbin.yaml) (jobs `login`, `mixed`, `co
 
 | Field | Notes |
 |---|---|
-| `env_file` | A `.env` file shared by all jobs, relative to the project file. See [Env files](env-files.md). |
+| `env_file` | A `.env` file shared by all jobs, relative to the project file. See [Env](env.md#env-file). |
 | `schedules` | Optional. Map of job name → schedule: when `rocky run` runs that job. See [Schedules](schedules.md). `exec` ignores it. |
 | `jobs` | Required, at least one. Map of job name → job, or → the path of a job file. |
 
@@ -87,7 +87,7 @@ Each entry in `steps` (and in `then`, `else`, `do`, each switch case and `defaul
 | `for_each`, `as`, `do` | loops | A loop has none of those keys and no `if`, `then`, `else`, `switch`, `cases` or `default`. |
 | `set` | set state | No other key may go with it. Every `set.states` name must be declared in the job's `states`. |
 
-The step's name is its key. It saves an HTTP or cmd step's result as `steps.<name>`, and labels the step in errors and log lines (see [labels](cli.md#errors-and-exit-codes)). It must be a [variable name](variables.md#names) other than `steps` or `states`, and two steps in the same map can't share it. There is no `name` field.
+The step's name is its key. It saves an HTTP or cmd step's result as `steps.<name>`, and labels the step in errors and log lines (see [labels](cli.md#errors-and-exit-codes)). It must be a [variable name](env.md#names) other than `steps` or `states`, and two steps in the same map can't share it. There is no `name` field.
 
 Unknown keys are an error.
 
@@ -100,7 +100,7 @@ What goes into a step is part of its kind: an HTTP request's `json` or a cmd ste
 | `http` | `{status, headers, body}` ([Responses](responses.md)) |
 | `cmd` | `{exit_code, stdout, stderr}` |
 
-`${...}` is substituted in `json` and `stdin`, and a field that is exactly `${NAME}` keeps its JSON type (see [typed values](variables.md#typed-values)). For stdin, a string is used as-is and any other value is written as compact JSON, so `stdin: ${steps.fetch.body}` is ready for `jq`.
+`${...}` is substituted in `json` and `stdin`, and a field that is exactly `${NAME}` keeps its JSON type (see [typed values](env.md#typed-values)). For stdin, a string is used as-is and any other value is written as compact JSON, so `stdin: ${steps.fetch.body}` is ready for `jq`.
 
 ## Using earlier steps' output
 
@@ -117,7 +117,7 @@ Each HTTP or cmd step's result is saved as `steps.<key>`, and later steps read i
 - **Where it works:** anywhere `${...}` works. In an `if` condition or `for_each`, write the path without `${}`: `if: { this: steps.login.status, eq: 200 }`.
 - **Typed values:** a `json` or `stdin` field that is exactly `${steps...}` keeps its JSON type, so `json: ${steps.fetch.body}` sends the whole object.
 - **Every step:** each HTTP or cmd step is saved under its key. Keys only need to be unique within one map, so a step nested in a branch or loop can share a name with another; the later result replaces the earlier one.
-- **`steps` is reserved:** a variable named `steps` fails when the project loads (see [names](variables.md#names)). The same goes for `states` (see [State](state.md)).
+- **`steps` is reserved:** a variable named `steps` fails when the project loads (see [names](env.md#names)). The same goes for `states` (see [State](state.md)).
 
 ## Failures and `allow_failure`
 
@@ -146,7 +146,7 @@ The whole project, every job including nested branches and loops, is checked whe
 - `cwd`, `stdin`, `env` or `capture_stdout` without `cmd`; `timeout` on a branch, switch or loop; `then`/`else` without `if`; `cases`/`default` without `switch`; `do`/`as` without `for_each`
 - a missing step or job file, a step file with a `name` field, or a step file that uses itself, directly or through other files
 - a name that appears twice in `jobs`, `schedules`, `states`, a `set`, a request's `headers` or `query`, a cmd step's `env`, or a switch's `cases`; a `schedules` entry for a job that doesn't exist
-- a [variable name](variables.md#names) in `as` that isn't uppercase (`A-Z`, `0-9`, `_`), or a step key or name under `states` that isn't an identifier or is `steps` or `states`
+- a [variable name](env.md#names) in `as` that isn't uppercase (`A-Z`, `0-9`, `_`), or a step key or name under `states` that isn't an identifier or is `steps` or `states`
 - a `set` without `states`, or with any other step key
 - a `set.states` name the job's `states` doesn't declare
 - an invalid [condition](conditions.md) or [schedule](schedules.md)

@@ -65,11 +65,11 @@ A step has only one of `http`, `get`, `post`, `put`, `patch` and `delete`. A met
 
 ## Where `${NAME}` works
 
-`url`, header **values**, `query` **values**, and any string inside `json`. It is not expanded in header names, query keys or `json` keys. See [Variables](variables.md).
+`url`, header **values**, `query` **values**, and any string inside `json`. It is not expanded in header names, query keys or `json` keys. See [Env](env.md).
 
 ## Behaviour
 
-- **Variables** are expanded before sending. See [Variables](variables.md#lookup-order).
+- **Variables** are expanded before sending. See [Env](env.md#lookup-order).
 - **Failure:** a 4xx or 5xx status fails the step. Use `allow_failure: true` to continue. See [Projects](projects.md#failures-and-allow_failure).
 - **Result:** saved as `steps.<name>` (the step's key), read as `${steps.<name>.status}`, `${steps.<name>.headers.<lowercase-name>}` and `${steps.<name>.body...}`.
 - **Content type:** `Content-Type: application/json` is added when there is a `json`, unless you set a `Content-Type` header yourself (the name is matched in any case).
