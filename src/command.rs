@@ -255,7 +255,8 @@ mod tests {
                     .is_some_and(|(_, rest)| rest.trim_start().starts_with('Z'))
             });
             // Signal 0 only checks that the process exists.
-            let alive = unsafe { libc::kill(pid, 0) } == 0 && !zombie;
+            let alive =
+                nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), None).is_ok() && !zombie;
             if alive {
                 std::thread::sleep(std::time::Duration::from_millis(50));
             }

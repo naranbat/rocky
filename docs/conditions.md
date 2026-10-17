@@ -49,7 +49,7 @@ A condition is either `this` with **one or more** operators, or exactly one of `
 | Operator | True when |
 |---|---|
 | `gt` / `gte` / `lt` / `lte`: number | The variable is `>` / `>=` / `<` / `<=` the number. The number may also be written as a numeric string (`gt: "10"`) or a `${...}` that expands to one (`gt: "${states.LAST_ID}"`). The variable must be a number or a numeric string (`"15"` counts, surrounding spaces are ignored); otherwise the step fails with ``condition: `X` is not a number (<value>)``. |
-| `eq` / `ne`: value | Equal / not equal. If both sides are numbers or numeric strings, they compare as numbers (`200` = `"200"` = `200.0`). Otherwise, if either side is a string, they compare as text. Otherwise JSON equality (bool, null, arrays, objects). |
+| `eq` / `ne`: value | Equal / not equal. If both sides are strings, they compare as text (`"1.1"` ≠ `"1.10"`). Otherwise, if both sides are numbers or numeric strings, they compare as numbers (`200` = `"200"` = `200.0`; integers compare exactly, however large). Otherwise, if either side is a string, they compare as text. Otherwise JSON equality (bool, null, arrays, objects). |
 | `contains`: value | String: contains the value as a substring. Array: some element `eq` the value. Object: has that key. Any other type fails the step. |
 | `matches`: regex | The regex matches anywhere in the variable's text (use `^`/`$` to anchor). Non-strings are matched against their compact JSON. |
 | `exists`: `true` / `false` | The variable is / isn't defined (a `null` value counts as defined). Never fails on an undefined variable, so `{this: steps.ping.error, exists: true}` tells whether a step with `allow_failure` hit a timeout or network error. |

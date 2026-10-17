@@ -252,6 +252,15 @@ fn as_number(value: &Value) -> Option<f64> {
     }
 }
 
+/// An integer, or a string holding one, kept exact beyond f64's 2^53.
+fn as_integer(value: &Value) -> Option<i128> {
+    match value {
+        Value::Number(n) => n.to_string().parse().ok(),
+        Value::String(s) => s.trim().parse().ok(),
+        _ => None,
+    }
+}
+
 /// The operator value with its `${VAR}`s expanded.
 fn expand(value: &Value, lookup: &dyn Fn(&str) -> Option<Value>) -> Result<Value, Error> {
     let mut value = value.clone();
@@ -273,8 +282,15 @@ fn number(var: &str, value: &Value) -> Result<f64, Error> {
     as_number(value).ok_or_else(|| Error::Condition(format!("`{var}` is not a number ({value})")))
 }
 
-/// Numeric when both sides are numeric, text when either is a string, else JSON equality.
+/// Text when both sides are strings, numeric when both are numeric, text when either is a
+/// string, else JSON equality.
 pub(crate) fn loose_eq(left: &Value, right: &Value) -> bool {
+    if let (Value::String(a), Value::String(b)) = (left, right) {
+        return a == b;
+    }
+    if let (Some(a), Some(b)) = (as_integer(left), as_integer(right)) {
+        return a == b;
+    }
     if let (Some(a), Some(b)) = (as_number(left), as_number(right)) {
         return a == b;
     }
@@ -356,6 +372,23 @@ mod tests {
         assert!(!eval("{this: FLAG, eq: false}"));
         assert!(eval("{this: OBJ, eq: {id: 1}}"));
         assert!(!eval("{this: STATUS, ne: 200}"));
+    }
+
+    #[test]
+    fn loose_eq_numbers_and_strings() {
+        assert!(!loose_eq(&json!("1.1"), &json!("1.10")));
+        assert!(!loose_eq(&json!("007"), &json!("7")));
+        assert!(loose_eq(&json!(5), &json!("5")));
+        assert!(loose_eq(&json!(1), &json!(1.0)));
+        let big = |s: &str| serde_json::from_str::<Value>(s).unwrap();
+        assert!(!loose_eq(
+            &big("9007199254740993"),
+            &big("9007199254740992")
+        ));
+        assert!(!loose_eq(
+            &big("9007199254740993"),
+            &json!("9007199254740992")
+        ));
     }
 
     #[test]

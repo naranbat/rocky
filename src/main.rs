@@ -1,6 +1,9 @@
+#![forbid(unsafe_code)]
+
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
+use nix::sys::signal::Signal;
 use rocky::{error, exec, new, process_group, project, project_vars, run};
 use tokio::signal::unix::{SignalKind, signal};
 
@@ -27,7 +30,7 @@ enum Command {
     Run { file: PathBuf },
     /// Check a project for errors without running it.
     ///
-    /// Loads the project and its job and step files, and reports whether they are valid, including whether any `at` schedule is in the past. Sends no requests and runs no commands.
+    /// Loads the project and its job and step files, and reports whether they are valid. Sends no requests and runs no commands.
     Validate { file: PathBuf },
     /// Create a starter project, job or step file.
     ///
@@ -75,7 +78,6 @@ async fn main() -> anyhow::Result<()> {
         Command::Run { file } => until_stopped(run::run(&file)).await?,
         Command::Validate { file } => {
             let project = project::load(&file)?;
-            run::check_at(&project.schedules)?;
             let names: Vec<_> = project.jobs.keys().map(|n| format!("`{n}`")).collect();
             println!("{} is valid (jobs: {})", file.display(), names.join(", "));
         }
@@ -110,11 +112,11 @@ async fn until_stopped<T>(
         result = work => return Ok(result?),
         interrupted = tokio::signal::ctrl_c() => {
             interrupted?;
-            128 + libc::SIGINT
+            128 + Signal::SIGINT as i32
         }
-        _ = terminate.recv() => 128 + libc::SIGTERM,
-        _ = hangup.recv() => 128 + libc::SIGHUP,
-        _ = quit.recv() => 128 + libc::SIGQUIT,
+        _ = terminate.recv() => 128 + Signal::SIGTERM as i32,
+        _ = hangup.recv() => 128 + Signal::SIGHUP as i32,
+        _ = quit.recv() => 128 + Signal::SIGQUIT as i32,
     };
     process_group::kill_running();
     std::process::exit(code)

@@ -30,7 +30,7 @@ jobs:
 | any string inside a cmd step's [`env`](cmd-steps.md#options) values | |
 | condition operator values other than `matches` | |
 | [`set`](state.md#set) values | |
-| values in `vars` ([using other vars](#vars-that-use-other-vars)) | |
+| values in project `vars` ([using other vars](#vars-that-use-other-vars)) | values in job and step `vars` (kept literally) |
 
 Env files expand `${NAME}` themselves when they're read; see [Env files](env-files.md#format).
 
@@ -85,30 +85,24 @@ jobs:
 
 ### Vars that use other vars
 
-A `vars` value can contain `${NAME}` too:
+A project `vars` value can contain `${NAME}` too:
 
 ```yaml
 vars:
   PROJECTS_DIR: ${HOME}/projects                  # from the environment
+  BACKEND_DIR: ${PROJECTS_DIR}/backend
 jobs:
   build:
-    vars:
-      BACKEND_DIR: ${PROJECTS_DIR}/backend
     steps:
       version:
         cmd: [cat, VERSION]
         cwd: ${BACKEND_DIR}
-      tag:
-        cmd: [echo, '${IMAGE}']
-        vars:
-          IMAGE: backend:${steps.version.stdout}   # an earlier step's stdout
 ```
 
 - **Project `vars`** are expanded once, when the run starts, from the other project vars (with any values `set` has given them), the env file and the process environment. Two project vars that refer to each other (`A: ${B}`, `B: ${A}`) stop the run before any step: ``variable `A` refers to itself through its own value``. So does a project var that uses an undefined name, even if nothing uses that var.
-- **Job and step `vars`** are expanded each time they're used, in the [lookup order](#lookup-order), so they can also use `steps.NAME...`, `states.NAME` and the loop variable.
-- A job or step var whose value can't be expanded, because a name in it is undefined or it refers back to itself, counts as undefined: the error names the var you used, not the name inside it.
-- A var can't build on an outer var of the same name: `DIR: ${DIR}/sub` refers to itself.
-- The result is always a string. Write `$${` for a literal `${` in a value.
+- **Job and step `vars`** are not expanded: `IMAGE: backend:${TAG}` is the literal text `backend:${TAG}`. Use the `${...}` directly where the value is needed instead.
+- A project var can't build on itself: `DIR: ${DIR}/sub` refers to itself.
+- The result is always a string. Write `$${` for a literal `${` in a project var value.
 
 ## Updating vars at runtime
 

@@ -5,6 +5,8 @@ use std::sync::mpsc;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+use nix::sys::signal::{Signal, kill};
+use nix::unistd::Pid;
 use serde_json::{Value, json};
 use wiremock::matchers::{body_json, header, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -161,7 +163,7 @@ fn wait_for_pid(child: &mut Child, pid_file: &Path) -> i32 {
 
 fn assert_gone(pid: i32) {
     let gone = (0..40).any(|_| {
-        let alive = unsafe { libc::kill(pid, 0) } == 0;
+        let alive = kill(Pid::from_raw(pid), None).is_ok();
         if alive {
             std::thread::sleep(Duration::from_millis(50));
         }
@@ -806,7 +808,7 @@ fn run_reports_unwritable_log_file_and_keeps_printing() {
 #[test]
 fn stop_signals_stop_job_and_kill_running_commands() {
     // SIGHUP comes from closing the terminal, which no longer reaches the commands' groups.
-    for signal in [libc::SIGTERM, libc::SIGHUP, libc::SIGQUIT] {
+    for signal in [Signal::SIGTERM, Signal::SIGHUP, Signal::SIGQUIT] {
         let dir = tempfile::tempdir().unwrap();
         let file = write(
             dir.path(),
@@ -822,9 +824,14 @@ fn stop_signals_stop_job_and_kill_running_commands() {
             .unwrap();
         let pid = wait_for_pid(&mut child, &dir.path().join("pid"));
         let rocky = i32::try_from(child.id()).unwrap();
-        assert_eq!(unsafe { libc::kill(rocky, signal) }, 0);
+        kill(Pid::from_raw(rocky), signal).unwrap();
         let out = wait_with_deadline(child);
-        assert_eq!(out.status.code(), Some(128 + signal), "{}", stderr(&out));
+        assert_eq!(
+            out.status.code(),
+            Some(128 + signal as i32),
+            "{}",
+            stderr(&out)
+        );
         assert_gone(pid);
     }
 }
@@ -844,7 +851,7 @@ fn sigint_stops_run_and_kills_running_commands() {
     let mut child = spawn_run(&project, dir.path());
     let pid = wait_for_pid(&mut child, &dir.path().join("pid"));
     let rocky = i32::try_from(child.id()).unwrap();
-    assert_eq!(unsafe { libc::kill(rocky, libc::SIGINT) }, 0);
+    kill(Pid::from_raw(rocky), Signal::SIGINT).unwrap();
     let out = wait_with_deadline(child);
     assert_eq!(out.status.code(), Some(130), "{}", stderr(&out));
     assert_gone(pid);
@@ -1231,7 +1238,7 @@ fn validate_reports_the_load_error() {
 }
 
 #[test]
-fn validate_rejects_an_at_schedule_in_the_past() {
+fn validate_accepts_an_at_schedule_in_the_past() {
     let dir = tempfile::tempdir().unwrap();
     let file = write(
         dir.path(),
@@ -1244,11 +1251,34 @@ fn validate_rejects_an_at_schedule_in_the_past() {
         .current_dir(dir.path())
         .output()
         .unwrap();
-    assert_eq!(out.status.code(), Some(1));
-    assert!(
-        stderr(&out).contains("`w`: `at` is in the past"),
-        "{}",
-        stderr(&out)
-    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     assert!(!dir.path().join("ran").exists());
+}
+
+#[test]
+fn run_skips_an_at_schedule_in_the_past_and_runs_the_others() {
+    let dir = tempfile::tempdir().unwrap();
+    let at = at_in(300);
+    let project = write(
+        dir.path(),
+        "project.yaml",
+        &format!(
+            "schedules:\n  old: {{at: '2000-01-01T00:00:00'}}\n  new: {{at: \"{at}\"}}\n\
+             jobs:\n  old:\n    steps:\n      t:\n        cmd: [touch, old]\n\
+             \x20 new:\n    steps:\n      t:\n        cmd: [touch, new]\n"
+        ),
+    );
+
+    let output = run(&project, dir.path());
+    assert!(output.status.success(), "{}", stderr(&output));
+    let lines = stdout_lines(&output);
+    assert!(
+        lines
+            .iter()
+            .any(|line| line["job"] == "old" && line["event"] == "skipped"),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert!(!dir.path().join("old").exists());
+    assert!(dir.path().join("new").exists());
 }

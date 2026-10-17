@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::path::Path;
 use std::time::Duration;
 
@@ -12,52 +12,54 @@ use crate::project_vars::ProjectVars;
 use crate::schedule::{Clock, Schedule};
 use crate::{exec, progress, project};
 
-/// Checks that no `at` schedule is already in the past.
-pub fn check_at(schedules: &BTreeMap<String, Schedule>) -> Result<(), Error> {
-    let now = Zoned::now();
-    for (name, schedule) in schedules {
-        if let Schedule::Clock { clock, .. } = schedule
-            && clock.next_after(&now)?.is_none()
-        {
-            return Err(Error::InvalidProject(format!(
-                "`{name}`: `at` is in the past"
-            )));
-        }
-    }
-    Ok(())
-}
-
 /// Runs every job listed in the project's `schedules` until all schedules are done (only `at`
 /// jobs ever finish). Every log line is one JSON object on stdout (also appended to
 /// `logs/<date>.log`) with `job`, `time` and `event` fields. Each run reloads the
 /// project and prints a line per step, branch and loop, then a `done` line (with `failed_step` and its `reason` if a step
 /// failed); a run that errors or panics prints an `error` line. Either way the job's next
-/// runs still happen. A job whose schedule fails prints a `stopped` line and stops;
+/// runs still happen. An `at` job whose time has passed (without `run_on_start`) prints a
+/// `skipped` line instead of running. A job whose schedule fails prints a `stopped` line and stops;
 /// the other jobs keep running. All runs share one in-memory set of updated project
 /// `vars`, kept until `run` stops.
 pub async fn run(path: &Path) -> Result<(), Error> {
     let project = project::load(path)?;
-    check_at(&project.schedules)?;
-    let mut jobs = JoinSet::new();
-    let project_vars = ProjectVars::default();
-    for (name, schedule) in project.schedules {
-        let path = path.to_path_buf();
-        let project_vars = project_vars.clone();
-        jobs.spawn(async move {
-            let result = run_job(&path, &name, schedule, &project_vars).await;
-            (name, result)
-        });
-    }
-    if jobs.is_empty() {
+    if project.schedules.is_empty() {
         return Err(Error::InvalidProject(
             "project has no `schedules`".to_string(),
         ));
     }
-    while let Some(joined) = jobs.join_next().await {
-        if let (name, Err(err)) = joined? {
-            let error = err.chain();
-            progress::emit(&name, json!({"event": "stopped", "error": error})).await;
+    let now = Zoned::now();
+    let mut jobs = JoinSet::new();
+    let mut names = HashMap::new();
+    let project_vars = ProjectVars::default();
+    for (name, schedule) in project.schedules {
+        if let Schedule::Clock {
+            clock,
+            run_on_start: false,
+        } = &schedule
+            && clock.next_after(&now)?.is_none()
+        {
+            progress::emit(
+                &name,
+                json!({"event": "skipped", "reason": "`at` is in the past"}),
+            )
+            .await;
+            continue;
         }
+        let path = path.to_path_buf();
+        let project_vars = project_vars.clone();
+        let job = name.clone();
+        let task = jobs.spawn(async move { run_job(&path, &job, schedule, &project_vars).await });
+        names.insert(task.id(), name);
+    }
+    while let Some(joined) = jobs.join_next_with_id().await {
+        let (id, error) = match joined {
+            Ok((_, Ok(()))) => continue,
+            Ok((id, Err(err))) => (id, err.chain()),
+            Err(err) => (err.id(), err.to_string()),
+        };
+        let name = names.get(&id).map_or("", String::as_str);
+        progress::emit(name, json!({"event": "stopped", "error": error})).await;
     }
     Ok(())
 }

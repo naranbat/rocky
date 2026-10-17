@@ -47,7 +47,6 @@ The whole project is loaded and checked before anything runs. Any error stops `r
 
 - an invalid project, job, step or schedule (see [Validation](projects.md#validation))
 - no `schedules`: ``invalid project: project has no `schedules` ``
-- an `at` time that is already in the past: ``invalid project: `migrate`: `at` is in the past``
 
 ## Output
 
@@ -68,6 +67,7 @@ Every log line is one JSON object on **stdout**, with `job`, `time` (local time 
 | `done` | `failed_step`: the step that failed without `allow_failure`, or `null`; `reason`: why it failed (`returned HTTP 500`, `exited with code 3`), or `null` |
 | `error` | `error`: why the run stopped, e.g. an undefined variable, a project that became invalid, or a crash |
 | `stopped` | `error`: why the job's schedule stopped |
+| `skipped` | `reason`: why the job won't run, e.g. its `at` time has passed |
 
 ```json
 {"job":"poll","time":"2026-10-09T09:30:00+09:00","event":"error","error":"step `get` failed: variable `TOKEN` is not defined (checked steps, states, loop items, vars, env_file, environment)"}
@@ -81,4 +81,4 @@ A step that ends in an error gets no `step` line; the `error` line names it. See
 - **No overlap:** a job never overlaps itself. If a run takes longer than its interval, the missed runs are skipped.
 - **Live edits:** the project and its job and step files are re-read on every run, so edits to steps and `vars` apply from the next run, except a project var a `set` has updated, which keeps its updated value until `run` stops (see [Variables](variables.md#updating-vars-at-runtime)). Schedules are read only at startup.
 - **Failures don't stop the job:** after a run that failed, errored or crashed, the job keeps its schedule and the other jobs are unaffected. If a job's schedule itself can't be computed, that job stops with a `stopped` line, and the other jobs keep running.
-- **Exit:** `run` exits once no job has runs left: every scheduled job is an `at` job that has already run, or has stopped after a `stopped` error.
+- **Exit:** `run` exits once no job has runs left: every scheduled job is an `at` job that has already run or was skipped, or has stopped after a `stopped` error.

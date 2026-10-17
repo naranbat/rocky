@@ -42,7 +42,7 @@ schedules:
 - `hourly` takes a minute from 0 to 59.
 - `daily` takes a time such as `"09:30"` or `"09:30:15"`. Quote it so YAML keeps it as text.
 - `weekly` takes a list of days, each one of `mon`, `tue`, `wed`, `thu`, `fri`, `sat` or `sun`, and needs `time`, a time in the same form as `daily`. `time` only works with `weekly`.
-- `at` takes a date and time such as `"2027-10-10T09:30:00"`, in local time; fractional seconds (`09:30:00.500`) are allowed. A time-zone offset such as `+09:00` is ignored, and a `Z` suffix fails. It must be in the future when `run` starts or `validate` runs.
+- `at` takes a date and time such as `"2027-10-10T09:30:00"`, in local time; fractional seconds (`09:30:00.500`) are allowed. A time-zone offset such as `+09:00` is ignored, and a `Z` suffix fails. If it has already passed when `run` starts, the job is skipped (see [`run_on_start`](#run_on_start)).
 - The first run is the next matching time after `run` starts, unless `run_on_start` is set. If a run is still going when later slots pass, those slots are skipped. When clocks change, an `hourly` slot in a repeated hour runs twice, and a slot in a skipped hour runs when the clock reaches it, later than written (`daily: "02:30"` runs at 03:30 on a spring-forward day).
 
 ## `run_on_start`
@@ -55,11 +55,13 @@ schedules:
     run_on_start: true   # optional, default false
 ```
 
-`run_on_start: true` runs the job once as soon as `run` starts, then follows the schedule. Slots that pass during that first run are skipped, except an `at` time, which then runs late since it's the only one. It works with `hourly`, `daily`, `weekly` and `at`. It doesn't work with `every`, which already runs at start unless `delay` is set.
+`run_on_start: true` runs the job once as soon as `run` starts, then follows the schedule. Slots that pass during that first run are skipped, except an `at` time, which then runs late since it's the only one. It works with `hourly`, `daily`, `weekly` and `at`.
+
+An `at` time that is already in the past when `run` starts is not an error: without `run_on_start`, the job logs a `skipped` line (``{"event":"skipped","reason":"`at` is in the past"}``) and doesn't run, while the other jobs run as usual. With `run_on_start`, the job runs once at start. It doesn't work with `every`, which already runs at start unless `delay` is set.
 
 ## Errors
 
-Schedules are checked whenever the project loads, by `exec` as well as `run`. Except for `at` in the past, which only `run` and `validate` check, the message is reported inside a YAML error with the line, e.g. ``invalid YAML in project.yaml`` caused by ``schedules: invalid schedule: `5 min` is not a duration like `30s`, `5m` or `2h` at line 2 column 3``.
+Schedules are checked whenever the project loads, by `exec` as well as `run`. The message is reported inside a YAML error with the line, e.g. ``invalid YAML in project.yaml`` caused by ``schedules: invalid schedule: `5 min` is not a duration like `30s`, `5m` or `2h` at line 2 column 3``.
 
 | Problem | Message |
 |---|---|
@@ -74,4 +76,3 @@ Schedules are checked whenever the project loads, by `exec` as well as `run`. Ex
 | `every: 0s` | ``invalid schedule: `every` must be greater than 0`` |
 | `hourly` out of range | ``invalid schedule: `hourly: 60` must be a minute 0-59`` (a value above 127 gives a YAML type error instead) |
 | a bad `daily`, `time` or `at` | a message showing the expected format |
-| `at` in the past | ``invalid project: `migrate`: `at` is in the past`` |

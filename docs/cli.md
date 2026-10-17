@@ -31,7 +31,7 @@ Runs every job listed in the project's [`schedules`](schedules.md), until stoppe
 
 ## `rocky validate <PROJECT>`
 
-Loads the project and its job and step files and runs every [load-time check](projects.md#validation), plus `run`'s check that no [`at`](schedules.md) time is already in the past, without sending requests or running commands. A valid project prints one line and exits `0`; an invalid one prints the load error on stderr and exits `1`.
+Loads the project and its job and step files and runs every [load-time check](projects.md#validation), without sending requests or running commands. A valid project prints one line and exits `0`; an invalid one prints the load error on stderr and exits `1`.
 
 ```
 $ rocky validate project.yaml

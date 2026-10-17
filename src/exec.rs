@@ -369,35 +369,17 @@ fn render(
 /// Looks `var` up in `steps`, `states` and loop items (dot paths such as `steps.login.body.token`
 /// included), then the `vars` in `scope`, then the project `vars` and env_file in `outer`
 /// (dot paths included), then the process environment.
-/// A `vars` value in `scope` has its own `${NAME}` expanded the same way; one that can't be
-/// (undefined or referring to itself) counts as undefined.
 fn lookup(
     var: &str,
     values: &Map<String, Value>,
     scope: &Scope,
     outer: &Map<String, Value>,
 ) -> Option<Value> {
-    lookup_expanding(var, values, scope, outer, &[])
-}
-
-/// [`lookup`], with `seen` the `scope` vars whose values are being expanded.
-fn lookup_expanding<'a>(
-    var: &'a str,
-    values: &Map<String, Value>,
-    scope: &Scope,
-    outer: &Map<String, Value>,
-    seen: &[&'a str],
-) -> Option<Value> {
     if let Some(value) = extract::lookup(values, var) {
         return Some(value);
     }
     if let Some(text) = scope.get(var) {
-        if seen.contains(&var) {
-            return None;
-        }
-        let seen = [seen, &[var]].concat();
-        let find = |name: &str| lookup_expanding(name, values, scope, outer, &seen);
-        return vars::substitute(text, &find).ok().map(Value::String);
+        return Some(Value::String(text.clone()));
     }
     extract::lookup(outer, var).or_else(|| std::env::var(var).ok().map(Value::String))
 }
@@ -541,22 +523,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn vars_values_expand_other_vars() {
+    async fn job_and_step_vars_values_are_literal() {
         let project = project_with_vars(
             &format!(
                 "vars: {{BACKEND: '${{PROJECTS}}/backend'}}\n{}\
-                 \x20 print:\n    cmd: [echo, '${{SRC}} ${{LITERAL}}']\n    cwd: '${{ROOT}}'\n\
-                 \x20   vars: {{SRC: '${{BACKEND}}/src?id=${{steps.seed.stdout.ID}}', LITERAL: '$${{SRC}}'}}\n",
+                 \x20 print:\n    cmd: [echo, '${{SRC}} ${{BACKEND}}']\n    cwd: '${{ROOT}}'\n\
+                 \x20   vars: {{SRC: '${{steps.seed.stdout.ID}}/src'}}\n",
                 seed(json!({"ID": 7}))
             ),
             &[("ROOT", "${PROJECTS}"), ("PROJECTS", "/")],
         );
         let outcome = exec(project, false).await.unwrap();
-        assert_eq!(stdout(&outcome), &json!("//backend/src?id=7 ${SRC}"));
+        assert_eq!(
+            stdout(&outcome),
+            &json!("${steps.seed.stdout.ID}/src ${PROJECTS}/backend")
+        );
     }
 
     #[tokio::test]
-    async fn vars_referring_to_themselves_error() {
+    async fn project_vars_referring_to_themselves_error() {
         let err = exec(
             project_with_vars(
                 "steps:\n  e:\n    cmd: [echo, '${A}']\n",
@@ -568,17 +553,6 @@ mod tests {
         .err()
         .unwrap();
         assert!(matches!(err, Error::CyclicVar(ref v) if v == "A"), "{err}");
-
-        let err = exec(
-            project("vars: {A: 'x${B}', B: '${A}'}\nsteps:\n  e:\n    cmd: [echo, '${A}']\n"),
-            false,
-        )
-        .await
-        .err()
-        .unwrap();
-        assert!(
-            matches!(err, Error::Step { source, .. } if matches!(*source, Error::UndefinedVar(ref v) if v == "A"))
-        );
     }
 
     #[tokio::test]

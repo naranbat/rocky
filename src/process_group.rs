@@ -4,6 +4,9 @@
 use std::collections::BTreeSet;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
+use nix::sys::signal::{Signal, killpg};
+use nix::unistd::Pid;
+
 /// Process groups of commands still running.
 static RUNNING: Mutex<BTreeSet<i32>> = Mutex::new(BTreeSet::new());
 
@@ -47,11 +50,8 @@ pub fn kill_running() {
 }
 
 fn kill(group: i32) {
-    // SAFETY: `kill` takes no pointers. A negative id signals the whole process group; the
-    // id can't be reused while any process of the group still runs.
-    unsafe {
-        libc::kill(-group, libc::SIGKILL);
-    }
+    // The id can't be reused while any process of the group still runs.
+    let _ = killpg(Pid::from_raw(group), Signal::SIGKILL);
 }
 
 /// Each change is one insert or remove, so a poisoned lock is still safe to use.
