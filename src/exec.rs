@@ -302,7 +302,8 @@ async fn send(
     Ok(TaskResult::Http(response))
 }
 
-/// Runs `argv` with `task`'s `stdin`, `env`, `cwd`, `timeout` and `capture_stdout`.
+/// Runs `argv`, piped into `task`'s `pipe` stages, with `task`'s `stdin`, `env`, `cwd`,
+/// `timeout` and `capture_stdout`.
 async fn execute(
     argv: &[String],
     task: &Task,
@@ -314,9 +315,9 @@ async fn execute(
         .as_deref()
         .map(|path| substitute(&path.to_string_lossy()).map(|path| task.dir.join(path)))
         .transpose()?;
-    let argv = argv
-        .iter()
-        .map(|arg| substitute(arg))
+    let stages = std::iter::once(argv)
+        .chain(task.pipe.iter().map(Vec::as_slice))
+        .map(|argv| argv.iter().map(|arg| substitute(arg)).collect())
         .collect::<Result<Vec<_>, _>>()?;
     let stdin = render(task.stdin.clone(), find)?;
     let mut rendered = BTreeMap::new();
@@ -326,7 +327,7 @@ async fn execute(
         }
     }
     let result = command::run(
-        &argv,
+        &stages,
         stdin.as_deref(),
         &rendered,
         cwd.as_deref(),
@@ -752,6 +753,18 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(stdout(&outcome), &json!({"n": 5, "s": "x=5"}));
+    }
+
+    #[tokio::test]
+    async fn pipe_stages_are_substituted_and_fed_stdin() {
+        let outcome = exec(
+            project(&format!(
+                "{}  pipe:\n    cmd: [cat]\n    pipe: [[tr, a, '${{tasks.seed.stdout.TO}}'], [rev]]\n    stdin: abc\n",
+                seed(json!({"TO": "z"}))
+            )))
+        .await
+        .unwrap();
+        assert_eq!(stdout(&outcome), &json!("cbz"));
     }
 
     #[tokio::test]

@@ -15,10 +15,11 @@ jobs:
         cmd: [jq, -c, '[.slideshow.slides[].title]']
         stdin: ${tasks.show.body}
 
-      # Need a pipe? Pass values to `sh -c` as positional arguments ($1, $2, …)
-      # instead of writing ${...} inside the script. `_` fills $0.
+      # Need a pipe? List the programs after `cmd` under `pipe`; no shell is involved.
       slug:
-        cmd: [sh, -c, 'printf "%s" "$1" | tr " " -', _, "${tasks.show.body.slideshow.title}"]
+        cmd: [printf, "%s", "${tasks.show.body.slideshow.title}"]
+        pipe:
+          - [tr, " ", -]
 
       # A non-zero exit doesn't have to stop the job.
       config:
@@ -38,6 +39,7 @@ Example: the `mixed` job in [`examples/httpbin.yaml`](../examples/httpbin.yaml).
 | Field | Notes |
 |---|---|
 | `cmd` | A non-empty list: the program, then its arguments. A single string such as `cmd: "ls -la"` is rejected; write `[ls, -la]`. |
+| `pipe` | Optional. A list of further commands, each written like `cmd`, connected by pipes. See [Pipes](#pipes). |
 
 The common task field `allow_failure` works as for HTTP tasks. See [Projects](projects.md#task-fields).
 
@@ -45,8 +47,28 @@ The common task field `allow_failure` works as for HTTP tasks. See [Projects](pr
 
 - `${...}` is substituted inside each list item. A value always stays **one** argument, however many spaces or quotes it contains, so it can't inject extra arguments or shell syntax.
 - Strings are inserted as-is. Numbers, objects and arrays are inserted as compact JSON.
-- For pipes, redirects or globbing, call a shell yourself: `cmd: [sh, -c, "ls | wc -l"]`. Don't put `${...}` inside the `sh -c` script, because the shell would interpret the value. Pass it as a positional argument, as in the `slug` example above.
+- For pipes, use [`pipe`](#pipes). For redirects or globbing, call a shell yourself: `cmd: [sh, -c, "ls *.json"]`. Don't put `${...}` inside the `sh -c` script, because the shell would interpret the value. Pass it as a positional argument instead (`$1`, `$2`, …; `_` fills `$0`): `cmd: [sh, -c, 'cat > "$1"', _, "${PATH_VAR}"]`.
 - Variables are looked up in earlier results (loop variables, `tasks` and `states`), then job and project `values`, then the project `env_file`, then the environment. See [Env](env.md#lookup-order).
+
+## Pipes
+
+`pipe` runs more programs after `cmd`, like `cmd | a | b` in a shell, but each runs directly, with no shell.
+
+```yaml
+top_titles:
+  cmd: [jq, -r, '.slideshow.slides[].title']
+  pipe:
+    - [sort, -u]
+    - [head, -n, "3"]
+  stdin: ${tasks.show.body}
+```
+
+- Each command's stdout goes straight into the next one's stdin, so data streams through unchanged. Nothing is parsed or trimmed between stages.
+- `stdin` goes to `cmd`. The result's `stdout` is the last command's output (`capture_stdout` applies to it).
+- `exit_code` is the code of the last command that exited non-zero, otherwise `0`, like `set -o pipefail`. A failing command in the middle fails the task.
+- `stderr` is the stderr of every command that wrote some, in order, one per line.
+- `cwd`, `env` and `timeout` apply to every command. A timeout or a stop kills them all.
+- `${...}` is substituted in each argument of each command, as for `cmd`.
 
 ## `stdin`
 

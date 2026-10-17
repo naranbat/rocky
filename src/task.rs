@@ -32,6 +32,10 @@ pub struct Task {
     pub delete: Option<Shorthand>,
     /// Program and arguments, run directly without a shell; `${VAR}` is substituted per element.
     pub cmd: Option<Vec<String>>,
+    /// Further programs, each with its arguments, run like `cmd`: `cmd`'s stdout is piped
+    /// into the first one's stdin, and so on.
+    #[serde(default)]
+    pub pipe: Vec<Vec<String>>,
     /// Seconds before the task is stopped and fails: a `cmd` command is killed, an `http`
     /// request (default 30) is abandoned.
     pub timeout: Option<u64>,
@@ -259,6 +263,7 @@ fn resolve_one(task: &mut Task, dir: &Path, stack: &mut Vec<PathBuf>) -> Result<
         ("stdin", task.stdin.is_some()),
         ("env", !task.env.is_empty()),
         ("capture_stdout", task.capture_stdout.is_some()),
+        ("pipe", !task.pipe.is_empty()),
     ] {
         if set && task.cmd.is_none() {
             return Err(Error::InvalidTask(format!(
@@ -468,10 +473,15 @@ fn resolve_switch(
 fn resolve_leaf(task: &Task, name: &str) -> Result<(), Error> {
     match (&task.http, &task.cmd) {
         (Some(_), None) => {}
-        (None, Some(argv)) if !argv.is_empty() => {}
-        (None, Some(_)) => {
+        (None, Some(argv)) if argv.is_empty() => {
             return Err(Error::InvalidTask(format!("`{name}` has an empty `cmd`")));
         }
+        (None, Some(_)) if task.pipe.iter().any(Vec::is_empty) => {
+            return Err(Error::InvalidTask(format!(
+                "`{name}` has an empty stage in `pipe`"
+            )));
+        }
+        (None, Some(_)) => {}
         _ => {
             return Err(Error::InvalidTask(format!(
                 "`{name}` must have exactly one of `http` (or `get`, `post`, `put`, `patch`, `delete`) or `cmd`"
@@ -561,6 +571,10 @@ mod tests {
                 neither,
             ),
             ("a:\n  cmd: []\n", "`a` has an empty `cmd`"),
+            (
+                "a:\n  cmd: [echo]\n  pipe: [[cat], []]\n",
+                "`a` has an empty stage in `pipe`",
+            ),
         ] {
             let msg = invalid_task(yaml);
             assert!(msg.contains(expected), "{yaml}: {msg}");
@@ -628,6 +642,10 @@ mod tests {
             (
                 "a:\n  http: {method: GET, url: x}\n  capture_stdout: false\n",
                 "capture_stdout",
+            ),
+            (
+                "a:\n  http: {method: GET, url: x}\n  pipe: [[cat]]\n",
+                "pipe",
             ),
         ] {
             let msg = invalid_task(yaml);

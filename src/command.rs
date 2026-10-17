@@ -20,51 +20,73 @@ pub struct CommandResult {
     pub stderr: String,
 }
 
-/// Runs `argv` directly (no shell) in `cwd` (default: the current directory) with `env` added
-/// to the inherited environment, writes `stdin` to it when given, and waits for it to finish. After `timeout` seconds the command is killed and the run fails.
-/// Without `capture_stdout`, stdout goes to /dev/null and the result's `stdout` is `null`.
+/// Runs `stages` (each a program and its arguments) directly, with no shell, each stage's
+/// stdout piped into the next one's stdin. Runs in `cwd` (default: the current directory)
+/// with `env` added to the inherited environment, writes `stdin` to the first stage when
+/// given, and waits for every stage to finish. After `timeout` seconds every stage is killed
+/// and the run fails. Without `capture_stdout`, the last stage's stdout goes to /dev/null and
+/// the result's `stdout` is `null`.
 pub async fn run(
-    argv: &[String],
+    stages: &[Vec<String>],
     stdin: Option<&str>,
     env: &BTreeMap<String, String>,
     cwd: Option<&Path>,
     timeout: Option<u64>,
     capture_stdout: bool,
 ) -> Result<CommandResult, Error> {
-    let (program, arguments) = argv
-        .split_first()
-        .ok_or_else(|| Error::InvalidTask("`cmd` is empty".to_string()))?;
-    let spawn_error = |source| Error::Spawn {
+    let empty = || Error::InvalidTask("`cmd` is empty".to_string());
+    let programs = stages
+        .iter()
+        .map(|argv| argv.first().ok_or_else(empty))
+        .collect::<Result<Vec<_>, _>>()?;
+    let first = *programs.first().ok_or_else(empty)?;
+    let spawn_error = |program: &String, source| Error::Spawn {
         command: program.clone(),
         source,
     };
-    let mut command = Command::new(program);
-    command
-        .args(arguments)
-        .envs(env)
-        .stdin(if stdin.is_some() {
+    let mut commands = Vec::with_capacity(stages.len());
+    let mut next_stdin = if stdin.is_some() {
+        Stdio::piped()
+    } else {
+        Stdio::null()
+    };
+    for (index, argv) in stages.iter().enumerate() {
+        let (program, arguments) = argv.split_first().ok_or_else(empty)?;
+        let input = std::mem::replace(&mut next_stdin, Stdio::null());
+        let stdout = if index + 1 < stages.len() {
+            let (reader, writer) =
+                std::io::pipe().map_err(|source| spawn_error(program, source))?;
+            next_stdin = reader.into();
+            writer.into()
+        } else if capture_stdout {
             Stdio::piped()
         } else {
             Stdio::null()
-        })
-        .stdout(if capture_stdout {
-            Stdio::piped()
-        } else {
-            Stdio::null()
-        })
-        .stderr(Stdio::piped())
-        // Its own process group, so a timeout or a stop signal kills what it started too.
-        .process_group(0)
-        .kill_on_drop(true);
-    if let Some(dir) = cwd {
-        command.current_dir(dir);
+        };
+        let mut command = Command::new(program);
+        command
+            .args(arguments)
+            .envs(env)
+            .stdin(input)
+            .stdout(stdout)
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        if let Some(dir) = cwd {
+            command.current_dir(dir);
+        }
+        commands.push(command);
     }
-    // `group` is dropped unfinished on timeout, which kills the group.
-    let (mut child, group) = process_group::spawn(&mut command).map_err(|source| match cwd {
-        Some(dir) if !dir.is_dir() => Error::Cwd(dir.to_path_buf()),
-        _ => spawn_error(source),
-    })?;
-    let pipe = child.stdin.take();
+    // One process group for all stages, so a timeout or a stop signal kills what they started
+    // too. `group` is dropped unfinished on timeout, which kills the group.
+    let (mut children, group) =
+        process_group::spawn(&mut commands).map_err(|(index, source)| match cwd {
+            Some(dir) if !dir.is_dir() => Error::Cwd(dir.to_path_buf()),
+            _ => spawn_error(programs[index], source),
+        })?;
+    // The commands hold the parent's copies of the pipe ends; a stage sees EOF only once
+    // they are closed.
+    drop(commands);
+    let pipe = children.first_mut().and_then(|child| child.stdin.take());
     let write = async move {
         if let (Some(mut pipe), Some(text)) = (pipe, stdin) {
             // A command may exit without reading it all, so a write error (broken pipe)
@@ -72,30 +94,50 @@ pub async fn run(
             let _ = pipe.write_all(text.as_bytes()).await;
         }
     };
+    // Every stage is read at once, so none blocks on a full stderr pipe.
+    let waits: Vec<_> = children
+        .into_iter()
+        .map(|child| tokio::spawn(child.wait_with_output()))
+        .collect();
+    let wait_all = async move {
+        let mut outputs = Vec::with_capacity(waits.len());
+        for wait in waits {
+            outputs.push(wait.await.map_err(std::io::Error::other)??);
+        }
+        Ok(outputs)
+    };
     // Written while the output is read, so a command that fills stdout before reading
     // stdin can't deadlock.
-    let finish = async move { tokio::join!(write, child.wait_with_output()).1 };
-    let output = match timeout {
-        // On timeout the child is dropped, which kills it (`kill_on_drop`), and so is
-        // `group`, which kills what it started.
+    let finish = async move { tokio::join!(write, wait_all).1 };
+    let outputs = match timeout {
+        // On timeout `group` is dropped, which kills every stage and what it started.
         Some(secs) => tokio::time::timeout(std::time::Duration::from_secs(secs), finish)
             .await
             .map_err(|_| Error::CommandTimeout {
-                command: program.clone(),
+                command: first.clone(),
                 secs,
             })?,
         None => finish.await,
     }
-    .map_err(spawn_error)?;
+    .map_err(|source| spawn_error(first, source))?;
     group.finish();
     Ok(CommandResult {
-        exit_code: output.status.code().unwrap_or(-1),
-        stdout: if capture_stdout {
-            output_value(&output.stdout)
-        } else {
-            Value::Null
+        // Like `set -o pipefail`: the last non-zero exit code.
+        exit_code: outputs
+            .iter()
+            .map(|output| output.status.code().unwrap_or(-1))
+            .rfind(|&code| code != 0)
+            .unwrap_or(0),
+        stdout: match outputs.last() {
+            Some(output) if capture_stdout => output_value(&output.stdout),
+            _ => Value::Null,
         },
-        stderr: text(&output.stderr),
+        stderr: outputs
+            .iter()
+            .map(|output| text(&output.stderr))
+            .filter(|stderr| !stderr.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n"),
     })
 }
 
@@ -121,7 +163,13 @@ mod tests {
     /// Runs `args` with `stdin`, the inherited environment and cwd, no timeout, and stdout
     /// captured.
     async fn run_cmd(args: &[&str], stdin: Option<&str>) -> Result<CommandResult, Error> {
-        run(&argv(args), stdin, &BTreeMap::new(), None, None, true).await
+        run(&[argv(args)], stdin, &BTreeMap::new(), None, None, true).await
+    }
+
+    /// Runs `stages` as a pipeline, like [`run_cmd`].
+    async fn run_pipe(stages: &[&[&str]], stdin: Option<&str>) -> Result<CommandResult, Error> {
+        let stages: Vec<_> = stages.iter().map(|stage| argv(stage)).collect();
+        run(&stages, stdin, &BTreeMap::new(), None, None, true).await
     }
 
     #[tokio::test]
@@ -150,7 +198,7 @@ mod tests {
     #[tokio::test]
     async fn uncaptured_stdout_is_null() {
         let result = run(
-            &argv(&["sh", "-c", "echo out; echo oops >&2; exit 3"]),
+            &[argv(&["sh", "-c", "echo out; echo oops >&2; exit 3"])],
             None,
             &BTreeMap::new(),
             None,
@@ -211,7 +259,7 @@ mod tests {
         let script = format!("sleep 30 & echo $! > {}; wait", pid_file.display());
         let started = std::time::Instant::now();
         let err = run(
-            &argv(&["sh", "-c", &script]),
+            &[argv(&["sh", "-c", &script])],
             None,
             &BTreeMap::new(),
             None,
@@ -249,7 +297,7 @@ mod tests {
     #[tokio::test]
     async fn missing_cwd_is_named() {
         let err = run(
-            &argv(&["echo"]),
+            &[argv(&["echo"])],
             None,
             &BTreeMap::new(),
             Some(Path::new("/rocky-no-such-dir")),
@@ -274,7 +322,7 @@ mod tests {
     async fn runs_in_cwd() {
         let dir = tempfile::tempdir().unwrap();
         let result = run(
-            &argv(&["pwd"]),
+            &[argv(&["pwd"])],
             None,
             &BTreeMap::new(),
             Some(dir.path()),
@@ -294,7 +342,7 @@ mod tests {
     async fn env_is_added_to_the_inherited_environment() {
         let env = BTreeMap::from([("A".to_string(), "x y".to_string())]);
         let result = run(
-            &argv(&["sh", "-c", r#"printf "%s" "$A""#]),
+            &[argv(&["sh", "-c", r#"printf "%s" "$A""#])],
             None,
             &env,
             None,
@@ -313,5 +361,91 @@ mod tests {
             run_cmd(&[], None).await.unwrap_err(),
             Error::InvalidTask(_)
         ));
+    }
+
+    #[tokio::test]
+    async fn pipe_feeds_each_stage_into_the_next() {
+        let result = run_pipe(&[&["printf", "b\\na\\nb\\n"], &["sort", "-u"]], None)
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, json!("a\nb"));
+        let result = run_pipe(&[&["cat"], &["wc", "-l"]], Some("a\nb\n"))
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, json!(2));
+    }
+
+    #[tokio::test]
+    async fn pipe_exit_code_is_the_last_non_zero_one() {
+        let result = run_pipe(&[&["sh", "-c", "exit 3"], &["cat"]], None)
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 3);
+        let result = run_pipe(
+            &[&["sh", "-c", "exit 3"], &["sh", "-c", "exit 4"], &["true"]],
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.exit_code, 4);
+    }
+
+    #[tokio::test]
+    async fn pipe_joins_stderr_in_stage_order() {
+        let result = run_pipe(
+            &[
+                &["sh", "-c", "echo one >&2"],
+                &["sh", "-c", "cat"],
+                &["sh", "-c", "sleep 0.1; echo three >&2"],
+            ],
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.stderr, "one\nthree");
+    }
+
+    #[tokio::test]
+    async fn large_data_through_a_pipe_does_not_deadlock() {
+        let big = "x".repeat(1 << 20);
+        let result = run_pipe(&[&["cat"], &["cat"], &["cat"]], Some(&big))
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, json!(big));
+    }
+
+    #[tokio::test]
+    async fn missing_program_in_a_later_stage_is_named() {
+        let err = run_pipe(&[&["sleep", "30"], &["rocky-no-such-program"]], None)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, Error::Spawn { command, .. } if command == "rocky-no-such-program"));
+    }
+
+    #[tokio::test]
+    async fn timeout_kills_every_stage() {
+        let dir = tempfile::tempdir().unwrap();
+        let stage = |name: &str| {
+            let file = dir.path().join(name);
+            format!("echo $$ > {}; sleep 30", file.display())
+        };
+        let (first, second) = (stage("first"), stage("second"));
+        let stages = [argv(&["sh", "-c", &first]), argv(&["sh", "-c", &second])];
+        let err = run(&stages, None, &BTreeMap::new(), None, Some(1), true)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, Error::CommandTimeout { ref command, secs: 1 } if command == "sh"),
+            "{err}"
+        );
+        for name in ["first", "second"] {
+            let pid: i32 = std::fs::read_to_string(dir.path().join(name))
+                .unwrap()
+                .trim()
+                .parse()
+                .unwrap();
+            assert!(gone(pid), "`{name}` stage ({pid}) still runs");
+        }
     }
 }

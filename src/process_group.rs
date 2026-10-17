@@ -27,25 +27,47 @@ pub struct Group {
     finished: bool,
 }
 
-/// Starts `command` and tracks the group it leads. Holds the same lock as [`kill_running`]
-/// across the spawn, so a stop can't exit while a command is starting but not yet tracked;
-/// once stopping, nothing new starts.
-pub fn spawn(command: &mut Command) -> io::Result<(Child, Group)> {
+/// Starts `commands` (the stages of a pipeline) in one process group, led by the first, and
+/// tracks it. Holds the same lock as [`kill_running`] across the spawns, so a stop can't exit
+/// while a command is starting but not yet tracked; once stopping, nothing new starts.
+/// On failure, returns the index of the command that failed, and the ones already started
+/// are killed.
+pub fn spawn(commands: &mut [Command]) -> Result<(Vec<Child>, Group), (usize, io::Error)> {
     let mut running = running();
     if running.stopping {
-        return Err(io::Error::other("rocky is stopping"));
+        return Err((0, io::Error::other("rocky is stopping")));
     }
-    let child = command.spawn()?;
-    let id = child
-        .id()
-        .and_then(|id| i32::try_from(id).ok())
-        .ok_or_else(|| io::Error::other("no process id"))?;
+    let mut children = Vec::with_capacity(commands.len());
+    let mut leader = None;
+    for (index, command) in commands.iter_mut().enumerate() {
+        command.process_group(leader.unwrap_or(0));
+        let spawned = command.spawn().and_then(|child| {
+            let id = child
+                .id()
+                .and_then(|id| i32::try_from(id).ok())
+                .ok_or_else(|| io::Error::other("no process id"))?;
+            Ok((child, id))
+        });
+        match spawned {
+            Ok((child, id)) => {
+                leader.get_or_insert(id);
+                children.push(child);
+            }
+            Err(source) => {
+                if let Some(id) = leader {
+                    kill(id);
+                }
+                return Err((index, source));
+            }
+        }
+    }
+    let id = leader.ok_or_else(|| (0, io::Error::other("no command")))?;
     running.groups.insert(id);
     let group = Group {
         id,
         finished: false,
     };
-    Ok((child, group))
+    Ok((children, group))
 }
 
 impl Group {
