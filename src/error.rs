@@ -21,18 +21,13 @@ pub enum Error {
         path: PathBuf,
         source: serde_yaml::Error,
     },
-    #[error("invalid state file {path}")]
-    State {
-        path: PathBuf,
-        source: serde_json::Error,
-    },
     #[error("failed to load env file {path}")]
     EnvFile {
         path: PathBuf,
         source: Box<dyn std::error::Error + Send + Sync>,
     },
     #[error(
-        "variable `{0}` is not defined (checked tasks, states, loop items, values, env_file, environment)"
+        "variable `{0}` is not defined (checked tasks, loop items, values, env_file, environment)"
     )]
     UndefinedVar(String),
     #[error("unclosed `${{` in `{0}`")]

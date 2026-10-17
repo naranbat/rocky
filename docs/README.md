@@ -22,7 +22,6 @@ One page per feature. For installing and a first run, see the [project README](.
 | Page | What it covers |
 |---|---|
 | [Env](env.md) | `${NAME}` substitution, `.env` files, typed values, dot paths, and lookup order |
-| [State](state.md) | Keeping values between runs with a job's `states` and `set` |
 
 ## Control flow
 

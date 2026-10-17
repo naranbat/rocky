@@ -97,17 +97,6 @@ fn assert_stderr_contains(output: &Output, text: &str) {
     assert!(stderr.contains(text), "{stderr}");
 }
 
-/// Makes `dir` writable again when dropped, so a test that took write access away
-/// still leaves a removable temp dir if it fails.
-struct Writable(PathBuf);
-
-impl Drop for Writable {
-    fn drop(&mut self) {
-        let mode = std::os::unix::fs::PermissionsExt::from_mode(0o755);
-        let _ = std::fs::set_permissions(&self.0, mode);
-    }
-}
-
 /// How long a test waits for `rocky` before killing it and failing.
 const DEADLINE: Duration = Duration::from_secs(10);
 
@@ -534,16 +523,15 @@ fn run_on_start_and_the_at_run_log_control_flow() {
         &format!(
             "schedules:\n  hello:\n    at: \"{at}\"\n    run_on_start: true\n\
              jobs:\n\
-             \x20 hello:\n    states: {{N: 0}}\n    tasks:\n\
-             \x20     save:\n        set: {{states: {{N: 1}}}}\n\
-             \x20     check:\n        if: {{this: states.N, eq: 1}}\n        then: {{hi: {{cmd: [echo, hi]}}}}\n\
-             \x20     route:\n        switch: states.N\n        cases: {{1: {{one: {{cmd: [echo, one]}}}}}}\n\
+             \x20 hello:\n    values: {{N: 1}}\n    tasks:\n\
+             \x20     check:\n        if: {{this: N, eq: 1}}\n        then: {{hi: {{cmd: [echo, hi]}}}}\n\
+             \x20     route:\n        switch: N\n        cases: {{1: {{one: {{cmd: [echo, one]}}}}}}\n\
              \x20     list:\n        cmd: [echo, '[1]']\n\
              \x20     each:\n        for_each: tasks.list.stdout\n        do: {{print: {{cmd: [echo, '${{ITEM}}']}}}}\n"
         ),
     );
     let run = [
-        "set", "branch", "task", "switch", "task", "task", "for_each", "task", "done",
+        "branch", "task", "switch", "task", "task", "for_each", "task", "done",
     ];
     assert_eq!(events(&output), [run, run].concat());
 }
@@ -759,25 +747,6 @@ fn validate_reports_the_load_error() {
     assert!(out.stdout.is_empty());
     assert_stderr_contains(&out, "invalid regex `(`");
     assert!(!dir.path().join("ran").exists());
-}
-
-#[test]
-fn run_does_not_log_a_set_whose_states_could_not_be_saved() {
-    let dir = tempfile::tempdir().unwrap();
-    let _writable = Writable(dir.path().join("states"));
-    let at = at_in(300);
-    let output = run_yaml(
-        dir.path(),
-        &format!(
-            "schedules:\n  w: {{at: \"{at}\"}}\n\
-             jobs:\n  w:\n    states: {{N: 0}}\n    tasks:\n\
-             \x20     lock:\n        cmd: [chmod, '555', states]\n        cwd: .\n\
-             \x20     save:\n        set: {{states: {{N: 1}}}}\n"
-        ),
-    );
-    let events = events(&output);
-    assert!(events.contains(&json!("error")), "{events:?}");
-    assert!(!events.contains(&json!("set")), "{events:?}");
 }
 
 #[test]

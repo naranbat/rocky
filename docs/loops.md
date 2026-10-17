@@ -23,7 +23,7 @@ Example: the `loop` job in [`examples/httpbin.yaml`](../examples/httpbin.yaml).
 | Field | Notes |
 |---|---|
 | `for_each` | Required. A variable name or dot path, **without** `${}`. Its value must be a list. |
-| `as` | Optional, default `ITEM`. The name of the current element inside `do`. Must be a [variable name](env.md#names) other than `tasks` or `states`. |
+| `as` | Optional, default `ITEM`. The name of the current element inside `do`. Must be a [variable name](env.md#names) other than `tasks`. |
 | `do` | Required, non-empty. The tasks to run for each element. |
 
 Like every task, a loop is named by its key, which labels it in errors and `run`'s log lines.
@@ -33,7 +33,7 @@ A loop can't also have `http`, `cmd`, `timeout`, `allow_failure`, `if`, `then`, 
 ## The list
 
 - `for_each` is looked up like a [condition's `this`](conditions.md#variable-lookup).
-- The value must be a JSON array. Arrays come from `tasks.NAME...`, `states.NAME`, or an outer loop's element. Values from env files and the environment are strings, so they can't be looped over.
+- The value must be a JSON array. Arrays come from `tasks.NAME...` or an outer loop's element. Values from env files and the environment are strings, so they can't be looped over.
 - A non-list value fails the task with ``for_each: `X` is not a list (…)``. An undefined variable fails it too.
 - An empty list runs nothing.
 

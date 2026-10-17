@@ -10,7 +10,7 @@ use crate::project::Project;
 use crate::request::RequestSpec;
 use crate::response::Response;
 use crate::task::Task;
-use crate::{condition, env_file, extract, http, progress, state, vars};
+use crate::{condition, env_file, extract, http, progress, vars};
 
 /// What one task produced: an HTTP response, a finished command, or (with `allow_failure`)
 /// the timeout or network error that stopped it.
@@ -95,8 +95,6 @@ fn queued(tasks: Vec<Task>) -> impl DoubleEndedIterator<Item = Work> {
 /// `default`, run in its place; a loop's `do` tasks run once per list element, with the
 /// element bound to its `as` variable.
 /// The job's `values` (the project's merged in at load) are read as `${NAME}`.
-/// The job's `states` defaults are read from `states/<job>.json` next to the project (created from
-/// the defaults if missing) as `states.NAME`, and each `set.states` writes it back right away.
 /// With `log`, one JSON line per task, branch or switch decision, and loop is printed to stdout.
 pub async fn exec(mut project: Project, job: &str, log: bool) -> Result<Outcome, Error> {
     let tasks = project.take(job)?;
@@ -109,13 +107,6 @@ pub async fn exec(mut project: Project, job: &str, log: bool) -> Result<Outcome,
     .collect();
 
     let mut values: Map<String, Value> = tasks.values.into_iter().collect();
-    let state_path = project.dir.join("states").join(format!("{job}.json"));
-    let mut state = Map::new();
-    if !tasks.states.is_empty() {
-        let (path, defaults) = (state_path.clone(), tasks.states.clone());
-        state = tokio::task::spawn_blocking(move || state::load(&path, &defaults)).await??;
-        values.insert("states".to_string(), Value::Object(state.clone()));
-    }
     let mut last = None;
     let mut clients = http::Clients::default();
     // Next work last, so nested tasks are pushed in reverse to run in place.
@@ -142,25 +133,6 @@ pub async fn exec(mut project: Project, job: &str, log: bool) -> Result<Outcome,
             name: name.clone(),
             source: Box::new(source),
         };
-
-        if let Some(set) = task.set.take() {
-            let mut states = Map::new();
-            for (var, mut value) in set.states {
-                vars::substitute_value(&mut value, &|var| lookup(var, &values, &env))
-                    .map_err(to_task_error)?;
-                states.insert(var, value);
-            }
-            let mut saved = state.clone();
-            saved.extend(states.clone());
-            state::save(&state_path, &saved).map_err(to_task_error)?;
-            state = saved;
-            values.insert("states".to_string(), Value::Object(state.clone()));
-            // Logged once the states are saved, so a failed save isn't logged as set.
-            if log {
-                progress::emit(job, progress::set(&name, &states)).await;
-            }
-            continue;
-        }
 
         if let Some(condition) = task.condition.take() {
             let taken = condition
@@ -350,7 +322,7 @@ fn render(
     Ok(Some(extract::text(&value)))
 }
 
-/// Looks `var` up in `tasks`, `states`, loop items and `values` (dot paths such as
+/// Looks `var` up in `tasks`, loop items and `values` (dot paths such as
 /// `tasks.login.body.token` included), then the env_file in `env`, then the process environment.
 fn lookup(var: &str, values: &Map<String, Value>, env: &Map<String, Value>) -> Option<Value> {
     extract::lookup(values, var)
@@ -365,12 +337,9 @@ mod tests {
     use super::*;
     use crate::project::Job;
 
-    /// A project with one job `w`, whose fields are `yaml`. Its dir is shared, so the
-    /// job may not declare `states`; use [`project_in`] with a temporary dir for those.
+    /// A project with one job `w`, whose fields are `yaml`, with paths relative to a shared dir.
     fn project(yaml: &str) -> Project {
-        let project = project_in(&std::env::temp_dir(), yaml);
-        assert!(project.jobs["w"].states.is_empty(), "{yaml}");
-        project
+        project_in(&std::env::temp_dir(), yaml)
     }
 
     /// Like [`project`], with the job's paths relative to `dir`.
@@ -378,7 +347,6 @@ mod tests {
         let mut job: Job = serde_yaml::from_str(yaml).unwrap();
         crate::task::resolve(&mut job.tasks, dir).unwrap();
         Project {
-            dir: dir.to_path_buf(),
             env_file: None,
             schedules: BTreeMap::new(),
             jobs: BTreeMap::from([("w".to_string(), job)]),
@@ -413,15 +381,10 @@ mod tests {
         (project, dir)
     }
 
-    /// Makes `dir` writable again when dropped, so a test that took write access away
-    /// still leaves a removable temp dir if it fails.
-    struct Writable<'a>(&'a Path);
-
-    impl Drop for Writable<'_> {
-        fn drop(&mut self) {
-            let mode = std::os::unix::fs::PermissionsExt::from_mode(0o755);
-            let _ = std::fs::set_permissions(self.0, mode);
-        }
+    /// A cmd task's fields, indented by `indent`, that append `text` to `acc` in the task's dir.
+    fn append(indent: usize, text: &str) -> String {
+        let pad = " ".repeat(indent);
+        format!("{pad}cmd: [sh, -c, 'printf %s \"$0\" >> acc', '{text}']\n{pad}cwd: .\n")
     }
 
     /// A first task `seed` that prints `values`, so later tasks read them as
@@ -566,16 +529,17 @@ mod tests {
         let outcome = exec(project_in(
             dir.path(),
             &format!(
-                "states: {{ACC: start}}\n{}\
+                "{}\
                      \x20 each:\n    for_each: tasks.seed.stdout.IDS\n    as: ID\n    do:\n\
-                     \x20     add:\n        set: {{states: {{ACC: '${{states.ACC}}-${{ID}}'}}}}\n\
-                     \x20 print:\n    cmd: [echo, '${{states.ACC}}']\n",
-                seed(json!({"IDS": [1, 2, 3]}))
+                     \x20     add:\n{}\
+                     \x20 print:\n    cmd: [cat, acc]\n    cwd: .\n",
+                seed(json!({"IDS": [1, 2, 3]})),
+                append(8, "-${ID}")
             ),
         ))
         .await
         .unwrap();
-        assert_eq!(stdout(&outcome), &json!("start-1-2-3"));
+        assert_eq!(stdout(&outcome), &json!("-1-2-3"));
     }
 
     #[tokio::test]
@@ -583,13 +547,18 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let outcome = exec(project_in(
             dir.path(),
-            "states: {ACC: ''}\ntasks:\n\
-             \x20 list:\n    cmd: [echo, '[{\"id\": 1, \"ok\": true}, {\"id\": 2, \"ok\": false}]']\n\
-             \x20 each:\n    for_each: tasks.list.stdout\n    do:\n\
-             \x20     check:\n        if: {this: ITEM.ok, eq: true}\n        then:\n\
-             \x20         plus:\n            set: {states: {ACC: '${states.ACC}+${ITEM.id}'}}\n        else:\n\
-             \x20         minus:\n            set: {states: {ACC: '${states.ACC}-${ITEM.id}'}}\n\
-             \x20 print:\n    cmd: [echo, '${states.ACC}']\n",
+            &format!(
+                "tasks:\n\
+                 \x20 list:\n    cmd: [echo, '[{{\"id\": 1, \"ok\": true}}, {{\"id\": 2, \"ok\": false}}]']\n\
+                 \x20 each:\n    for_each: tasks.list.stdout\n    do:\n\
+                 \x20     check:\n        if: {{this: ITEM.ok, eq: true}}\n        then:\n\
+                 \x20         plus:\n{}\
+                 \x20       else:\n\
+                 \x20         minus:\n{}\
+                 \x20 print:\n    cmd: [cat, acc]\n    cwd: .\n",
+                append(12, "+${ITEM.id}"),
+                append(12, "-${ITEM.id}")
+            ),
         ))
         .await
         .unwrap();
@@ -602,13 +571,14 @@ mod tests {
         let outcome = exec(project_in(
             dir.path(),
             &format!(
-                "states: {{ACC: ''}}\n{}\
+                "{}\
                  \x20 go:\n    if: {{this: tasks.seed.stdout.GO, eq: true}}\n    then:\n\
                  \x20     rows:\n        for_each: tasks.seed.stdout.ROWS\n        as: ROW\n        do:\n\
                  \x20         cells:\n            for_each: ROW\n            as: CELL\n            do:\n\
-                 \x20             add:\n                set: {{states: {{ACC: '${{states.ACC}}${{CELL}}'}}}}\n\
-                 \x20 print:\n    cmd: [echo, '${{states.ACC}}']\n",
-                seed(json!({"GO": true, "ROWS": [["a", "b"], ["c"]]}))
+                 \x20             add:\n{}\
+                 \x20 print:\n    cmd: [cat, acc]\n    cwd: .\n",
+                seed(json!({"GO": true, "ROWS": [["a", "b"], ["c"]]})),
+                append(16, "${CELL}")
             ),
         ))
         .await
@@ -837,38 +807,20 @@ mod tests {
         assert_eq!(stdout(&outcome), &json!("base64"));
     }
 
-    /// `states/w.json` in `dir`, parsed.
-    fn state_file(dir: &Path) -> Value {
-        serde_json::from_str(&std::fs::read_to_string(dir.join("states/w.json")).unwrap()).unwrap()
-    }
-
     #[tokio::test]
-    async fn state_persists_across_runs() {
-        let dir = tempfile::tempdir().unwrap();
-        let yaml = "states: {COUNT: 0, KEEP: k}\n\
-                    tasks:\n\
-                    \x20 inc:\n    cmd: [expr, '${states.COUNT}', +, '1']\n\
-                    \x20 save:\n    set: {states: {COUNT: '${tasks.inc.stdout}'}}\n\
-                    \x20 check:\n    if: {this: states.COUNT, gt: 1}\n    then: {again: {cmd: [echo, 'again ${states.COUNT} ${states.KEEP}']}}\n    else: {first: {cmd: [echo, 'first ${states.COUNT} ${states.KEEP}']}}\n";
-        let outcome = exec(project_in(dir.path(), yaml)).await.unwrap();
-        assert_eq!(stdout(&outcome), &json!("first 1 k"));
-        assert_eq!(state_file(dir.path()), json!({"COUNT": 1, "KEEP": "k"}));
-        let outcome = exec(project_in(dir.path(), yaml)).await.unwrap();
-        assert_eq!(stdout(&outcome), &json!("again 2 k"));
-        assert_eq!(state_file(dir.path()), json!({"COUNT": 2, "KEEP": "k"}));
-    }
-
-    #[tokio::test]
-    async fn condition_compares_loop_item_with_state() {
+    async fn condition_compares_loop_item_with_value() {
         let dir = tempfile::tempdir().unwrap();
         let yaml = format!(
-            "states: {{LATEST: 2, ACC: ''}}\n{}\
+            "values: {{LATEST: 2}}\n{}\
              \x20 each:\n    for_each: tasks.seed.stdout.IDS\n    as: ID\n    do:\n\
-             \x20     check:\n        if: {{this: ID, gt: '${{states.LATEST}}'}}\n        then:\n\
-             \x20         plus:\n            set: {{states: {{ACC: '${{states.ACC}}+${{ID}}'}}}}\n        else:\n\
-             \x20         minus:\n            set: {{states: {{ACC: '${{states.ACC}}-${{ID}}'}}}}\n\
-             \x20 print:\n    cmd: [echo, '${{states.ACC}}']\n",
-            seed(json!({"IDS": [1, 2, 3, 4]}))
+             \x20     check:\n        if: {{this: ID, gt: '${{LATEST}}'}}\n        then:\n\
+             \x20         plus:\n{}\
+             \x20       else:\n\
+             \x20         minus:\n{}\
+             \x20 print:\n    cmd: [cat, acc]\n    cwd: .\n",
+            seed(json!({"IDS": [1, 2, 3, 4]})),
+            append(12, "+${ID}"),
+            append(12, "-${ID}")
         );
         let outcome = exec(project_in(dir.path(), &yaml)).await.unwrap();
         assert_eq!(stdout(&outcome), &json!("-1-2+3+4"));
@@ -881,46 +833,6 @@ mod tests {
         ))
         .await;
         assert!(matches!(err, Error::Http(_)), "{err}");
-    }
-
-    #[tokio::test]
-    async fn set_fails_when_its_states_cannot_be_saved() {
-        let dir = tempfile::tempdir().unwrap();
-        let states = dir.path().join("states");
-        let yaml = format!(
-            "states: {{N: 0}}\ntasks:\n\
-             \x20 lock:\n    cmd: [chmod, '555', '{}']\n\
-             \x20 save:\n    set: {{states: {{N: 1}}}}\n",
-            states.display()
-        );
-        let project = project_in(dir.path(), &yaml);
-        let _writable = Writable(&states);
-        assert!(exec(project).await.is_err());
-        assert_eq!(state_file(dir.path()), json!({"N": 0}));
-    }
-
-    #[tokio::test]
-    async fn state_is_saved_before_a_later_failure() {
-        let dir = tempfile::tempdir().unwrap();
-        let outcome = exec(project_in(
-            dir.path(),
-            "states: {N: 0}\n\
-                 tasks:\n\
-                 \x20 save:\n    set: {states: {N: 'n=${states.N}'}}\n\
-                 \x20 bad:\n    cmd: [sh, -c, 'exit 1']\n",
-        ))
-        .await
-        .unwrap();
-        assert_eq!(outcome.failed_task.as_deref(), Some("bad"));
-        assert_eq!(state_file(dir.path()), json!({"N": "n=0"}));
-    }
-
-    #[tokio::test]
-    async fn job_without_state_writes_no_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let project = project_in(dir.path(), "tasks:\n  e:\n    cmd: [echo]\n");
-        exec(project).await.unwrap();
-        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
     }
 
     #[tokio::test]
@@ -988,18 +900,6 @@ mod tests {
             printed.canonicalize().unwrap(),
             std::env::current_dir().unwrap().canonicalize().unwrap()
         );
-    }
-
-    #[tokio::test]
-    async fn set_works_out_every_value_before_setting_any() {
-        let dir = tempfile::tempdir().unwrap();
-        let yaml = "states: {A: 1, B: 2}\n\
-                    tasks:\n\
-                    \x20 swap:\n    set: {states: {A: '${states.B}', B: '${states.A}'}}\n\
-                    \x20 print:\n    cmd: [echo, '${states.A}-${states.B}']\n";
-        let outcome = exec(project_in(dir.path(), yaml)).await.unwrap();
-        assert_eq!(stdout(&outcome), &json!("2-1"));
-        assert_eq!(state_file(dir.path()), json!({"A": 2, "B": 1}));
     }
 
     #[tokio::test]

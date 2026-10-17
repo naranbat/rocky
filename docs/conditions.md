@@ -48,7 +48,7 @@ A condition is either `this` with **one or more** operators, or exactly one of `
 
 | Operator | True when |
 |---|---|
-| `gt` / `gte` / `lt` / `lte`: number | The variable is `>` / `>=` / `<` / `<=` the number. The number may also be written as a numeric string (`gt: "10"`) or a `${...}` that expands to one (`gt: "${states.LAST_ID}"`). The variable must be a number or a numeric string (`"15"` counts, surrounding spaces are ignored); otherwise the task fails with ``condition: `X` is not a number (<value>)``. |
+| `gt` / `gte` / `lt` / `lte`: number | The variable is `>` / `>=` / `<` / `<=` the number. The number may also be written as a numeric string (`gt: "10"`) or a `${...}` that expands to one (`gt: "${LAST_ID}"`). The variable must be a number or a numeric string (`"15"` counts, surrounding spaces are ignored); otherwise the task fails with ``condition: `X` is not a number (<value>)``. |
 | `eq` / `ne`: value | Equal / not equal. If both sides are strings, they compare as text (`"1.1"` ≠ `"1.10"`). Otherwise, if both sides are numbers or numeric strings, they compare as numbers (`200` = `"200"` = `200.0`; integers compare exactly, however large). Otherwise, if either side is a string, they compare as text. Otherwise JSON equality (bool, null, arrays, objects). |
 | `contains`: value | String: contains the value as a substring. Array: some element `eq` the value. Object: has that key. Any other type fails the task. |
 | `matches`: regex | The regex matches anywhere in the variable's text (use `^`/`$` to anchor). Non-strings are matched against their compact JSON. |
@@ -59,13 +59,13 @@ A condition is either `this` with **one or more** operators, or exactly one of `
 
 ## Variable lookup
 
-`this` is looked up in this order: loop variables, `tasks.NAME...` and `states.NAME`; then job `values`; then project `values`; then the project `env_file`; then the environment. An undefined variable fails the task, except with `exists`.
+`this` is looked up in this order: loop variables and `tasks.NAME...`; then job `values`; then project `values`; then the project `env_file`; then the environment. An undefined variable fails the task, except with `exists`.
 
 Values from env files and the environment are strings, which is why numeric strings are accepted by the number operators.
 
 ## Behaviour
 
-- Operator values other than `matches` may use `${...}`, expanded when the condition runs, to compare two variables: `{this: ID, gt: "${states.LAST_ID}"}`. A value that is exactly `"${NAME}"` keeps its JSON type; `$${` is a literal `${`. If a number operator's value doesn't expand to a number, the task fails with ``condition: `gt` needs a number, got ...``. `matches` is fixed.
+- Operator values other than `matches` may use `${...}`, expanded when the condition runs, to compare two variables: `{this: ID, gt: "${LAST_ID}"}`. A value that is exactly `"${NAME}"` keeps its JSON type; `$${` is a literal `${`. If a number operator's value doesn't expand to a number, the task fails with ``condition: `gt` needs a number, got ...``. `matches` is fixed.
 - Tasks inside `then`/`else` are named by their keys and can contain further branches and [loops](loops.md). Their results are available to later tasks.
 - If the chosen map is empty (only `then` given and the condition is false), nothing runs and the job continues.
 

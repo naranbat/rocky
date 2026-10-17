@@ -59,7 +59,6 @@ Examples: [`httpbin.yaml`](../examples/httpbin.yaml) (jobs `login`, `mixed`, `co
 | Field | Notes |
 |---|---|
 | `values` | Map of uppercase name → fixed value, read as `${NAME}` by this job's tasks; wins over a project value of the same name. See [Env](env.md#values). |
-| `states` | Map of name → default value, kept between runs in `states/<job>.json` and read as `${states.NAME}`. See [State](state.md). |
 | `tasks` | Required, and must not be empty. Map of task name → task, or → the path of a task file. Tasks run in the order they are written. |
 
 ## Task kinds
@@ -74,7 +73,6 @@ Each entry in `tasks` (and in `then`, `else`, `do`, each switch case and `defaul
 | Switch | `switch`, `cases`, `default` | [Conditions](conditions.md#switch) |
 | Loop | `for_each`, `as`, `do` | [Loops](loops.md) |
 | Task file | a string: the path of a task file | [Job and task files](#job-and-task-files) |
-| Set state | `set:` with `states:` (a map of name → value) | [State](state.md#set) |
 
 ## Task fields
 
@@ -88,9 +86,8 @@ Each entry in `tasks` (and in `then`, `else`, `do`, each switch case and `defaul
 | `if`, `then`, `else` | branches | A branch has no `http`, `cmd`, `timeout` or `allow_failure`. |
 | `switch`, `cases`, `default` | switches | Like a branch: no `http`, `cmd`, `timeout` or `allow_failure`, and no `if`, `then` or `else`. |
 | `for_each`, `as`, `do` | loops | A loop has none of those keys and no `if`, `then`, `else`, `switch`, `cases` or `default`. |
-| `set` | set state | No other key may go with it. Every `set.states` name must be declared in the job's `states`. |
 
-The task's name is its key. It saves an HTTP or cmd task's result as `tasks.<name>`, and labels the task in errors and log lines (see [labels](cli.md#errors-and-exit-codes)). It must be a [variable name](env.md#names) other than `tasks` or `states`, and two tasks in the same map can't share it. There is no `name` field.
+The task's name is its key. It saves an HTTP or cmd task's result as `tasks.<name>`, and labels the task in errors and log lines (see [labels](cli.md#errors-and-exit-codes)). It must be a [variable name](env.md#names) other than `tasks`, and two tasks in the same map can't share it. There is no `name` field.
 
 Unknown keys are an error.
 
@@ -120,7 +117,7 @@ Each HTTP or cmd task's result is saved as `tasks.<key>`, and later tasks read i
 - **Where it works:** anywhere `${...}` works. In an `if` condition or `for_each`, write the path without `${}`: `if: { this: tasks.login.status, eq: 200 }`.
 - **Typed values:** a `json` or `stdin` field that is exactly `${tasks...}` keeps its JSON type, so `json: ${tasks.fetch.body}` sends the whole object.
 - **Every task:** each HTTP or cmd task is saved under its key. Keys only need to be unique within one map, so a task nested in a branch or loop can share a name with another; the later result replaces the earlier one.
-- **`tasks` is reserved:** a variable named `tasks` fails when the project loads (see [names](env.md#names)). The same goes for `states` (see [State](state.md)).
+- **`tasks` is reserved:** a variable named `tasks` fails when the project loads (see [names](env.md#names)).
 
 ## Failures and `allow_failure`
 
@@ -148,10 +145,8 @@ The whole project, every job including nested branches and loops, is checked whe
 - a task with none, or both, of `http` and `cmd`
 - `cwd`, `stdin`, `env` or `capture_stdout` without `cmd`; `capture_body` without `http`; `timeout` on a branch, switch or loop; `then`/`else` without `if`; `cases`/`default` without `switch`; `do`/`as` without `for_each`
 - a missing task or job file, a task file with a `name` field, or a task file that uses itself, directly or through other files
-- a name that appears twice in `jobs`, `schedules`, `states`, a `set`, a request's `headers` or `query`, a cmd task's `env`, or a switch's `cases`; a `schedules` entry for a job that doesn't exist
-- a [variable name](env.md#names) in `as` that isn't uppercase (`A-Z`, `0-9`, `_`), or a task key or name under `states` that isn't an identifier or is `tasks` or `states`
-- a `set` without `states`, or with any other task key
-- a `set.states` name the job's `states` doesn't declare
+- a name that appears twice in `jobs`, `schedules`, a request's `headers` or `query`, a cmd task's `env`, or a switch's `cases`; a `schedules` entry for a job that doesn't exist
+- a [variable name](env.md#names) in `as` that isn't uppercase (`A-Z`, `0-9`, `_`), or a task key that isn't an identifier or is `tasks`
 - an invalid [condition](conditions.md) or [schedule](schedules.md)
 - unknown keys anywhere, including `schedule` inside a job and `vars` anywhere
 
@@ -190,7 +185,7 @@ post: { url: "https://httpbin.org/anything/login", json: { token: demo-token } }
 
 - A task file holds one task, without a `name`: the key that points at it names it, so one file can be used under several names. It can use other task files, inside a branch or loop too, but not itself, directly or through other files.
 - The entry is just a path, so everything else goes in the file. To change a field for one use, write the task inline.
-- A job file has the job fields `states` and `tasks`. The project keeps `env_file` and `schedules`.
+- A job file has the job fields `values` and `tasks`. The project keeps `env_file` and `schedules`.
 
 Example: [`imports.yaml`](../examples/imports.yaml), whose jobs all come from [`jobs/`](../examples/jobs/) and share its env file.
 

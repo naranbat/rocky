@@ -70,7 +70,7 @@ Writes a starter file that loads as-is, creating missing parent directories, and
 | Level | Writes |
 |---|---|
 | `basic` (default) | The smallest file that runs, as in the table above |
-| `full` | Every field, each with a comment. A full project or job has `values`, `states`, an HTTP task, a cmd task, a branch, a switch, a loop and a `set` of `states`, and the project adds `schedules`. A full task is an HTTP or cmd task with all of its fields. Fields that need another file (`env_file`, a task file) are commented out, so the file still loads and runs as-is. Its tasks use `${USER}` from the environment |
+| `full` | Every field, each with a comment. A full project or job has `values`, an HTTP task, a cmd task, a branch, a switch and a loop, and the project adds `schedules`. A full task is an HTTP or cmd task with all of its fields. Fields that need another file (`env_file`, a task file) are commented out, so the file still loads and runs as-is. Its tasks use `${USER}` from the environment |
 
 ```
 $ rocky new job jobs/deploy.yaml
@@ -82,7 +82,7 @@ add it to a project:
 
 ## Output streams
 
-- **stdout** holds only results: one JSON document for `exec`, one JSON log line per task, branch, switch, loop, `set`, finished run, error and stopped schedule for `run`. It is safe to pipe into `jq`.
+- **stdout** holds only results: one JSON document for `exec`, one JSON log line per task, branch, switch, loop, finished run, error and stopped schedule for `run`. It is safe to pipe into `jq`.
 - **stderr** holds errors, the `new task` prompt, and `run`'s ``cannot write log file`` messages.
 
 ## Errors and exit codes
@@ -91,7 +91,7 @@ add it to a project:
 |---|---|---|---|
 | Success | last task's result, or `null` if no HTTP or cmd task ran (`validate`: ``<PROJECT> is valid (jobs: …)``) | — | `0` |
 | A task fails (HTTP 4xx/5xx or non-zero exit) without `allow_failure` | that task's result | ``Error: task `name` returned HTTP 404`` or ``Error: task `name` exited with code 3`` | `1` |
-| Any other task error | — | ``Error: task `name` failed`` plus `Caused by:` lines, e.g. ``variable `NAME` is not defined (checked tasks, states, loop items, values, env_file, environment)``, ``failed to start command `x` `` or ``command `x` timed out after 5s`` | `1` |
+| Any other task error | — | ``Error: task `name` failed`` plus `Caused by:` lines, e.g. ``variable `NAME` is not defined (checked tasks, loop items, values, env_file, environment)``, ``failed to start command `x` `` or ``command `x` timed out after 5s`` | `1` |
 | Invalid file (bad YAML, unknown field, invalid task, condition or schedule) | — | the load error; nothing runs | `1` |
 | `exec` or `run` stopped with Ctrl-C (SIGINT), SIGTERM, SIGHUP or SIGQUIT | — | — | 128 + the signal number (`130`, `143`, `129`, `131`); running commands, and the processes they started, are killed |
 | Unknown job name | — | ``Error: no job `x` (available: `a`, `b`)`` | `1` |

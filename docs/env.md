@@ -1,6 +1,6 @@
 # Env
 
-Write `${NAME}` to insert a value. `NAME` can be a plain name (`${API_TOKEN}`) or a dot path into a JSON value (`${tasks.login.body.user.id}`, `${USER.id}`). Plain names come from `values`, the project's env file or the process environment; `tasks`, `states` and loop items come from the run itself.
+Write `${NAME}` to insert a value. `NAME` can be a plain name (`${API_TOKEN}`) or a dot path into a JSON value (`${tasks.login.body.user.id}`, `${USER.id}`). Plain names come from `values`, the project's env file or the process environment; `tasks` and loop items come from the run itself.
 
 ```sh
 # example.env
@@ -26,7 +26,7 @@ jobs:
 
 Examples: [`examples/env-file.yaml`](../examples/env-file.yaml) and [`examples/cmd-env.yaml`](../examples/cmd-env.yaml) with [`examples/example.env`](../examples/example.env).
 
-A value you'd hard-code goes in [`values`](#values), and a value that changes between machines or is secret goes in the env file. To keep a value between runs, use [state](state.md).
+A value you'd hard-code goes in [`values`](#values), and a value that changes between machines or is secret goes in the env file.
 
 ## Values
 
@@ -53,7 +53,6 @@ Example: [`examples/values.yaml`](../examples/values.yaml).
 - A value can be a string, number, boolean, list or object, and keeps its JSON type (see [typed values](#typed-values)). Use a dot path to read inside one: `${SITE.name}`.
 - Values are used as written: `${...}` inside a value is not expanded.
 - A job value with the same name as a project value replaces it for that job.
-- A `set` task can't change a value; use [state](state.md) for that.
 
 ## Env file
 
@@ -91,9 +90,8 @@ Only at the top level of a project, with a path relative to the project file. It
 | any string inside a cmd task's `stdin` | |
 | any string inside a cmd task's [`env`](cmd-tasks.md#options) values | |
 | condition operator values other than `matches` | |
-| [`set`](state.md#set) values | |
 
-An undefined variable fails the task: ``variable `NAME` is not defined (checked tasks, states, loop items, values, env_file, environment)``.
+An undefined variable fails the task: ``variable `NAME` is not defined (checked tasks, loop items, values, env_file, environment)``.
 
 ## Where values come from
 
@@ -101,7 +99,6 @@ An undefined variable fails the task: ``variable `NAME` is not defined (checked 
 |---|---|
 | earlier tasks, as `tasks.NAME...` ([Projects](projects.md#using-earlier-tasks-output)) | any JSON type |
 | loop element from [`for_each`](loops.md) | any JSON type |
-| job [state](state.md), as `states.NAME` | any JSON type |
 | the job's [`values`](#values) | any JSON type |
 | the project's [`values`](#values) | any JSON type |
 | the project's [env file](#env-file) | string |
@@ -113,7 +110,7 @@ These only fill in `${...}`. A command doesn't see env file values in its enviro
 
 First match wins, for every kind of task, and for conditions, `switch` and `for_each`:
 
-1. loop variables, `tasks.NAME...` and `states.NAME`
+1. loop variables and `tasks.NAME...`
 2. job `values`
 3. project `values`
 4. project `env_file`
@@ -121,11 +118,11 @@ First match wins, for every kind of task, and for conditions, `switch` and `for_
 
 ## Names
 
-A `values` name and a loop's `as` name must be uppercase: an uppercase letter or `_`, then uppercase letters, digits or `_` (`ITEM`, `USER_ID`, `_TMP2`). A name under `states` or a task key must be an identifier: a letter or `_`, then letters, digits or `_` (`count`, `user_id`); `tasks` and `states` are reserved. Anything else fails when the project loads. Names from an env file or the environment aren't checked.
+A `values` name and a loop's `as` name must be uppercase: an uppercase letter or `_`, then uppercase letters, digits or `_` (`ITEM`, `USER_ID`, `_TMP2`). A task key must be an identifier: a letter or `_`, then letters, digits or `_` (`count`, `user_id`); `tasks` is reserved. Anything else fails when the project loads. Names from an env file or the environment aren't checked.
 
 ## Typed values
 
-Values from env files and the environment are strings. Values from `values`, loops, `tasks` and `states` keep their JSON type when a **`json`** or **`stdin`** field, a `set` value or a condition operator value is **exactly** `${NAME}`. Anywhere else, they're rendered as text, with objects and arrays as compact JSON.
+Values from env files and the environment are strings. Values from `values`, loops and `tasks` keep their JSON type when a **`json`** or **`stdin`** field or a condition operator value is **exactly** `${NAME}`. Anywhere else, they're rendered as text, with objects and arrays as compact JSON.
 
 ```yaml
 # after a task `stats` that printed {"count": 5, "tags": ["a", "b"]}

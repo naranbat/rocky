@@ -26,7 +26,6 @@ These projects in [`examples/`](examples/) run as they are:
 - [`cmd-env.yaml`](examples/cmd-env.yaml): values passed to commands with `env`; only runs commands
 - [`pipe.yaml`](examples/pipe.yaml): commands connected with `pipe`, without a shell; only runs commands
 - [`values.yaml`](examples/values.yaml): fixed values at project and job level; only runs commands
-- [`state.yaml`](examples/state.yaml): a counter kept between runs; only runs commands
 
 [`tasks/`](examples/tasks/) holds task files.
 
@@ -53,7 +52,6 @@ Each feature has its own page in [`docs/`](docs/README.md):
 - [Responses](docs/responses.md): the `{status, headers, body}` result
 - [Cmd tasks](docs/cmd-tasks.md): running programs, pipes, `stdin`, reading and writing files
 - [Env](docs/env.md): `${NAME}` substitution and env files
-- [State](docs/state.md): values kept between runs with a job's `states` and `set`
 - [Conditions](docs/conditions.md): `if` / `then` / `else`, `switch`
 - [Loops](docs/loops.md): `for_each` / `as` / `do`
 - [Debugging](docs/debugging.md): `run` log lines

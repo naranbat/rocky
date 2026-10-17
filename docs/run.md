@@ -49,7 +49,7 @@ The whole project is loaded and checked before anything runs. Any error stops `r
 
 ## Output
 
-Every log line is one JSON object on **stdout**, with `job`, `time` (local time with offset) and `event` fields. The same lines are appended to `logs/YYYY-MM-DD.log` in the current directory, one file per day by each line's date; the `logs` directory is created if missing, and a failed write is reported on stderr without stopping `run`. If stdout is closed (`run | head`), `run` keeps running and logging to the file. Each run writes a line per task, branch or switch decision, loop and `set` as it goes, then a `done` line:
+Every log line is one JSON object on **stdout**, with `job`, `time` (local time with offset) and `event` fields. The same lines are appended to `logs/YYYY-MM-DD.log` in the current directory, one file per day by each line's date; the `logs` directory is created if missing, and a failed write is reported on stderr without stopping `run`. If stdout is closed (`run | head`), `run` keeps running and logging to the file. Each run writes a line per task, branch or switch decision and loop as it goes, then a `done` line:
 
 ```json
 {"job":"poll","time":"2026-10-09T09:30:00+09:00","event":"task","task":"get","status":200,"ms":412,"ok":true}
@@ -62,7 +62,6 @@ Every log line is one JSON object on **stdout**, with `job`, `time` (local time 
 | `branch` | `task`, `arm` (`then` or `else`), `tasks` (how many entries the chosen arm has; nested tasks and loop iterations aren't counted) |
 | `switch` | `task`, `case` (the matching case's number, from 1, or `"default"`), `tasks` (how many entries the chosen case has) |
 | `for_each` | `task`, `var`, `items` (the list length) |
-| `set` | `task`, `states` (the names it set; values are left out) |
 | `done` | `failed_task`: the task that failed without `allow_failure`, or `null`; `reason`: why it failed (`returned HTTP 500`, `exited with code 3`), or `null` |
 | `error` | `error`: why the run stopped, e.g. an undefined variable, a project that became invalid, or a crash |
 | `stopped` | `error`: why the job's schedule stopped |
@@ -70,7 +69,7 @@ Every log line is one JSON object on **stdout**, with `job`, `time` (local time 
 | `triggered` | — (a client of the [socket](#triggering-jobs-over-a-socket) asked for a run; the run's own lines follow once it starts) |
 
 ```json
-{"job":"poll","time":"2026-10-09T09:30:00+09:00","event":"error","error":"task `get` failed: variable `TOKEN` is not defined (checked tasks, states, loop items, values, env_file, environment)"}
+{"job":"poll","time":"2026-10-09T09:30:00+09:00","event":"error","error":"task `get` failed: variable `TOKEN` is not defined (checked tasks, loop items, values, env_file, environment)"}
 ```
 
 A task that ends in an error gets no `task` line; the `error` line names it. See also [Debugging](debugging.md#run-log-lines).

@@ -48,7 +48,7 @@ The common task field `allow_failure` works as for HTTP tasks. See [Projects](pr
 - `${...}` is substituted inside each list item. A value always stays **one** argument, however many spaces or quotes it contains, so it can't inject extra arguments or shell syntax.
 - Strings are inserted as-is. Numbers, objects and arrays are inserted as compact JSON.
 - For pipes, use [`pipe`](#pipes). For redirects or globbing, call a shell yourself: `cmd: [sh, -c, "ls *.json"]`. Don't put `${...}` inside the `sh -c` script, because the shell would interpret the value. Pass it as a positional argument instead (`$1`, `$2`, …; `_` fills `$0`): `cmd: [sh, -c, 'cat > "$1"', _, "${PATH_VAR}"]`.
-- Variables are looked up in earlier results (loop variables, `tasks` and `states`), then job and project `values`, then the project `env_file`, then the environment. See [Env](env.md#lookup-order).
+- Variables are looked up in earlier results (loop variables and `tasks`), then job and project `values`, then the project `env_file`, then the environment. See [Env](env.md#lookup-order).
 
 ## Pipes
 

@@ -4,7 +4,7 @@
 
 ## `run` log lines
 
-`run` writes one JSON line on **stdout** per task as it finishes, plus a line per branch or switch decision, loop and `set`, and a line when the run ends. `exec` doesn't write them.
+`run` writes one JSON line on **stdout** per task as it finishes, plus a line per branch or switch decision and loop, and a line when the run ends. `exec` doesn't write them.
 
 ```
 $ rocky run project.yaml | jq -c '{event, task, arm, ok}'
@@ -20,7 +20,6 @@ $ rocky run project.yaml | jq -c '{event, task, arm, ok}'
 | `branch` | a branch chose `then` or `else` |
 | `switch` | a switch chose a case or `default` |
 | `for_each` | a loop started |
-| `set` | a `set` task set state; logged just before the state file is written |
 | `done` | the run finished; `failed_task` names the task that stopped it and `reason` says why, or both are `null` |
 | `error` | the run stopped with an error |
 | `stopped` | a job's schedule stopped; `error` says why |

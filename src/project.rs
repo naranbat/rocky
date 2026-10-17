@@ -10,13 +10,11 @@ use serde_json::Value;
 use crate::error::Error;
 use crate::schedule::Schedule;
 use crate::task::{self, Task};
-use crate::{state, var_name};
+use crate::var_name;
 
 /// Named jobs sharing `values` and an `env_file`, described in a YAML file.
 #[derive(Debug)]
 pub struct Project {
-    /// The project file's directory; job state files go in its `states/`.
-    pub dir: PathBuf,
     pub env_file: Option<PathBuf>,
     /// Job name to when `rocky run` runs it.
     pub schedules: BTreeMap<String, Schedule>,
@@ -107,9 +105,6 @@ pub struct Job {
     /// are merged in, with the job's own winning.
     #[serde(default, deserialize_with = "unique")]
     pub values: BTreeMap<String, Value>,
-    /// State names to their defaults, kept across runs in `states/<job>.json`.
-    #[serde(default, deserialize_with = "unique")]
-    pub states: BTreeMap<String, Value>,
     #[serde(deserialize_with = "task::named")]
     pub tasks: Vec<Task>,
 }
@@ -161,7 +156,6 @@ pub fn load(path: &Path) -> Result<Project, Error> {
         jobs.insert(name, job);
     }
     Ok(Project {
-        dir: dir.to_path_buf(),
         env_file: raw.env_file.map(|p| dir.join(p)),
         schedules: raw.schedules,
         jobs,
@@ -188,14 +182,7 @@ fn load_job(source: JobSource, dir: &Path, values: &BTreeMap<String, Value>) -> 
         var_name::is_valid_var,
         var_name::VAR_RULE,
     )?;
-    check_names(
-        "states",
-        job.states.keys(),
-        var_name::is_valid,
-        var_name::RULE,
-    )?;
     task::resolve(&mut job.tasks, &dir)?;
-    state::check(&job.tasks, &job.states)?;
     job.values = values.clone().into_iter().chain(job.values).collect();
     Ok(job)
 }
@@ -317,45 +304,6 @@ mod tests {
     }
 
     #[test]
-    fn checks_state_names() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut project = load_in(
-            dir.path(),
-            "jobs:\n  w:\n    states: {N: 0, L: [a]}\n    tasks: {s: {set: {states: {N: 1}}}}\n",
-        )
-        .unwrap();
-        assert_eq!(project.dir, dir.path());
-        assert_eq!(
-            project.take("w").unwrap().states["L"],
-            serde_json::json!(["a"])
-        );
-        for (yaml, bad) in [
-            (
-                "jobs:\n  w:\n    states: {N: 0}\n    tasks: {r: {if: {this: X, eq: 1}, then: {s: {set: {states: {M: 1}}}}}}\n",
-                "`M`",
-            ),
-            (
-                "jobs:\n  w:\n    tasks: {s: {set: {states: {M: 1}}}}\n",
-                "`M`",
-            ),
-            (
-                "jobs:\n  w:\n    states: {a.b: 0}\n    tasks: {e: {cmd: [echo]}}\n",
-                "`a.b`",
-            ),
-            (
-                "jobs:\n  w:\n    states: {a-b: 0}\n    tasks: {e: {cmd: [echo]}}\n",
-                "`a-b`",
-            ),
-        ] {
-            let err = load_in(dir.path(), yaml).unwrap_err();
-            assert!(
-                matches!(&err, Error::Job { name, source } if name == "w" && source.to_string().contains(bad)),
-                "{yaml}: {err}"
-            );
-        }
-    }
-
-    #[test]
     fn loads_and_checks_values_names() {
         let dir = tempfile::tempdir().unwrap();
         let mut project = load_in(
@@ -396,7 +344,6 @@ mod tests {
             "vars: {A: x}\njobs:\n  w: {tasks: {e: {cmd: [echo]}}}\n",
             "jobs:\n  w: {vars: {A: x}, tasks: {e: {cmd: [echo]}}}\n",
             "jobs:\n  w: {tasks: {e: {vars: {A: x}, cmd: [echo]}}}\n",
-            "jobs:\n  w: {states: {N: 0}, tasks: {s: {set: {states: {N: 1}, vars: {A: 1}}}}}\n",
         ] {
             let err = load_in(dir.path(), yaml).unwrap_err();
             let cause = std::error::Error::source(&err).unwrap().to_string();
@@ -426,15 +373,6 @@ mod tests {
                 "jobs.w.values: duplicate key `A`",
             ),
             (
-                "jobs:\n  w: {states: {N: 0, N: 1}, tasks: {e: {cmd: [echo]}}}\n"
-                    .to_string(),
-                "jobs.w.states: duplicate key `N`",
-            ),
-            (
-                "jobs:\n  w: {tasks: {s: {set: {states: {A: 1, A: 2}}}}}\n".to_string(),
-                "jobs.w.tasks.s.set.states: duplicate key `A`",
-            ),
-            (
                 "jobs:\n  w: {tasks: {g: {http: {method: GET, url: x, headers: {A: '1', A: '2'}}}}}\n"
                     .to_string(),
                 "jobs.w.tasks.g.http.headers: duplicate key `A`",
@@ -461,8 +399,6 @@ mod tests {
         for yaml in [
             "jobs:\n  w: {tasks: {e: {cmd: [echo], extract: {}}}}\n",
             "jobs: [\n",
-            "jobs:\n  w: {state: {N: 0}, tasks: {e: {cmd: [echo]}}}\n",
-            "jobs:\n  w: {states: {N: 0}, tasks: {s: {set_state: {N: 1}}}}\n",
             "jobs:\n  w: {schedule: {every: 1s}, tasks: {e: {cmd: [echo]}}}\n",
         ] {
             assert!(

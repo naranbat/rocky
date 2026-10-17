@@ -140,13 +140,6 @@ const FULL_CONTROL: &str = "
       tag:
         cmd: [echo, \"tag ${TAG}\"]
 
-  # Set state: new values for names in the job's `states`, saved at once for the next run.
-  remember:
-    set:
-      states:
-        PREVIOUS_STATUS: ${states.LAST_STATUS}  # every value is read before any is set
-        LAST_STATUS: ${tasks.login.status}
-
   # A task file: one task kept in its own file, relative to this file.
   # notify: tasks/notify.yaml
 ";
@@ -230,9 +223,6 @@ fn full_tasks() -> String {
         "values:                             # fixed values for this job's tasks, read as ${{NAME}}\n  \
          REGION: eu-west-1\n  \
          LIMITS: {{retries: 3}}             # an object: read inside it with ${{LIMITS.retries}}\n\
-         states:                             # kept between runs in states/<job>.json, read as ${{states.NAME}}\n  \
-         LAST_STATUS: none                 # the default, used until `set` changes it\n  \
-         PREVIOUS_STATUS: none\n\
          tasks:\n  \
          # An HTTP request. Later tasks read its result by name: ${{tasks.login.status}}.\n  \
          login:\n{}\n  \
@@ -294,11 +284,6 @@ mod tests {
         if matches!(level, Level::Full) {
             assert_eq!(example.values["REGION"], "eu-west-1");
             assert_eq!(example.values["LIMITS"]["retries"], 3);
-            assert!(example.tasks.iter().any(|a| {
-                a.set
-                    .as_ref()
-                    .is_some_and(|s| s.states.contains_key("LAST_STATUS"))
-            }));
         }
 
         create(Kind::Job, level, &dir.path().join("jobs/w.yaml")).unwrap();
@@ -316,12 +301,6 @@ mod tests {
         let w = project.take("w").unwrap();
         if matches!(level, Level::Full) {
             assert_eq!(w.values["REGION"], "eu-west-1");
-            assert!(w.states.contains_key("LAST_STATUS"));
-            assert!(w.tasks.iter().any(|a| {
-                a.set
-                    .as_ref()
-                    .is_some_and(|s| s.states.contains_key("LAST_STATUS"))
-            }));
         }
         let a = project.take("a").unwrap();
         assert!(a.tasks[0].cmd.is_some() && a.tasks[1].http.is_some());

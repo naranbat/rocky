@@ -80,17 +80,6 @@ pub struct Task {
     pub cases: Vec<Case>,
     #[serde(default, deserialize_with = "named")]
     pub default: Vec<Task>,
-    /// Makes this a `set` task: new values for job `states`.
-    pub set: Option<Set>,
-}
-
-/// A `set` task's body: name to new value; `${VAR}` is substituted.
-#[derive(Clone, Debug, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Set {
-    /// Job `states` to set; each is saved to the state file.
-    #[serde(default, deserialize_with = "project::unique")]
-    pub states: BTreeMap<String, Value>,
 }
 
 /// One `cases` entry of a switch: tasks to run when the variable equals its key.
@@ -203,24 +192,6 @@ impl<'de> Deserialize<'de> for Source {
 }
 
 impl Task {
-    /// Whether any key is set.
-    fn has_fields(&self) -> bool {
-        self.has_task_fields()
-            || self.cwd.is_some()
-            || self.stdin.is_some()
-            || !self.env.is_empty()
-            || self.capture_stdout.is_some()
-            || self.capture_body.is_some()
-            || self.condition.is_some()
-            || !self.then.is_empty()
-            || !self.otherwise.is_empty()
-            || self.for_each.is_some()
-            || self.item_var.is_some()
-            || !self.body.is_empty()
-            || self.has_switch_fields()
-            || self.set.is_some()
-    }
-
     fn has_switch_fields(&self) -> bool {
         self.switch.is_some() || !self.cases.is_empty() || !self.default.is_empty()
     }
@@ -254,9 +225,6 @@ fn resolve_one(task: &mut Task, dir: &Path, stack: &mut Vec<PathBuf>) -> Result<
     resolve_method(task, &name)?;
     if let Some(path) = task.r#use.take() {
         return resolve_use(task, path, dir, stack);
-    }
-    if let Some(set) = task.set.take() {
-        return resolve_set(task, set, &name);
     }
     for (field, set) in [
         ("cwd", task.cwd.is_some()),
@@ -369,21 +337,6 @@ fn resolve_use(
     resolve_one(&mut loaded, file_dir, stack)?;
     stack.pop();
     *task = loaded;
-    Ok(())
-}
-
-fn resolve_set(task: &mut Task, set: Set, name: &str) -> Result<(), Error> {
-    if set.states.is_empty() {
-        return Err(Error::InvalidTask(format!(
-            "`{name}`: `set` needs `states`"
-        )));
-    }
-    if task.has_fields() {
-        return Err(Error::InvalidTask(format!(
-            "`{name}` is a `set` task and can't have other fields"
-        )));
-    }
-    task.set = Some(set);
     Ok(())
 }
 
@@ -688,11 +641,6 @@ mod tests {
     fn rejects_invalid_loop_names() {
         for (yaml, field, var) in [
             (
-                "a:\n  for_each: X\n  as: states\n  do: {b: {cmd: [echo]}}\n",
-                "as",
-                "states",
-            ),
-            (
                 "a:\n  for_each: X\n  as: a.b\n  do: {b: {cmd: [echo]}}\n",
                 "as",
                 "a.b",
@@ -723,7 +671,6 @@ mod tests {
             ("a.b: x.yaml\n", "a.b"),
             ("a-b:\n  cmd: [echo]\n", "a-b"),
             ("1a:\n  cmd: [echo]\n", "1a"),
-            ("states:\n  cmd: [echo]\n", "states"),
         ] {
             assert_eq!(
                 invalid_task(yaml),
@@ -920,37 +867,6 @@ mod tests {
             matches!(&err, Error::InvalidTask(msg) if msg.contains("task file cycle through")),
             "{err}"
         );
-    }
-
-    #[test]
-    fn set_goes_alone() {
-        let tasks = resolve_here("s:\n  set: {states: {N: '${A}'}}\n").unwrap();
-        let set = tasks[0].set.as_ref().unwrap();
-        assert_eq!(set.states["N"], Value::from("${A}"));
-        for yaml in [
-            "s:\n  set: {states: {N: 1}}\n  cmd: [echo]\n",
-            "s:\n  set: {states: {N: 1}}\n  allow_failure: true\n",
-            "s:\n  set: {states: {N: 1}}\n  if: {this: X, eq: 1}\n  then: {a: {cmd: [echo]}}\n",
-            "s:\n  set: {states: {N: 1}}\n  for_each: X\n  do: {a: {cmd: [echo]}}\n",
-            "s:\n  set: {states: {N: 1}}\n  cwd: w\n",
-            "s:\n  set: {states: {N: 1}}\n  env: {A: b}\n",
-        ] {
-            let msg = invalid_task(yaml);
-            assert!(
-                msg.contains("`s` is a `set` task and can't have other fields"),
-                "{yaml}: {msg}"
-            );
-        }
-    }
-
-    #[test]
-    fn set_needs_states() {
-        for yaml in ["s:\n  set: {}\n", "s:\n  set: {states: {}}\n"] {
-            let msg = invalid_task(yaml);
-            assert!(msg.contains("`s`: `set` needs `states`"), "{yaml}: {msg}");
-        }
-        assert!(parse_named("s:\n  set: {state: {N: 1}}\n").is_err());
-        assert!(parse_named("s:\n  states_update: {N: 1}\n").is_err());
     }
 
     #[test]

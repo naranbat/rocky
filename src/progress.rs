@@ -78,12 +78,6 @@ pub fn for_each(name: &str, var: &str, count: usize) -> Value {
     json!({"event": "for_each", "task": name, "var": var, "items": count})
 }
 
-/// Names only: like `task` lines, it leaves values out.
-pub fn set(name: &str, states: &Map<String, Value>) -> Value {
-    let states: Vec<&String> = states.keys().collect();
-    json!({"event": "set", "task": name, "states": states})
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -149,11 +143,6 @@ mod tests {
         assert_eq!(
             for_each("each", "IDS", 3),
             json!({"event": "for_each", "task": "each", "var": "IDS", "items": 3})
-        );
-        let states = Map::from_iter([("A".to_string(), json!(1)), ("B".to_string(), json!("x"))]);
-        assert_eq!(
-            set("save", &states),
-            json!({"event": "set", "task": "save", "states": ["A", "B"]})
         );
     }
 }
