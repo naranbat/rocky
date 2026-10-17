@@ -558,4 +558,14 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn rejects_a_condition_that_is_neither_a_map_nor_a_list() {
+        let err = serde_yaml::from_str::<Condition>("5").unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("a condition map or a list of conditions"),
+            "{err}"
+        );
+    }
 }

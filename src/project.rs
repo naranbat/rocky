@@ -492,4 +492,11 @@ mod tests {
         let err = load_in(dir.path(), "jobs: [\n").unwrap_err();
         assert!(err.to_string().contains("project.yaml"), "{err}");
     }
+
+    #[test]
+    fn rejects_a_job_that_is_neither_a_path_nor_a_map() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = load_in(dir.path(), "jobs:\n  a: 5\n").unwrap_err();
+        assert!(err.chain().contains("a job file path or a job"), "{err}");
+    }
 }

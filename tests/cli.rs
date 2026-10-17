@@ -160,8 +160,9 @@ fn wait_with_deadline(mut child: Child) -> Output {
     }
 }
 
-/// Reads `child`'s stdout JSON lines until `enough` holds for the lines so far, then kills
-/// it; kills it and panics if that takes longer than `DEADLINE`.
+/// Reads `child`'s stdout JSON lines until `enough` holds for the lines so far, then stops
+/// it with SIGTERM (so a coverage build still writes its profile); kills it and panics if
+/// that takes longer than `DEADLINE`.
 fn lines_until(mut child: Child, enough: impl Fn(&[Value]) -> bool) -> Vec<Value> {
     let stdout = child.stdout.take().unwrap();
     let (sender, receiver) = mpsc::channel();
@@ -184,7 +185,8 @@ fn lines_until(mut child: Child, enough: impl Fn(&[Value]) -> bool) -> Vec<Value
             }
         }
     }
-    child.kill().unwrap();
+    let rocky = i32::try_from(child.id()).unwrap();
+    kill(Pid::from_raw(rocky), Signal::SIGTERM).unwrap();
     child.wait().unwrap();
     lines
 }

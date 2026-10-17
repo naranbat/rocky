@@ -945,4 +945,13 @@ mod tests {
             "{msg}"
         );
     }
+
+    #[test]
+    fn rejects_a_task_that_is_neither_a_path_nor_a_map() {
+        let err = parse_named("a: 5\n").unwrap_err();
+        assert!(
+            err.to_string().contains("a task file path or a task"),
+            "{err}"
+        );
+    }
 }

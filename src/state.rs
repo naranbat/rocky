@@ -221,4 +221,11 @@ mod tests {
             check(&tasks[..1], &defaults()).unwrap();
         }
     }
+
+    #[test]
+    fn unreadable_file_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = load(dir.path(), &defaults()).unwrap_err();
+        assert!(matches!(err, Error::Io { .. }), "{err}");
+    }
 }

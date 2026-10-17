@@ -45,4 +45,13 @@ mod tests {
         let err = load(Path::new("/nonexistent/.env")).unwrap_err();
         assert!(matches!(err, Error::EnvFile { .. }));
     }
+
+    #[test]
+    fn malformed_line_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".env");
+        std::fs::write(&path, "A=\"unclosed\n").unwrap();
+        let err = load(&path).unwrap_err();
+        assert!(matches!(err, Error::EnvFile { .. }), "{err}");
+    }
 }
