@@ -1,6 +1,6 @@
 # Rocky
 
-A CLI for automating repeatable work: chain HTTP requests and commands into YAML projects, run on demand or on a schedule. A project file holds named jobs; each job runs tasks in order, where later tasks read earlier results, and can keep named values between runs. Run a job with `rocky exec`, or run jobs on a schedule with `rocky run`, and get the result back as JSON (for HTTP tasks, status, headers, and body kept separate).
+A CLI for automating repeatable work: chain HTTP requests and commands into YAML projects, run on demand or on a schedule. A project file holds named jobs; each job runs tasks in order, where later tasks read earlier results, and can keep named values between runs. Run a job with `rocky exec`, or run jobs on a schedule with `rocky run`, which can also run jobs on request from `rocky trigger` over a Unix socket, and get the result back as JSON (for HTTP tasks, status, headers, and body kept separate).
 
 ## Install
 
@@ -35,6 +35,8 @@ Start your own project from a template:
 rocky new project project.yaml             # a project with one job, `example`
 rocky validate project.yaml                # check a project without running it
 rocky exec project.yaml example
+rocky run project.yaml --socket /tmp/rocky.sock   # runs until stopped; jobs run on request
+rocky trigger /tmp/rocky.sock example             # from another terminal
 rocky new job jobs/deploy.yaml             # a job file
 rocky new task tasks/login.yaml            # a task file; asks cmd or http
 rocky new project full.yaml --level full   # every field, with comments
