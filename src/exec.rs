@@ -1,0 +1,1353 @@
+use std::cell::RefCell;
+use std::collections::BTreeMap;
+use std::time::Instant;
+
+use serde::Serialize;
+use serde_json::{Map, Value, json};
+
+use crate::command::{self, CommandResult};
+use crate::error::Error;
+use crate::project::Project;
+use crate::project_vars::ProjectVars;
+use crate::request::RequestSpec;
+use crate::response::Response;
+use crate::step::Step;
+use crate::{condition, env_file, extract, http, progress, state, vars};
+
+/// What one step produced: an HTTP response, a finished command, or (with `allow_failure`)
+/// the timeout or network error that stopped it.
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+pub enum StepResult {
+    Http(Response),
+    Cmd(CommandResult),
+    Errored { error: String },
+}
+
+impl StepResult {
+    /// Why the step counts as failed: HTTP 4xx/5xx, a non-zero exit, or an error.
+    pub fn failure(&self) -> Option<String> {
+        match self {
+            StepResult::Http(response) if response.status >= 400 => {
+                Some(format!("returned HTTP {}", response.status))
+            }
+            StepResult::Cmd(result) if result.exit_code != 0 => {
+                Some(format!("exited with code {}", result.exit_code))
+            }
+            StepResult::Errored { error } => Some(error.clone()),
+            _ => None,
+        }
+    }
+}
+
+pub struct Outcome {
+    /// The last step that ran, if any.
+    pub result: Option<StepResult>,
+    /// Set when a step failed without `allow_failure`; later steps did not run.
+    pub failed_step: Option<String>,
+}
+
+/// Queued work: a step to run with its label and the `vars` in scope around it, or a
+/// loop's remaining items.
+enum Work {
+    Step {
+        step: Box<Step>,
+        name: String,
+        scope: Scope,
+    },
+    Loop(Box<Loop>),
+}
+
+/// `vars` in scope, innermost already merged over outer: step, job.
+type Scope = BTreeMap<String, String>;
+
+/// Per remaining item, bind `var` to it and run `body`; then restore `var` to `previous`
+/// (`None` unbinds it). Expanded one item at a time, so memory stays O(`body`).
+struct Loop {
+    body: Vec<Step>,
+    scope: Scope,
+    var: String,
+    items: std::vec::IntoIter<Value>,
+    previous: Option<Value>,
+}
+
+/// `steps` as work, in order, each inside `scope`.
+fn queued(steps: Vec<Step>, scope: &Scope) -> impl DoubleEndedIterator<Item = Work> + '_ {
+    steps.into_iter().map(move |step| Work::Step {
+        name: step.name.clone(),
+        step: Box::new(step),
+        scope: scope.clone(),
+    })
+}
+
+/// Runs the project's `job` steps in order; later steps read earlier results as
+/// `steps.NAME`. A branch's chosen `then`/`else` steps, or a switch's matching case or
+/// `default`, run in its place; a loop's `do` steps run once per list element, with the
+/// element bound to its `as` variable. A step's `vars` apply to it and the steps nested in it.
+/// The job's `states` defaults are read from `states/<job>.json` next to the project (created from
+/// the defaults if missing) as `states.NAME`, and each `set.states` writes it back right away.
+/// Each `set.vars` sets project `vars` in `project_vars`; runs given the same `project_vars`
+/// see each other's updates.
+/// With `log`, one JSON line per step, branch or switch decision, and loop is printed to stdout.
+pub async fn exec(
+    mut project: Project,
+    job: &str,
+    log: bool,
+    project_vars: &ProjectVars,
+) -> Result<Outcome, Error> {
+    let steps = project.take(job)?;
+    let base: Scope = steps.vars;
+    // Below `scope`: the project `vars` over the env_file.
+    let env = match project.env_file.clone() {
+        Some(path) => tokio::task::spawn_blocking(move || env_file::load(&path)).await??,
+        None => BTreeMap::new(),
+    };
+    let mut declared: Map<String, Value> = env
+        .iter()
+        .map(|(name, value)| (name.clone(), Value::String(value.clone())))
+        .collect();
+    let updated = project_vars.snapshot();
+    for name in project.vars.keys() {
+        let value = expand_project_var(name, &project.vars, &updated, &env, &[])?;
+        declared.insert(name.clone(), Value::String(value));
+    }
+
+    let mut values = Map::new();
+    let state_path = project.dir.join("states").join(format!("{job}.json"));
+    let mut state = Map::new();
+    if !steps.states.is_empty() {
+        let (path, defaults) = (state_path.clone(), steps.states.clone());
+        state = tokio::task::spawn_blocking(move || state::load(&path, &defaults)).await??;
+        values.insert("states".to_string(), Value::Object(state.clone()));
+    }
+    let mut last = None;
+    let mut clients = http::Clients::default();
+    // Next work last, so nested steps are pushed in reverse to run in place.
+    let mut stack: Vec<Work> = queued(steps.steps, &base).rev().collect();
+    while let Some(work) = stack.pop() {
+        let (mut step, name, mut scope) = match work {
+            Work::Step { step, name, scope } => (*step, name, scope),
+            Work::Loop(mut each) => {
+                if let Some(item) = each.items.next() {
+                    values.insert(each.var.clone(), item);
+                    let body: Vec<Work> = queued(each.body.clone(), &each.scope).collect();
+                    stack.push(Work::Loop(each));
+                    stack.extend(body.into_iter().rev());
+                } else {
+                    match each.previous {
+                        Some(value) => values.insert(each.var, value),
+                        None => values.remove(&each.var),
+                    };
+                }
+                continue;
+            }
+        };
+        // Other jobs may have updated project `vars` since the last step.
+        let outer = outer_vars(&declared, &project_vars.snapshot(), &project.vars);
+        scope.extend(std::mem::take(&mut step.vars));
+        let to_step_error = |source| Error::Step {
+            name: name.clone(),
+            source: Box::new(source),
+        };
+
+        if let Some(set) = step.set.take() {
+            // Worked out from the current project `vars` and applied under one lock, so a
+            // concurrent `set` of the same var isn't lost.
+            let (states, set_vars) = project_vars.update_with(|current| {
+                let outer = outer_vars(&declared, current, &project.vars);
+                let substitute = |updates: BTreeMap<String, Value>| {
+                    let mut set = Map::new();
+                    for (var, mut value) in updates {
+                        vars::substitute_value(&mut value, &|var| {
+                            lookup(var, &values, &scope, &outer)
+                        })
+                        .map_err(to_step_error)?;
+                        set.insert(var, value);
+                    }
+                    Ok::<_, Error>(set)
+                };
+                let (states, set_vars) = (substitute(set.states)?, substitute(set.vars)?);
+                Ok(((states, set_vars.clone()), set_vars))
+            })?;
+            if log {
+                progress::emit(job, progress::set(&name, &states, &set_vars)).await;
+            }
+            if !states.is_empty() {
+                state.extend(states);
+                let (path, saved) = (state_path.clone(), state.clone());
+                tokio::task::spawn_blocking(move || state::save(&path, &saved))
+                    .await?
+                    .map_err(to_step_error)?;
+                values.insert("states".to_string(), Value::Object(state.clone()));
+            }
+            continue;
+        }
+
+        if let Some(condition) = step.condition.take() {
+            let taken = condition
+                .evaluate(&|var| lookup(var, &values, &scope, &outer))
+                .map_err(to_step_error)?;
+            let chosen = if taken { step.then } else { step.otherwise };
+            if log {
+                progress::emit(job, progress::branch(&name, taken, chosen.len())).await;
+            }
+            stack.extend(queued(chosen, &scope).rev());
+            continue;
+        }
+
+        if let Some(var) = step.switch.take() {
+            let value = lookup(&var, &values, &scope, &outer)
+                .ok_or_else(|| to_step_error(Error::UndefinedVar(var)))?;
+            let matched = step
+                .cases
+                .into_iter()
+                .enumerate()
+                .find(|(_, case)| condition::loose_eq(&value, &case.value));
+            let (case, chosen) = match matched {
+                Some((index, case)) => (Some(index + 1), case.body),
+                None => (None, step.default),
+            };
+            if log {
+                progress::emit(job, progress::switch(&name, case, chosen.len())).await;
+            }
+            stack.extend(queued(chosen, &scope).rev());
+            continue;
+        }
+
+        if let Some(list_var) = step.for_each.take() {
+            let items = match lookup(&list_var, &values, &scope, &outer) {
+                Some(Value::Array(items)) => items,
+                Some(other) => {
+                    return Err(to_step_error(Error::Loop(format!(
+                        "`{list_var}` is not a list ({other})"
+                    ))));
+                }
+                None => return Err(to_step_error(Error::UndefinedVar(list_var))),
+            };
+            if log {
+                progress::emit(job, progress::for_each(&name, &list_var, items.len())).await;
+            }
+            let var = step.item_var.unwrap_or_else(|| "ITEM".to_string());
+            stack.push(Work::Loop(Box::new(Loop {
+                body: step.body,
+                scope,
+                previous: values.get(&var).cloned(),
+                var,
+                items: items.into_iter(),
+            })));
+            continue;
+        }
+
+        let allow_failure = step.allow_failure;
+        let started = Instant::now();
+        let result = run_step(step, &mut values, &scope, &outer, &mut clients)
+            .await
+            .map_err(to_step_error)?;
+        if log {
+            progress::emit(
+                job,
+                progress::step(&name, &result, started.elapsed(), allow_failure),
+            )
+            .await;
+        }
+        if result.failure().is_some() && !allow_failure {
+            return Ok(Outcome {
+                result: Some(result),
+                failed_step: Some(name),
+            });
+        }
+        last = Some(result);
+    }
+    Ok(Outcome {
+        result: last,
+        failed_step: None,
+    })
+}
+
+/// Runs one step and records its result as `steps.<name>` in `values`. With `allow_failure`, a
+/// timeout or network error becomes an [`StepResult::Errored`] result instead of an error.
+async fn run_step(
+    mut step: Step,
+    values: &mut Map<String, Value>,
+    scope: &Scope,
+    outer: &Map<String, Value>,
+    clients: &mut http::Clients,
+) -> Result<StepResult, Error> {
+    let request = step.http.take();
+    let result = match perform(&step, request, values, scope, outer, clients).await {
+        Err(err @ (Error::Timeout(_) | Error::Http(_) | Error::CommandTimeout { .. }))
+            if step.allow_failure =>
+        {
+            StepResult::Errored { error: err.chain() }
+        }
+        result => result?,
+    };
+    if let Value::Object(steps) = values.entry("steps").or_insert_with(|| json!({})) {
+        steps.insert(step.name.clone(), json!(result));
+    }
+    Ok(result)
+}
+
+/// Performs an HTTP (`request`) or cmd step.
+async fn perform(
+    step: &Step,
+    request: Option<RequestSpec>,
+    values: &Map<String, Value>,
+    scope: &Scope,
+    outer: &Map<String, Value>,
+    clients: &mut http::Clients,
+) -> Result<StepResult, Error> {
+    let find = |var: &str| lookup(var, values, scope, outer);
+    match (request, &step.cmd) {
+        (Some(spec), None) => send(spec, step.timeout, &find, clients).await,
+        (None, Some(argv)) => execute(argv, step, &find).await,
+        _ => Err(Error::InvalidStep(
+            "must have exactly one of `http` or `cmd`".to_string(),
+        )),
+    }
+}
+
+/// Sends the request, stopping it after `timeout` seconds (default 30).
+async fn send(
+    spec: RequestSpec,
+    timeout: Option<u64>,
+    find: &(dyn Fn(&str) -> Option<Value> + Sync),
+    clients: &mut http::Clients,
+) -> Result<StepResult, Error> {
+    let spec = vars::apply_with(spec, find)?;
+    let response = http::send(clients, &spec, timeout).await?;
+    Ok(StepResult::Http(response))
+}
+
+/// Runs `argv` with `step`'s `stdin`, `env`, `cwd`, `timeout` and `capture_stdout`.
+async fn execute(
+    argv: &[String],
+    step: &Step,
+    find: &(dyn Fn(&str) -> Option<Value> + Sync),
+) -> Result<StepResult, Error> {
+    let substitute = |text: &str| vars::substitute(text, find);
+    let cwd = step
+        .cwd
+        .as_deref()
+        .map(|path| substitute(&path.to_string_lossy()).map(|path| step.dir.join(path)))
+        .transpose()?;
+    let argv = argv
+        .iter()
+        .map(|arg| substitute(arg))
+        .collect::<Result<Vec<_>, _>>()?;
+    let stdin = render(step.stdin.clone(), find)?;
+    let mut rendered = BTreeMap::new();
+    for (name, value) in &step.env {
+        if let Some(text) = render(Some(value.clone()), find)? {
+            rendered.insert(name.clone(), text);
+        }
+    }
+    let result = command::run(
+        &argv,
+        stdin.as_deref(),
+        &rendered,
+        cwd.as_deref(),
+        step.timeout,
+        step.capture_stdout.unwrap_or(true),
+    )
+    .await?;
+    Ok(StepResult::Cmd(result))
+}
+
+/// Substitutes `${VAR}` in `value` and turns it into text: a string as-is, anything else as JSON.
+fn render(
+    value: Option<Value>,
+    find: &(dyn Fn(&str) -> Option<Value> + Sync),
+) -> Result<Option<String>, Error> {
+    let Some(mut value) = value else {
+        return Ok(None);
+    };
+    vars::substitute_value(&mut value, find)?;
+    Ok(Some(extract::text(&value)))
+}
+
+/// Looks `var` up in `steps`, `states` and loop items (dot paths such as `steps.login.body.token`
+/// included), then the `vars` in `scope`, then the project `vars` and env_file in `outer`
+/// (dot paths included), then the process environment.
+/// A `vars` value in `scope` has its own `${NAME}` expanded the same way; one that can't be
+/// (undefined or referring to itself) counts as undefined.
+fn lookup(
+    var: &str,
+    values: &Map<String, Value>,
+    scope: &Scope,
+    outer: &Map<String, Value>,
+) -> Option<Value> {
+    lookup_expanding(var, values, scope, outer, &[])
+}
+
+/// [`lookup`], with `seen` the `scope` vars whose values are being expanded.
+fn lookup_expanding<'a>(
+    var: &'a str,
+    values: &Map<String, Value>,
+    scope: &Scope,
+    outer: &Map<String, Value>,
+    seen: &[&'a str],
+) -> Option<Value> {
+    if let Some(value) = extract::lookup(values, var) {
+        return Some(value);
+    }
+    if let Some(text) = scope.get(var) {
+        if seen.contains(&var) {
+            return None;
+        }
+        let seen = [seen, &[var]].concat();
+        let find = |name: &str| lookup_expanding(name, values, scope, outer, &seen);
+        return vars::substitute(text, &find).ok().map(Value::String);
+    }
+    extract::lookup(outer, var).or_else(|| std::env::var(var).ok().map(Value::String))
+}
+
+/// The project `vars`: `declared` with the names `set` has updated replaced.
+fn outer_vars(
+    declared: &Map<String, Value>,
+    updated: &Map<String, Value>,
+    names: &BTreeMap<String, String>,
+) -> Map<String, Value> {
+    let mut outer = declared.clone();
+    for (name, value) in updated {
+        if names.contains_key(name) {
+            outer.insert(name.clone(), value.clone());
+        }
+    }
+    outer
+}
+
+/// The project var `name` with `${NAME}` in its value expanded from the other project vars
+/// (their `updated` value if `set` has changed them), then `env` (the env_file), then the
+/// process environment. `seen` holds the project vars being expanded, to catch a value that
+/// refers back to itself.
+fn expand_project_var(
+    name: &str,
+    declared: &BTreeMap<String, String>,
+    updated: &Map<String, Value>,
+    env: &BTreeMap<String, String>,
+    seen: &[&str],
+) -> Result<String, Error> {
+    if seen.contains(&name) {
+        return Err(Error::CyclicVar(name.to_string()));
+    }
+    let text = declared
+        .get(name)
+        .ok_or_else(|| Error::UndefinedVar(name.to_string()))?;
+    let seen = [seen, &[name]].concat();
+    // `substitute` only learns that a lookup failed, so keep the nested error to return it.
+    let nested = RefCell::new(None);
+    let find = |var: &str| {
+        if !declared.contains_key(var) {
+            let value = env.get(var).cloned().or_else(|| std::env::var(var).ok());
+            return value.map(Value::String);
+        }
+        if let Some(value) = updated.get(var) {
+            return Some(value.clone());
+        }
+        match expand_project_var(var, declared, updated, env, &seen) {
+            Ok(value) => Some(Value::String(value)),
+            Err(err) => {
+                nested.replace(Some(err));
+                None
+            }
+        }
+    };
+    let expanded = vars::substitute(text, &find);
+    match nested.into_inner() {
+        Some(err) => Err(err),
+        None => expanded,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::*;
+    use crate::project::Job;
+
+    /// A project with one job `w`, whose fields are `yaml`. Its dir is shared, so the
+    /// job may not declare `states`; use [`project_in`] with a temporary dir for those.
+    fn project(yaml: &str) -> Project {
+        let project = project_in(&std::env::temp_dir(), yaml);
+        assert!(project.jobs["w"].states.is_empty(), "{yaml}");
+        project
+    }
+
+    /// Like [`project`], with the job's paths relative to `dir`.
+    fn project_in(dir: &Path, yaml: &str) -> Project {
+        let mut job: Job = serde_yaml::from_str(yaml).unwrap();
+        crate::step::resolve(&mut job.steps, dir).unwrap();
+        Project {
+            dir: dir.to_path_buf(),
+            vars: BTreeMap::new(),
+            env_file: None,
+            schedules: BTreeMap::new(),
+            jobs: BTreeMap::from([("w".to_string(), job)]),
+        }
+    }
+
+    async fn exec(project: Project, log: bool) -> Result<Outcome, Error> {
+        super::exec(project, "w", log, &ProjectVars::default()).await
+    }
+
+    /// Like [`project`], with `vars` set.
+    fn project_with_vars(yaml: &str, vars: &[(&str, &str)]) -> Project {
+        let mut project = project(yaml);
+        project.vars = vars
+            .iter()
+            .map(|(name, value)| (name.to_string(), value.to_string()))
+            .collect();
+        project
+    }
+
+    /// A first step `seed` that prints `values`, so later steps read them as
+    /// `steps.seed.stdout.NAME`, keeping their JSON type.
+    fn seed(values: Value) -> String {
+        format!("steps:\n  seed:\n    cmd: [echo, '{values}']\n")
+    }
+
+    fn stdout(outcome: &Outcome) -> &Value {
+        match &outcome.result {
+            Some(StepResult::Cmd(result)) => &result.stdout,
+            _ => panic!("expected a cmd result"),
+        }
+    }
+
+    #[tokio::test]
+    async fn substituted_values_stay_one_argument() {
+        let outcome = exec(
+            project_with_vars(
+                "steps:\n  e:\n    cmd: [echo, '${X}']\n",
+                &[("X", "a; echo injected  b")],
+            ),
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(stdout(&outcome), &json!("a; echo injected  b"));
+    }
+
+    #[tokio::test]
+    async fn step_vars_beat_job_vars_beat_project_vars() {
+        let project = project_with_vars(
+            "vars: {B: job, C: job}\nsteps:\n\
+             \x20 print:\n    cmd: [echo, '${B}-${C}-${D}']\n    vars: {C: step}\n",
+            &[("B", "project"), ("D", "project")],
+        );
+        let outcome = exec(project, false).await.unwrap();
+        assert_eq!(stdout(&outcome), &json!("job-step-project"));
+    }
+
+    #[tokio::test]
+    async fn vars_values_expand_other_vars() {
+        let project = project_with_vars(
+            &format!(
+                "vars: {{BACKEND: '${{PROJECTS}}/backend'}}\n{}\
+                 \x20 print:\n    cmd: [echo, '${{SRC}} ${{LITERAL}}']\n    cwd: '${{ROOT}}'\n\
+                 \x20   vars: {{SRC: '${{BACKEND}}/src?id=${{steps.seed.stdout.ID}}', LITERAL: '$${{SRC}}'}}\n",
+                seed(json!({"ID": 7}))
+            ),
+            &[("ROOT", "${PROJECTS}"), ("PROJECTS", "/")],
+        );
+        let outcome = exec(project, false).await.unwrap();
+        assert_eq!(stdout(&outcome), &json!("//backend/src?id=7 ${SRC}"));
+    }
+
+    #[tokio::test]
+    async fn vars_referring_to_themselves_error() {
+        let err = exec(
+            project_with_vars(
+                "steps:\n  e:\n    cmd: [echo, '${A}']\n",
+                &[("A", "x${B}"), ("B", "${A}")],
+            ),
+            false,
+        )
+        .await
+        .err()
+        .unwrap();
+        assert!(matches!(err, Error::CyclicVar(ref v) if v == "A"), "{err}");
+
+        let err = exec(
+            project("vars: {A: 'x${B}', B: '${A}'}\nsteps:\n  e:\n    cmd: [echo, '${A}']\n"),
+            false,
+        )
+        .await
+        .err()
+        .unwrap();
+        assert!(
+            matches!(err, Error::Step { source, .. } if matches!(*source, Error::UndefinedVar(ref v) if v == "A"))
+        );
+    }
+
+    #[tokio::test]
+    async fn step_vars_reach_nested_steps_but_not_siblings() {
+        let yaml = format!(
+            "{}\
+             \x20 each:\n    for_each: steps.seed.stdout.IDS\n    vars: {{IDS_SEP: '+', NOPE_P: outer}}\n    do:\n\
+             \x20     check:\n        if: {{this: NOPE_P, eq: inner}}\n        vars: {{NOPE_P: inner}}\n        then:\n\
+             \x20         add:\n            set: {{vars: {{ACC: '${{ACC}}${{IDS_SEP}}${{NOPE_P}}${{ITEM}}'}}}}\n\
+             \x20 print:\n    cmd: [echo, '${{ACC}}']\n",
+            seed(json!({"IDS": [1, 2]}))
+        );
+        let outcome = exec(project_with_vars(&yaml, &[("ACC", "")]), false)
+            .await
+            .unwrap();
+        assert_eq!(stdout(&outcome), &json!("+inner1+inner2"));
+
+        let err = exec(
+            project_with_vars(
+                &format!("{yaml}  after:\n    cmd: [echo, '${{NOPE_P}}']\n"),
+                &[("ACC", "")],
+            ),
+            false,
+        )
+        .await
+        .err()
+        .unwrap();
+        assert!(
+            matches!(err, Error::Step { source, .. } if matches!(*source, Error::UndefinedVar(ref v) if v == "NOPE_P"))
+        );
+    }
+
+    #[tokio::test]
+    async fn step_files_are_recorded_under_their_key() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("greet.yaml"),
+            "vars: {WHO: file}\ncmd: [echo, 'hi ${WHO}']\n",
+        )
+        .unwrap();
+        let project = project_in(
+            dir.path(),
+            "steps:\n  hello: greet.yaml\n  print:\n    cmd: [echo, '${steps.hello.stdout}!']\n",
+        );
+        let outcome = exec(project, false).await.unwrap();
+        assert_eq!(stdout(&outcome), &json!("hi file!"));
+    }
+
+    #[tokio::test]
+    async fn non_zero_exit_stops_job() {
+        let outcome = exec(
+            project(
+                "steps:\n  bad:\n    cmd: [sh, -c, 'exit 3']\n  never:\n    cmd: [echo, never]\n",
+            ),
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(outcome.failed_step.as_deref(), Some("bad"));
+        assert_eq!(
+            outcome
+                .result
+                .as_ref()
+                .and_then(StepResult::failure)
+                .as_deref(),
+            Some("exited with code 3")
+        );
+    }
+
+    #[tokio::test]
+    async fn skipped_branch_with_no_step_run_succeeds_without_result() {
+        let outcome = exec(
+            project_with_vars(
+                "steps:\n  r:\n    if: {this: X, eq: 1}\n    then: {a: {cmd: [echo, hi]}}\n",
+                &[("X", "2")],
+            ),
+            false,
+        )
+        .await
+        .unwrap();
+        assert!(outcome.result.is_none());
+        assert_eq!(outcome.failed_step, None);
+    }
+
+    /// Both runs wait for a 1s timeout, so they run concurrently.
+    #[tokio::test]
+    async fn timeout_fails_unless_allowed_then_exists_sees_the_error() {
+        let allowed = "steps:\n\
+                       \x20 slow:\n    cmd: [sleep, '5']\n    timeout: 1\n    allow_failure: true\n\
+                       \x20 check:\n    if: {this: steps.slow.error, exists: true}\n\
+                       \x20   then: {errored: {cmd: [echo, '${steps.slow.error}']}}\n    else: {ok: {cmd: [echo, ok]}}\n";
+        let (allowed, failed) = tokio::join!(
+            exec(project(allowed), false),
+            exec(
+                project("steps:\n  slow:\n    cmd: [sleep, '5']\n    timeout: 1\n"),
+                false,
+            ),
+        );
+        let outcome = allowed.unwrap();
+        assert_eq!(outcome.failed_step, None);
+        assert_eq!(
+            stdout(&outcome),
+            &json!("command `sleep` timed out after 1s")
+        );
+        let err = failed.err().unwrap();
+        assert!(
+            matches!(err, Error::Step { source, .. } if matches!(*source, Error::CommandTimeout { .. }))
+        );
+    }
+
+    #[tokio::test]
+    async fn branch_runs_chosen_arm() {
+        let outcome = exec(
+            project(&format!(
+                "{}  size:\n    if: {{this: steps.seed.stdout.N, gt: 3}}\n    then: {{big: {{cmd: [echo, big]}}}}\n    else: {{small: {{cmd: [echo, small]}}}}\n",
+                seed(json!({"N": 5}))
+            )),
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(stdout(&outcome), &json!("big"));
+    }
+
+    /// A job seeded with `N`, then a switch on it that sets project var `PICK` (default
+    /// `none`; cases 200, "404" and a duplicate 404, plus a default if `default`), then echoes
+    /// `after ${PICK}`.
+    fn switch_project(n: Value, default: bool) -> Project {
+        let pick = |word: &str| format!("{{pick: {{set: {{vars: {{PICK: {word}}}}}}}}}");
+        let default = if default {
+            format!("    default: {}\n", pick("other"))
+        } else {
+            String::new()
+        };
+        project_with_vars(
+            &format!(
+                "{}\
+             \x20 route:\n    switch: steps.seed.stdout.N\n    cases:\n\
+             \x20     200: {}\n\
+             \x20     \"404\": {}\n\
+             \x20     404: {}\n\
+             {default}\
+             \x20 after:\n    cmd: [echo, 'after ${{PICK}}']\n",
+                seed(json!({ "N": n })),
+                pick("ok"),
+                pick("missing"),
+                pick("second"),
+            ),
+            &[("PICK", "none")],
+        )
+    }
+
+    #[tokio::test]
+    async fn switch_runs_first_matching_case() {
+        for (n, expected) in [
+            (json!(200), "after ok"),
+            (json!("200"), "after ok"),
+            (json!(404), "after missing"),
+        ] {
+            let outcome = exec(switch_project(n.clone(), true), false).await.unwrap();
+            assert_eq!(stdout(&outcome), &json!(expected), "{n}");
+        }
+    }
+
+    #[tokio::test]
+    async fn switch_falls_back_to_default_or_runs_nothing() {
+        let outcome = exec(switch_project(json!(500), true), false).await.unwrap();
+        assert_eq!(stdout(&outcome), &json!("after other"));
+        let outcome = exec(switch_project(json!(500), false), false)
+            .await
+            .unwrap();
+        assert_eq!(stdout(&outcome), &json!("after none"));
+    }
+
+    #[tokio::test]
+    async fn switch_on_undefined_var_errors() {
+        let err = exec(
+            project(
+                "steps:\n  s:\n    switch: NOPE_UNDEFINED\n    cases: {1: {e: {cmd: [echo]}}}\n",
+            ),
+            false,
+        )
+        .await
+        .err()
+        .unwrap();
+        assert!(
+            matches!(err, Error::Step { name, source } if name == "s" && matches!(*source, Error::UndefinedVar(_)))
+        );
+    }
+
+    #[tokio::test]
+    async fn for_each_runs_body_per_item_in_order() {
+        let outcome = exec(
+            project_with_vars(
+                &format!(
+                    "{}\
+                     \x20 each:\n    for_each: steps.seed.stdout.IDS\n    as: ID\n    do:\n\
+                     \x20     add:\n        set: {{vars: {{ACC: '${{ACC}}-${{ID}}'}}}}\n\
+                     \x20 print:\n    cmd: [echo, '${{ACC}}']\n",
+                    seed(json!({"IDS": [1, 2, 3]}))
+                ),
+                &[("ACC", "start")],
+            ),
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(stdout(&outcome), &json!("start-1-2-3"));
+    }
+
+    #[tokio::test]
+    async fn for_each_default_item_with_paths_and_nested_branch() {
+        let outcome = exec(
+            project_with_vars(
+                "steps:\n\
+                 \x20 list:\n    cmd: [echo, '[{\"id\": 1, \"ok\": true}, {\"id\": 2, \"ok\": false}]']\n\
+                 \x20 each:\n    for_each: steps.list.stdout\n    do:\n\
+                 \x20     check:\n        if: {this: ITEM.ok, eq: true}\n        then:\n\
+                 \x20         plus:\n            set: {vars: {ACC: '${ACC}+${ITEM.id}'}}\n        else:\n\
+                 \x20         minus:\n            set: {vars: {ACC: '${ACC}-${ITEM.id}'}}\n\
+                 \x20 print:\n    cmd: [echo, '${ACC}']\n",
+                &[("ACC", "")],
+            ),
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(stdout(&outcome), &json!("+1-2"));
+    }
+
+    #[tokio::test]
+    async fn nested_loops_inside_branch() {
+        let outcome = exec(
+            project_with_vars(
+                &format!(
+                    "{}\
+                     \x20 go:\n    if: {{this: steps.seed.stdout.GO, eq: true}}\n    then:\n\
+                     \x20     rows:\n        for_each: steps.seed.stdout.ROWS\n        as: ROW\n        do:\n\
+                     \x20         cells:\n            for_each: ROW\n            as: CELL\n            do:\n\
+                     \x20             add:\n                set: {{vars: {{ACC: '${{ACC}}${{CELL}}'}}}}\n\
+                     \x20 print:\n    cmd: [echo, '${{ACC}}']\n",
+                    seed(json!({"GO": true, "ROWS": [["a", "b"], ["c"]]}))
+                ),
+                &[("ACC", "")],
+            ),
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(stdout(&outcome), &json!("abc"));
+    }
+
+    #[tokio::test]
+    async fn for_each_restores_or_removes_item_var() {
+        let outcome = exec(
+            project(&format!(
+                "{}\
+                 \x20 outer:\n    for_each: steps.seed.stdout.OUTER\n    as: X\n    do:\n\
+                 \x20     inner:\n        for_each: steps.seed.stdout.INNER\n        as: X\n        do: {{e: {{cmd: [echo, '${{X}}']}}}}\n\
+                 \x20     print:\n        cmd: [echo, '${{X}}']\n",
+                seed(json!({"OUTER": ["before"], "INNER": [1, 2]}))
+            )),
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(stdout(&outcome), &json!("before"));
+
+        let err = exec(
+            project(&format!(
+                "{}\
+                 \x20 each:\n    for_each: steps.seed.stdout.IDS\n    as: NOPE_X\n    do: {{e: {{cmd: [echo, '${{NOPE_X}}']}}}}\n\
+                 \x20 print:\n    cmd: [echo, '${{NOPE_X}}']\n",
+                seed(json!({"IDS": [1]}))
+            )),
+            false,
+        )
+        .await
+        .err()
+        .unwrap();
+        assert!(
+            matches!(err, Error::Step { source, .. } if matches!(*source, Error::UndefinedVar(ref v) if v == "NOPE_X"))
+        );
+    }
+
+    #[tokio::test]
+    async fn for_each_needs_a_defined_list() {
+        let yaml = "steps:\n  each:\n    for_each: NOPE_L\n    do: {e: {cmd: [echo]}}\n";
+        let err = exec(project_with_vars(yaml, &[("NOPE_L", "a,b")]), false)
+            .await
+            .err()
+            .unwrap();
+        assert!(
+            matches!(err, Error::Step { name, source } if name == "each" && matches!(*source, Error::Loop(_)))
+        );
+        let err = exec(project(yaml), false).await.err().unwrap();
+        assert!(
+            matches!(err, Error::Step { name, source } if name == "each" && matches!(*source, Error::UndefinedVar(_)))
+        );
+    }
+
+    #[tokio::test]
+    async fn failing_step_in_loop_stops_job() {
+        let outcome = exec(
+            project(&format!(
+                "{}\
+                 \x20 each:\n    for_each: steps.seed.stdout.CODES\n    do:\n      check:\n        cmd: [sh, -c, 'exit ${{ITEM}}']\n\
+                 \x20 never:\n    cmd: [echo, never]\n",
+                seed(json!({"CODES": [0, 5, 0]}))
+            )),
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(outcome.failed_step.as_deref(), Some("check"));
+        assert_eq!(
+            outcome
+                .result
+                .as_ref()
+                .and_then(StepResult::failure)
+                .as_deref(),
+            Some("exited with code 5")
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn cmd_step_does_not_block_other_tasks() {
+        let cmd = tokio::spawn(exec(
+            project("steps:\n  sleep:\n    cmd: [sleep, '1']\n"),
+            false,
+        ));
+        let started = Instant::now();
+        let timer = tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            started.elapsed()
+        });
+        let elapsed = timer.await.unwrap();
+        cmd.await.unwrap().unwrap();
+        assert!(elapsed.as_millis() < 500, "timer took {elapsed:?}");
+    }
+
+    #[tokio::test]
+    async fn capture_stdout_false_discards_stdout() {
+        let outcome = exec(
+            project("steps:\n  e:\n    cmd: [echo, hi]\n    capture_stdout: false\n"),
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(stdout(&outcome), &Value::Null);
+    }
+
+    #[tokio::test]
+    async fn cmd_errors_carry_step_name() {
+        let err = exec(
+            project(
+                "steps:\n  r:\n    if: {this: NOPE_UNDEFINED, exists: false}\n    then:\n\
+                 \x20     inner:\n        cmd: [echo, '${NOPE_UNDEFINED}']\n",
+            ),
+            false,
+        )
+        .await
+        .err()
+        .unwrap();
+        assert!(
+            matches!(err, Error::Step { name, source } if name == "inner" && matches!(*source, Error::UndefinedVar(ref v) if v == "NOPE_UNDEFINED"))
+        );
+    }
+
+    #[tokio::test]
+    async fn named_steps_are_readable_by_path_and_stdin() {
+        let outcome = exec(
+            project(
+                "steps:\n\
+                 \x20 produce:\n    cmd: [echo, '{\"items\": [1, 2, 3]}']\n\
+                 \x20 piped:\n    cmd: [cat]\n    stdin: ${steps.produce.stdout}\n\
+                 \x20 check:\n    if: {this: steps.piped.stdout.items.2, eq: 3}\n    then:\n\
+                 \x20     print:\n        cmd: [echo, 'first=${steps.produce.stdout.items.0} code=${steps.piped.exit_code}']\n",
+            ),
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(stdout(&outcome), &json!("first=1 code=0"));
+    }
+
+    #[tokio::test]
+    async fn failed_step_with_allow_failure_is_recorded() {
+        let outcome = exec(
+            project(
+                "steps:\n\
+                 \x20 check:\n    cmd: [sh, -c, 'echo nope >&2; exit 4']\n    allow_failure: true\n\
+                 \x20 print:\n    cmd: [echo, '${steps.check.exit_code}:${steps.check.stderr}']\n",
+            ),
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(outcome.failed_step, None);
+        assert_eq!(stdout(&outcome), &json!("4:nope"));
+    }
+
+    #[tokio::test]
+    async fn stdin_is_substituted_and_non_strings_become_json() {
+        let outcome = exec(
+            project(&format!(
+                "{}  cat:\n    cmd: [cat]\n    stdin: {{n: '${{steps.seed.stdout.N}}', s: 'x=${{steps.seed.stdout.N}}'}}\n",
+                seed(json!({"N": 5}))
+            )),
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(stdout(&outcome), &json!({"n": 5, "s": "x=5"}));
+    }
+
+    #[tokio::test]
+    async fn env_is_substituted_and_non_strings_become_json() {
+        let outcome = exec(
+            project(&format!(
+                "{}  env:\n    cmd: [sh, -c, 'printf \"%s|%s\" \"$A\" \"$B\"']\n    env: {{A: 'x=${{steps.seed.stdout.N}}', B: {{n: '${{steps.seed.stdout.N}}'}}}}\n",
+                seed(json!({"N": 5}))
+            )),
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(stdout(&outcome), &json!("x=5|{\"n\":5}"));
+    }
+
+    #[tokio::test]
+    async fn cmd_writes_then_reads_a_file_relative_to_project_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = project_in(
+            dir.path(),
+            &format!(
+                "{}\
+                 \x20 write:\n    cmd: [sh, -c, 'cat > \"$1\"', _, '${{steps.seed.stdout.NAME}}.json']\n    stdin: {{n: '${{steps.seed.stdout.N}}'}}\n    cwd: .\n\
+                 \x20 read:\n    cmd: [cat, out.json]\n    cwd: .\n\
+                 \x20 print:\n    cmd: [echo, '${{steps.read.stdout.n}}']\n",
+                seed(json!({"NAME": "out", "N": 7}))
+            ),
+        );
+        let outcome = exec(project, false).await.unwrap();
+        assert_eq!(stdout(&outcome), &json!(7));
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("out.json")).unwrap(),
+            "{\"n\":7}"
+        );
+    }
+
+    #[tokio::test]
+    async fn cmd_cwd_substitutes_vars() {
+        let dir = tempfile::tempdir().unwrap();
+        let other = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("work")).unwrap();
+        let project = project_in(
+            dir.path(),
+            &format!(
+                "{}\
+                 \x20 rel:\n    cmd: [touch, rel]\n    cwd: '${{steps.seed.stdout.SUB}}'\n\
+                 \x20 abs:\n    cmd: [touch, abs]\n    cwd: '${{steps.seed.stdout.ABS}}'\n",
+                seed(json!({"SUB": "work", "ABS": other.path()}))
+            ),
+        );
+        exec(project, false).await.unwrap();
+        assert!(dir.path().join("work/rel").exists());
+        assert!(other.path().join("abs").exists());
+    }
+
+    #[tokio::test]
+    async fn binary_body_encoding_is_recorded() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(vec![0xff, 0xfe]))
+            .mount(&server)
+            .await;
+        let project = project(&format!(
+            "steps:\n  img:\n    http: {{method: GET, url: \"{}\"}}\n  print:\n    cmd: [echo, \"${{steps.img.body_encoding}}\"]\n",
+            server.uri()
+        ));
+        let outcome = exec(project, false).await.unwrap();
+        assert_eq!(stdout(&outcome), &json!("base64"));
+    }
+
+    /// `states/w.json` in `dir`, parsed.
+    fn state_file(dir: &Path) -> Value {
+        serde_json::from_str(&std::fs::read_to_string(dir.join("states/w.json")).unwrap()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn state_persists_across_runs() {
+        let dir = tempfile::tempdir().unwrap();
+        let yaml = "states: {COUNT: 0, KEEP: k}\n\
+                    steps:\n\
+                    \x20 inc:\n    cmd: [expr, '${states.COUNT}', +, '1']\n\
+                    \x20 save:\n    set: {states: {COUNT: '${steps.inc.stdout}'}}\n\
+                    \x20 check:\n    if: {this: states.COUNT, gt: 1}\n    then: {again: {cmd: [echo, 'again ${states.COUNT} ${states.KEEP}']}}\n    else: {first: {cmd: [echo, 'first ${states.COUNT} ${states.KEEP}']}}\n";
+        let outcome = exec(project_in(dir.path(), yaml), false).await.unwrap();
+        assert_eq!(stdout(&outcome), &json!("first 1 k"));
+        assert_eq!(state_file(dir.path()), json!({"COUNT": 1, "KEEP": "k"}));
+        let outcome = exec(project_in(dir.path(), yaml), false).await.unwrap();
+        assert_eq!(stdout(&outcome), &json!("again 2 k"));
+        assert_eq!(state_file(dir.path()), json!({"COUNT": 2, "KEEP": "k"}));
+    }
+
+    #[tokio::test]
+    async fn condition_compares_loop_item_with_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let yaml = format!(
+            "states: {{LATEST: 2}}\n{}\
+             \x20 each:\n    for_each: steps.seed.stdout.IDS\n    as: ID\n    do:\n\
+             \x20     check:\n        if: {{this: ID, gt: '${{states.LATEST}}'}}\n        then:\n\
+             \x20         plus:\n            set: {{vars: {{ACC: '${{ACC}}+${{ID}}'}}}}\n        else:\n\
+             \x20         minus:\n            set: {{vars: {{ACC: '${{ACC}}-${{ID}}'}}}}\n\
+             \x20 print:\n    cmd: [echo, '${{ACC}}']\n",
+            seed(json!({"IDS": [1, 2, 3, 4]}))
+        );
+        let mut project = project_in(dir.path(), &yaml);
+        project.vars = BTreeMap::from([("ACC".to_string(), String::new())]);
+        let outcome = exec(project, false).await.unwrap();
+        assert_eq!(stdout(&outcome), &json!("-1-2+3+4"));
+    }
+
+    #[tokio::test]
+    async fn set_vars_is_seen_by_later_steps_and_keeps_its_type() {
+        let yaml = "steps:\n\
+                    \x20 seed:\n    cmd: [echo, '[1, 2]']\n\
+                    \x20 keep:\n    set: {vars: {L: '${steps.seed.stdout}', N: 'n=${N}'}}\n\
+                    \x20 check:\n    for_each: L\n    do: {e: {cmd: [echo, '${N} ${L.1} ${ITEM}']}}\n";
+        let project_vars = ProjectVars::default();
+        let project = project_with_vars(yaml, &[("L", "none"), ("N", "0")]);
+        let outcome = super::exec(project, "w", false, &project_vars)
+            .await
+            .unwrap();
+        assert_eq!(stdout(&outcome), &json!("n=0 2 2"));
+        assert_eq!(
+            Value::Object(project_vars.snapshot()),
+            json!({"L": [1, 2], "N": "n=0"})
+        );
+    }
+
+    #[tokio::test]
+    async fn runs_with_the_same_project_vars_see_each_others_updates() {
+        let project_vars = ProjectVars::default();
+        let vars = [("TOKEN", "none")];
+        let writer = project_with_vars(
+            "steps:\n  keep:\n    set: {vars: {TOKEN: abc}}\n  e:\n    cmd: [echo]\n",
+            &vars,
+        );
+        let reader = || project_with_vars("steps:\n  e:\n    cmd: [echo, '${TOKEN}']\n", &vars);
+        let outcome = super::exec(reader(), "w", false, &project_vars)
+            .await
+            .unwrap();
+        assert_eq!(stdout(&outcome), &json!("none"));
+        super::exec(writer, "w", false, &project_vars)
+            .await
+            .unwrap();
+        let outcome = super::exec(reader(), "w", false, &project_vars)
+            .await
+            .unwrap();
+        assert_eq!(stdout(&outcome), &json!("abc"));
+        let outcome = exec(reader(), false).await.unwrap();
+        assert_eq!(stdout(&outcome), &json!("none"));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_set_vars_lose_no_updates() {
+        let project_vars = ProjectVars::default();
+        let project = |letter: &str| {
+            project_with_vars(
+                &format!(
+                    "{}\
+                     \x20 each:\n    for_each: steps.seed.stdout\n    do:\n\
+                     \x20     add:\n        set: {{vars: {{N: '${{N}}{letter}'}}}}\n",
+                    seed(json!(vec![0; 200]))
+                ),
+                &[("N", "")],
+            )
+        };
+        let spawn = |project: Project| {
+            let project_vars = project_vars.clone();
+            tokio::spawn(async move { super::exec(project, "w", false, &project_vars).await })
+        };
+        let (a, b) = tokio::join!(spawn(project("a")), spawn(project("b")));
+        a.unwrap().unwrap();
+        b.unwrap().unwrap();
+        let n = project_vars.snapshot()["N"].as_str().unwrap().len();
+        assert_eq!(n, 400);
+    }
+
+    #[tokio::test]
+    async fn project_vars_expand_from_updated_vars() {
+        let project_vars = ProjectVars::default();
+        project_vars.update(Map::from_iter([("HOST".to_string(), json!("new"))]));
+        let project = project_with_vars(
+            "steps:\n  e:\n    cmd: [echo, '${URL}']\n",
+            &[("HOST", "orig"), ("URL", "${HOST}/x")],
+        );
+        let outcome = super::exec(project, "w", false, &project_vars)
+            .await
+            .unwrap();
+        assert_eq!(stdout(&outcome), &json!("new/x"));
+    }
+
+    #[tokio::test]
+    async fn job_vars_shadow_an_updated_project_var() {
+        let project = project_with_vars(
+            "vars: {A: job}\nsteps:\n\
+             \x20 keep:\n    set: {vars: {A: updated, B: updated}}\n\
+             \x20 e:\n    cmd: [echo, '${A}-${B}']\n",
+            &[("A", "project"), ("B", "project")],
+        );
+        let outcome = exec(project, false).await.unwrap();
+        assert_eq!(stdout(&outcome), &json!("job-updated"));
+    }
+
+    #[tokio::test]
+    async fn project_vars_beat_the_env_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let env = dir.path().join(".env");
+        std::fs::write(&env, "A=env\nB=env\n").unwrap();
+        let mut project = project_with_vars(
+            "steps:\n  e:\n    cmd: [echo, '${A}-${B}']\n",
+            &[("A", "project")],
+        );
+        project.env_file = Some(env);
+        let outcome = exec(project, false).await.unwrap();
+        assert_eq!(stdout(&outcome), &json!("project-env"));
+    }
+
+    #[tokio::test]
+    async fn state_is_saved_before_a_later_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let outcome = exec(
+            project_in(
+                dir.path(),
+                "states: {N: 0}\n\
+                 steps:\n\
+                 \x20 save:\n    set: {states: {N: 'n=${states.N}'}}\n\
+                 \x20 bad:\n    cmd: [sh, -c, 'exit 1']\n",
+            ),
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(outcome.failed_step.as_deref(), Some("bad"));
+        assert_eq!(state_file(dir.path()), json!({"N": "n=0"}));
+    }
+
+    #[tokio::test]
+    async fn job_without_state_writes_no_file() {
+        let dir = tempfile::tempdir().unwrap();
+        exec(
+            project_in(dir.path(), "steps:\n  e:\n    cmd: [echo]\n"),
+            false,
+        )
+        .await
+        .unwrap();
+        assert!(!dir.path().join("states").exists());
+    }
+
+    #[tokio::test]
+    async fn process_environment_is_the_last_fallback() {
+        let yaml = "steps:\n  e:\n    cmd: [echo, '${CARGO_PKG_NAME}']\n";
+        let outcome = exec(project(yaml), false).await.unwrap();
+        assert_eq!(stdout(&outcome), &json!("rocky"));
+        let outcome = exec(project_with_vars(yaml, &[("CARGO_PKG_NAME", "rb")]), false)
+            .await
+            .unwrap();
+        assert_eq!(stdout(&outcome), &json!("rb"));
+    }
+
+    #[tokio::test]
+    async fn loop_item_beats_vars() {
+        let outcome = exec(
+            project(&format!(
+                "{}\
+                 \x20 each:\n    for_each: steps.seed.stdout.IDS\n    as: ID\n    do:\n\
+                 \x20     e:\n        cmd: [echo, '${{ID}}']\n        vars: {{ID: shadow}}\n",
+                seed(json!({"IDS": [1]}))
+            )),
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(stdout(&outcome), &json!(1));
+    }
+
+    #[tokio::test]
+    async fn default_cwd_is_the_current_directory_not_the_project_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let outcome = exec(
+            project_in(dir.path(), "steps:\n  e:\n    cmd: [pwd]\n"),
+            false,
+        )
+        .await
+        .unwrap();
+        let printed = std::path::PathBuf::from(stdout(&outcome).as_str().unwrap());
+        assert_eq!(
+            printed.canonicalize().unwrap(),
+            std::env::current_dir().unwrap().canonicalize().unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn set_works_out_every_value_before_setting_any() {
+        let dir = tempfile::tempdir().unwrap();
+        let yaml = "states: {A: 1, B: 2}\n\
+                    steps:\n\
+                    \x20 swap:\n    set: {states: {A: '${states.B}', B: '${states.A}'}}\n\
+                    \x20 print:\n    cmd: [echo, '${states.A}-${states.B}']\n";
+        let outcome = exec(project_in(dir.path(), yaml), false).await.unwrap();
+        assert_eq!(stdout(&outcome), &json!("2-1"));
+        assert_eq!(state_file(dir.path()), json!({"A": 2, "B": 1}));
+
+        let project = project_with_vars(
+            "steps:\n\
+             \x20 swap:\n    set: {vars: {A: '${B}', B: '${A}'}}\n\
+             \x20 print:\n    cmd: [echo, '${A}-${B}']\n",
+            &[("A", "1"), ("B", "2")],
+        );
+        let outcome = exec(project, false).await.unwrap();
+        assert_eq!(stdout(&outcome), &json!("2-1"));
+    }
+
+    #[tokio::test]
+    async fn switch_case_keys_are_not_expanded() {
+        let yaml = "steps:\n  s:\n    switch: V\n    cases: {'${X}': {lit: {cmd: [echo, literal]}}}\n\
+                    \x20   default: {other: {cmd: [echo, other]}}\n";
+        for (v, expected) in [("a", "other"), ("$${X}", "literal")] {
+            let outcome = exec(project_with_vars(yaml, &[("X", "a"), ("V", v)]), false)
+                .await
+                .unwrap();
+            assert_eq!(stdout(&outcome), &json!(expected), "{v}");
+        }
+    }
+
+    #[test]
+    fn failure_is_http_400_or_more_a_non_zero_exit_or_an_error() {
+        let response = |status| {
+            StepResult::Http(Response {
+                status,
+                headers: BTreeMap::new(),
+                body: Value::Null,
+                body_encoding: None,
+            })
+        };
+        assert_eq!(response(399).failure(), None);
+        assert_eq!(
+            response(400).failure().as_deref(),
+            Some("returned HTTP 400")
+        );
+        assert_eq!(
+            response(404).failure().as_deref(),
+            Some("returned HTTP 404")
+        );
+        let cmd = StepResult::Cmd(CommandResult {
+            exit_code: 0,
+            stdout: Value::Null,
+            stderr: String::new(),
+        });
+        assert_eq!(cmd.failure(), None);
+        let errored = StepResult::Errored {
+            error: "timed out".to_string(),
+        };
+        assert_eq!(errored.failure().as_deref(), Some("timed out"));
+    }
+}

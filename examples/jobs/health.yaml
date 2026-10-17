@@ -1,0 +1,12 @@
+# A job in its own file, used by imports.yaml.
+#   rocky exec examples/imports.yaml health
+steps:
+  status:
+    get: ${BASE}/status/200
+    timeout: 5
+
+  check:
+    get:
+      url: ${BASE}/get
+      query:
+        status: ${steps.status.status}

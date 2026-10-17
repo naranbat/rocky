@@ -1,0 +1,5 @@
+# One step in its own file. Add it to a job's `steps`: `login: path/to/login.yaml`.
+post:
+  url: ${BASE}/anything/login
+  json:
+    token: demo-token                 # httpbin echoes it back as body.json.token

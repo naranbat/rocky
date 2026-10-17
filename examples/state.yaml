@@ -1,0 +1,17 @@
+# A job that remembers a value between runs, in states/counter.json next to this file.
+#   rocky exec examples/state.yaml counter   # run number 1, then 2, 3, ...
+jobs:
+  counter:
+    states:
+      COUNT: 0                          # the default, used on the first run
+    steps:
+      inc:
+        cmd: [expr, '${states.COUNT}', +, '1']
+
+      save:
+        set:
+          states:                       # written to the state file right away
+            COUNT: ${steps.inc.stdout}
+
+      print:
+        cmd: [echo, 'run number ${states.COUNT}']

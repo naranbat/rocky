@@ -1,0 +1,140 @@
+# A project: jobs that share `vars`. Every job sends requests to https://httpbin.org.
+#   rocky exec examples/httpbin.yaml login       # run one job
+#   rocky run examples/httpbin.yaml              # run the jobs listed in `schedules`
+vars:
+  BASE: https://httpbin.org
+  USER: alice
+  COUNT: "15"                         # set to 5 to take the `else` branch of `conditional`
+
+# When `rocky run` runs each job. `rocky exec` checks this but doesn't run it.
+schedules:
+  login:
+    every: 5m                         # every 30s, 5m, 2h...
+    delay: 10s                        # optional: wait before the first run
+  mixed:
+    daily: "09:30"                    # local time, every day
+  conditional:
+    hourly: 15                        # at minute 15 of every hour
+
+jobs:
+  # List, "log in", then use their results.
+  login:
+    steps:
+      list:
+        get:
+          url: ${BASE}/get
+          query:
+            page: "2"
+          headers:
+            Accept: application/json
+
+      login:
+        post:
+          url: ${BASE}/anything/login
+          json:                       # sent as JSON
+            token: demo-token         # httpbin echoes the JSON body under `json`
+
+      whoami:
+        get:
+          url: ${BASE}/headers
+          headers:
+            Authorization: Bearer ${steps.login.body.json.token}
+            X-Page: ${steps.list.body.args.page}
+
+  # HTTP and cmd steps together, including writing and reading a file. Any step can read an earlier step's
+  # result with ${steps.NAME.path}.
+  mixed:
+    steps:
+      today:
+        cmd: [date, +%Y-%m-%d]        # program + arguments, run without a shell
+
+      version:
+        cmd: [sh, -c, 'echo "rocky version 1.4.2 (build 77)" | cut -d " " -f 3']     # -> "1.4.2"
+
+      shout:
+        cmd: [tr, a-z, A-Z]
+        stdin: ${USER}                # the command's standard input
+
+      save:                           # the path is $1, never inside the script
+        cmd: [sh, -c, 'cat > "$1"', _, report.json]
+        cwd: .                        # relative to this file, not your current directory
+        stdin:                        # written as JSON
+          user: ${steps.shout.stdout}
+          date: ${steps.today.stdout}
+          version: ${steps.version.stdout}
+
+      load:
+        cmd: [cat, report.json]       # JSON stdout is parsed
+        cwd: .
+
+      report:
+        post:
+          url: ${BASE}/anything/report
+          json: ${steps.load.stdout}
+
+  # Branching: if count > 10 call /big, else check the message.
+  conditional:
+    steps:
+      stats:
+        get:
+          url: ${BASE}/anything/stats
+          query:
+            count: ${COUNT}
+            message: "warning: disk low"
+
+      # httpbin echoes query values as strings ("15"); numeric strings compare as numbers.
+      route:
+        if: { this: steps.stats.body.args.count, gt: 10 }
+        then:
+          big:
+            post: "${BASE}/anything/big"
+        else:
+          check:
+            if:
+              all:
+                - { this: steps.stats.body.args.message, contains: warning }
+                - not: { this: steps.stats.body.args.message, matches: "^ignore" }
+            then:
+              warn:
+                post: "${BASE}/anything/warn"
+
+  # Tolerating a timeout: `allow_failure` keeps going and the result is just `{error: ...}`; `exists` checks for it.
+  health:
+    steps:
+      ping:
+        get: "${BASE}/delay/3"        # httpbin waits 3s before answering
+        timeout: 1                    # set to 5 to take the `else` branch
+        allow_failure: true
+
+      report:
+        if: { this: steps.ping.error, exists: true }   # never fails on an undefined variable
+        then:
+          failed:
+            cmd: [echo, 'ping failed: ${steps.ping.error}']
+        else:
+          ok:
+            cmd: [echo, 'ping returned ${steps.ping.status}']
+
+  # Looping: fetch a list, then POST once per element.
+  loop:
+    steps:
+      users:
+        post:
+          url: ${BASE}/anything/users
+          json:
+            users:
+              - { id: 1, name: alice }
+              - { id: 2, name: bob }
+
+      notify_all:
+        for_each: steps.users.body.json.users   # must be a list
+        as: USER                      # optional; defaults to ITEM
+        do:
+          notify:
+            post:
+              url: ${BASE}/anything/notify/${USER.id}
+              json:
+                name: ${USER.name}
+
+  # A job file that uses a step file, with `timeout`.
+  files: jobs/files.yaml

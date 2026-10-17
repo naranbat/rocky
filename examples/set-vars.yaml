@@ -1,0 +1,24 @@
+# Two jobs sharing one in-memory counter through a project var. Nothing is written to disk.
+#   rocky run examples/set-vars.yaml   # `report` sees the ticks `tick` counts
+vars:
+  TICKS: "0"                            # the starting value, until a job updates it
+
+schedules:
+  tick: {every: 2s}
+  report: {every: 5s}
+
+jobs:
+  tick:
+    steps:
+      inc:
+        cmd: [expr, '${TICKS}', +, '1']
+
+      keep:
+        set:
+          vars:                         # seen by every job's next step
+            TICKS: ${steps.inc.stdout}
+
+  report:
+    steps:
+      print:
+        cmd: [echo, 'ticks so far: ${TICKS}']

@@ -1,0 +1,11 @@
+# A job in its own file, used by httpbin.yaml and imports.yaml. Paths are relative to this file.
+#   rocky exec examples/httpbin.yaml files
+steps:
+  login: ../steps/login.yaml       # a step from its own file
+
+  whoami:
+    get:
+      url: ${BASE}/headers
+      headers:
+        Authorization: Bearer ${steps.login.body.json.token}
+    timeout: 10                      # seconds (default 30s for HTTP)

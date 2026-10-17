@@ -1,0 +1,17 @@
+# A project whose jobs each live in their own file under jobs/.
+# The files share this project's `vars`; paths inside them are relative to each file.
+#   rocky exec examples/imports.yaml health
+#   rocky exec examples/imports.yaml report
+#   rocky run examples/imports.yaml
+vars:
+  BASE: https://httpbin.org            # shared by every imported job
+  USER: alice
+
+schedules:
+  health:
+    every: 5m
+
+jobs:
+  health: jobs/health.yaml
+  report: jobs/report.yaml
+  files: jobs/files.yaml          # also used by httpbin.yaml

@@ -1,0 +1,20 @@
+# Environment variables for commands with `env`. Only runs commands.
+# Run: rocky exec examples/cmd-env.yaml greet
+env_file: example.env
+vars:
+  NAME: rocky
+jobs:
+  greet:
+    steps:
+      # Commands don't see `vars` or the env file unless listed under `env`: prints nothing.
+      hidden:
+        cmd: [sh, -c, 'printf "%s" "$API_TOKEN"']
+
+      # Each `env` entry reaches the script as an environment variable ($GREET_NAME, …).
+      # Strings are used as-is; other values (here an object) as compact JSON.
+      greet:
+        cmd: [sh, -c, 'printf "hello %s, token %s, config %s" "$GREET_NAME" "$API_TOKEN" "$CONFIG"']
+        env:
+          GREET_NAME: ${NAME}
+          API_TOKEN: ${API_TOKEN}
+          CONFIG: { retries: 3, name: "${NAME}" }

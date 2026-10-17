@@ -1,0 +1,203 @@
+# Projects
+
+A project is a YAML file of named **jobs**. A job is a map of named **steps** that `rocky exec` executes in order, or that `rocky run` runs on the project's [schedules](schedules.md). Jobs and steps are both named by their key, and can be written inline or kept in their own YAML files (see [Job and step files](#job-and-step-files)). A step sends an **HTTP request** or runs a **command**, and every step can use the result of any earlier step. `exec` prints the result of the last step that ran as JSON.
+
+```yaml
+vars:                              # shared by all jobs
+  BASE: https://httpbin.org
+  USER: alice
+jobs:
+  report:
+    steps:
+      login:                       # the step's name
+        post:                      # an HTTP request
+          url: ${BASE}/anything/login
+          json:                    # sent as the JSON body
+            token: demo-token
+        # httpbin echoes the request body back under `json`,
+        # so the token is at body.json.token
+
+      today:
+        cmd: [date, +%Y-%m-%d]     # a command: program + arguments, no shell involved
+        env:                       # added to the command's environment
+          TZ: UTC
+
+      shout:
+        cmd: [tr, a-z, A-Z]
+        stdin: ${USER}             # the command's standard input
+
+      save:                        # write a file: the path is $1
+        cmd: [sh, -c, 'cat > "$1"', _, report.json]
+        cwd: .                     # relative to the project file
+        stdin:
+          date: ${steps.today.stdout}
+          loud: ${steps.shout.stdout}
+
+      send:
+        post:
+          url: ${BASE}/anything/report
+          headers:
+            Authorization: Bearer ${steps.login.body.json.token}
+          json:
+            date: ${steps.today.stdout}
+```
+
+```sh
+rocky exec project.yaml report | jq .body.json   # {"date": "2026-10-09"}
+```
+
+Examples: [`httpbin.yaml`](../examples/httpbin.yaml) (jobs `login`, `mixed`, `conditional`, `health`, `loop`, and `files` from [`jobs/files.yaml`](../examples/jobs/files.yaml)), [`imports.yaml`](../examples/imports.yaml) (jobs `health`, `report` and `files`, each from its own file), [`vars-env.yaml`](../examples/vars-env.yaml) (job `user`), [`cmd-env.yaml`](../examples/cmd-env.yaml) (job `greet`).
+
+## Project fields
+
+| Field | Notes |
+|---|---|
+| `vars` | Map of name → string, shared by all jobs. A `set` step can change them at runtime. See [Variables](variables.md). |
+| `env_file` | A `.env` file shared by all jobs, relative to the project file. See [Env files](env-files.md). |
+| `schedules` | Optional. Map of job name → schedule: when `rocky run` runs that job. See [Schedules](schedules.md). `exec` ignores it. |
+| `jobs` | Required, at least one. Map of job name → job, or → the path of a job file. |
+
+## Job fields
+
+| Field | Notes |
+|---|---|
+| `vars` | Map of name → string, for this job's steps. Checked before the project's `vars`. See [Variables](variables.md#vars-levels). |
+| `states` | Map of name → default value, kept between runs in `states/<job>.json` and read as `${states.NAME}`. See [State](state.md). |
+| `steps` | Required, and must not be empty. Map of step name → step, or → the path of a step file. Steps run in the order they are written. |
+
+## Step kinds
+
+Each entry in `steps` (and in `then`, `else`, `do`, each switch case and `default`) is exactly one of the following.
+
+| Kind | Keys | Page |
+|---|---|---|
+| HTTP request | `http:`, or `get:` / `post:` / `put:` / `patch:` / `delete:` | [HTTP steps](http-steps.md) |
+| Command | `cmd:` | [Cmd steps](cmd-steps.md) |
+| Branch | `if`, `then`, `else` | [Conditions](conditions.md) |
+| Switch | `switch`, `cases`, `default` | [Conditions](conditions.md#switch) |
+| Loop | `for_each`, `as`, `do` | [Loops](loops.md) |
+| Step file | a string: the path of a step file | [Job and step files](#job-and-step-files) |
+| Set state or vars | `set:` with `states:` and/or `vars:` (each a map of name → value) | [State](state.md#set), [Variables](variables.md#updating-vars-at-runtime) |
+
+## Step fields
+
+| Field | Applies to | Notes |
+|---|---|---|
+| `vars` | all | Map of name → string, for this step and the steps nested in it. Checked before the job's and project's `vars`. See [Variables](variables.md#vars-levels). |
+| `http` / `cmd` | HTTP and cmd steps | Exactly one of them. `cmd` must not be empty. `get`, `post`, `put`, `patch` and `delete` [count as `http`](http-steps.md#method-keys). |
+| `timeout` | HTTP and cmd steps | Seconds before the step is stopped and fails. On an HTTP step the default is 30s; cmd steps have no default. |
+| `cwd`, `stdin`, `env`, `capture_stdout` | cmd steps | Working directory, standard input, environment variables, and whether stdout is kept. See [Cmd steps](cmd-steps.md#options). |
+| `allow_failure` | HTTP and cmd steps | `true` to continue when the step fails. |
+| `if`, `then`, `else` | branches | A branch has no `http`, `cmd`, `timeout` or `allow_failure`. |
+| `switch`, `cases`, `default` | switches | Like a branch: no `http`, `cmd`, `timeout` or `allow_failure`, and no `if`, `then` or `else`. |
+| `for_each`, `as`, `do` | loops | A loop has none of those keys and no `if`, `then`, `else`, `switch`, `cases` or `default`. |
+| `set` | set state or vars | Only `vars` may go with it. Every `set.states` name must be declared in the job's `states`, and every `set.vars` name in the project's `vars`. |
+
+The step's name is its key. It saves an HTTP or cmd step's result as `steps.<name>`, and labels the step in errors and log lines (see [labels](cli.md#errors-and-exit-codes)). It must be a [variable name](variables.md#names) other than `steps` or `states`, and two steps in the same map can't share it. There is no `name` field.
+
+Unknown keys are an error.
+
+## Results
+
+What goes into a step is part of its kind: an HTTP request's `json` or a cmd step's `stdin`. What comes out is its result, saved as `steps.<name>`.
+
+| Kind | Result |
+|---|---|
+| `http` | `{status, headers, body}` ([Responses](responses.md)) |
+| `cmd` | `{exit_code, stdout, stderr}` |
+
+`${...}` is substituted in `json` and `stdin`, and a field that is exactly `${NAME}` keeps its JSON type (see [typed values](variables.md#typed-values)). For stdin, a string is used as-is and any other value is written as compact JSON, so `stdin: ${steps.fetch.body}` is ready for `jq`.
+
+## Using earlier steps' output
+
+Each HTTP or cmd step's result is saved as `steps.<key>`, and later steps read it with a dot path:
+
+| Reference | Value |
+|---|---|
+| `${steps.login.status}` | an HTTP step's status code |
+| `${steps.login.headers.x-token}` | a response header (lowercase name) |
+| `${steps.login.body.user.id}` | a field of the response body |
+| `${steps.today.stdout}` | a command's output (parsed JSON if it is valid JSON, otherwise text; `null` with `capture_stdout: false`) |
+| `${steps.check.exit_code}`, `${steps.check.stderr}` | a command's exit code and error output |
+
+- **Where it works:** anywhere `${...}` works. In an `if` condition or `for_each`, write the path without `${}`: `if: { this: steps.login.status, eq: 200 }`.
+- **Typed values:** a `json` or `stdin` field that is exactly `${steps...}` keeps its JSON type, so `json: ${steps.fetch.body}` sends the whole object.
+- **Every step:** each HTTP or cmd step is saved under its key. Keys only need to be unique within one map, so a step nested in a branch or loop can share a name with another; the later result replaces the earlier one.
+- **`steps` is reserved:** a variable named `steps` fails when the project loads (see [names](variables.md#names)). The same goes for `states` (see [State](state.md)).
+
+## Failures and `allow_failure`
+
+An HTTP step **fails** when the status is 4xx or 5xx. A cmd step fails when its exit code isn't `0`.
+
+- **Without `allow_failure`:** the job stops. `rocky exec` prints the failed step's result, then reports ``step `name` returned HTTP 404`` or ``step `name` exited with code 3`` and exits `1`.
+- **With `allow_failure: true`:** the job continues. The result is still saved as `steps.<name>`, so you can branch on `${steps.x.status}` or `${steps.x.exit_code}`.
+
+`allow_failure: true` also lets the job continue after a **timeout or network error** (a request that can't connect, a request or command that runs past its `timeout`). The step has no status, body or exit code, so its result is just the error, e.g. `steps.<name>` is `{"error": "request timed out after 5s"}`. Branch on it with `if: {this: steps.<name>.error, exists: true}` (see [Conditions](conditions.md#condition-shape)).
+
+Other errors stop the job no matter what `allow_failure` says: an undefined variable, a missing program. Without `allow_failure`, so do timeouts and network errors. See [Command line](cli.md#errors-and-exit-codes).
+
+## Execution
+
+- Steps run one at a time, in order. There is no parallelism.
+- Branches, switches and loops run their nested steps in place, then continue with the next step.
+- The printed result is the last HTTP or cmd step that ran, including one inside a branch or loop. If no HTTP or cmd step ran at all (every branch skipped), the printed result is `null`.
+
+## Validation
+
+The whole project, every job including nested branches and loops, is checked when it loads, before any step runs. `rocky validate <PROJECT>` runs these checks alone, without running anything. These fail immediately:
+
+- no `jobs`, an empty `steps`, an empty `cmd`, `do`, `cases`, or `then` *and* `else`
+- `steps`, `then`, `else`, `do` or `default` written as a list instead of a map, or two steps with the same key in one map
+- a step with none, or both, of `http` and `cmd`
+- `cwd`, `stdin`, `env` or `capture_stdout` without `cmd`; `timeout` on a branch, switch or loop; `then`/`else` without `if`; `cases`/`default` without `switch`; `do`/`as` without `for_each`
+- a missing step or job file, a step file with a `name` field, or a step file that uses itself, directly or through other files
+- a name that appears twice in `jobs`, `schedules`, any `vars` or `states`, a `set`, a request's `headers` or `query`, a cmd step's `env`, or a switch's `cases`; a `schedules` entry for a job that doesn't exist
+- a step key, or a [variable name](variables.md#names) under any `vars` or `states` or in `as`, that isn't an identifier or is `steps` or `states`
+- a `set` with neither `states` nor `vars`, or with any other step key than `vars`
+- a `set.states` name the job's `states` doesn't declare
+- a `set.vars` name the project's `vars` doesn't declare
+- an invalid [condition](conditions.md) or [schedule](schedules.md)
+- unknown keys anywhere, including `schedule` inside a job
+
+Errors inside a job are reported under its name:
+
+```
+Error: job `report`
+
+Caused by:
+    invalid step: `today` has an empty `cmd`
+```
+
+Some problems only show up when the job runs: a missing `env_file` (loaded when the job starts), an undefined variable (when its step runs).
+
+## Job and step files
+
+A job or a step can live in its own YAML file. All files are loaded and checked when the project loads, and again each time `run` runs a job.
+
+```yaml
+# project.yaml
+jobs:
+  report: jobs/report.yaml       # a job file
+  quick:
+    steps:
+      login: steps/login.yaml    # a step file, named by its key
+
+# jobs/report.yaml: the same fields as an inline job
+steps:
+  signin: ../steps/login.yaml    # relative to this file
+  today:
+    cmd: [date]
+
+# steps/login.yaml: one step of any kind, including a branch or loop; no `name`
+post: { url: "${BASE}/anything/login", json: { token: demo-token } }
+```
+
+- A step file holds one step, without a `name`: the key that points at it names it, so one file can be used under several names. It can use other step files, inside a branch or loop too, but not itself, directly or through other files.
+- The entry is just a path, so everything else, `vars` included, goes in the file. To change a field for one use, write the step inline.
+- A job file has the job fields `vars`, `states` and `steps`. The project keeps `vars`, `env_file` and `schedules`.
+
+Example: [`imports.yaml`](../examples/imports.yaml), whose jobs all come from [`jobs/`](../examples/jobs/) and share its `vars`.
+
+## Paths
+
+Relative paths are resolved against the directory of **the file they are written in**: the project, a job file or a step file. That covers step file paths and `cwd`. The project `env_file` and job file paths are relative to the project file. None are relative to your current directory. Commands in `cmd:` steps without `cwd` run in your current directory.
