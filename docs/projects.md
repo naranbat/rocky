@@ -49,7 +49,7 @@ Examples: [`httpbin.yaml`](../examples/httpbin.yaml) (jobs `login`, `mixed`, `co
 
 | Field | Notes |
 |---|---|
-| `values` | Map of uppercase name → fixed value (string, number or object), read as `${NAME}` by every job. See [Env](env.md#values). |
+| `values` | Map of uppercase name → fixed value (any YAML value: string, number, boolean, list or object), read as `${NAME}` by every job. See [Env](env.md#values). |
 | `env_file` | A `.env` file shared by all jobs, relative to the project file. See [Env](env.md#env-file). |
 | `schedules` | Optional. Map of job name → schedule: when `rocky run` runs that job. See [Schedules](schedules.md). `exec` ignores it. |
 | `jobs` | Required, at least one. Map of job name → job, or → the path of a job file. |

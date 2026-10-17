@@ -44,12 +44,10 @@ const FULL_PROJECT_HEADER: &str = "\
 #   rocky exec <this file> example   runs one job once
 #   rocky run <this file>            runs the jobs in `schedules` until stopped
 
-# Fixed values read as ${NAME} in every job's steps: a string, number or object (${SITE.url}).
-# Names are uppercase letters, digits and `_`. A job's own `values` win over these.
+# Fixed values read as ${NAME} in every job's steps: any YAML value (string, number, boolean,
+# list, object). Names are uppercase letters, digits and `_`. A job's own `values` win over these.
 values:
-  SITE:
-    url: https://httpbin.org
-    retries: 3
+  REGION: us-east-1                 # the `example` job's own REGION wins
 
 # A .env file for values used as ${NAME} (secrets, settings), relative to this file. It is read
 # when a run starts, so it must exist. ${USER} below comes from it or from the environment.
@@ -227,7 +225,8 @@ pub fn ask_http(mut input: impl BufRead, mut out: impl Write) -> Result<bool, Er
 fn full_steps() -> String {
     format!(
         "values:                             # fixed values for this job's steps, read as ${{NAME}}\n  \
-         REGION: eu-west-1\n\
+         REGION: eu-west-1\n  \
+         LIMITS: {{retries: 3}}             # an object: read inside it with ${{LIMITS.retries}}\n\
          states:                             # kept between runs in states/<job>.json, read as ${{states.NAME}}\n  \
          LAST_STATUS: none                 # the default, used until `set` changes it\n  \
          PREVIOUS_STATUS: none\n\
@@ -235,7 +234,10 @@ fn full_steps() -> String {
          # An HTTP request. Later steps read its result by name: ${{steps.login.status}}.\n  \
          login:\n{}\n  \
          # A command.\n  \
-         shout:\n{}{FULL_CONTROL}",
+         shout:\n{}\n  \
+         # A command reading `values`.\n  \
+         region:\n    \
+         cmd: [echo, \"${{REGION}}, ${{LIMITS.retries}} retries\"]\n{FULL_CONTROL}",
         indent(FULL_HTTP_STEP, 4),
         indent(FULL_CMD_STEP, 4),
     )
@@ -287,6 +289,8 @@ mod tests {
         let mut project = project::load(&project_file).unwrap();
         let example = project.take("example").unwrap();
         if matches!(level, Level::Full) {
+            assert_eq!(example.values["REGION"], "eu-west-1");
+            assert_eq!(example.values["LIMITS"]["retries"], 3);
             assert!(example.steps.iter().any(|a| {
                 a.set
                     .as_ref()
@@ -308,6 +312,7 @@ mod tests {
         let mut project = project::load(&project_file).unwrap();
         let w = project.take("w").unwrap();
         if matches!(level, Level::Full) {
+            assert_eq!(w.values["REGION"], "eu-west-1");
             assert!(w.states.contains_key("LAST_STATUS"));
             assert!(w.steps.iter().any(|a| {
                 a.set

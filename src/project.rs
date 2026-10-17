@@ -17,8 +17,6 @@ use crate::{state, var_name};
 pub struct Project {
     /// The project file's directory; job state files go in its `states/`.
     pub dir: PathBuf,
-    /// Static values for `${NAME}` in every job's steps.
-    pub values: BTreeMap<String, Value>,
     pub env_file: Option<PathBuf>,
     /// Job name to when `rocky run` runs it.
     pub schedules: BTreeMap<String, Schedule>,
@@ -105,7 +103,8 @@ impl<'de> Deserialize<'de> for JobSource {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Job {
-    /// Static values for `${NAME}` in this job's steps, checked before the project's `values`.
+    /// Static values for `${NAME}` in this job's steps. Once loaded, the project's `values`
+    /// are merged in, with the job's own winning.
     #[serde(default, deserialize_with = "unique")]
     pub values: BTreeMap<String, Value>,
     /// State names to their defaults, kept across runs in `states/<job>.json`.
@@ -155,7 +154,7 @@ pub fn load(path: &Path) -> Result<Project, Error> {
     let dir = path.parent().unwrap_or(Path::new(""));
     let mut jobs = BTreeMap::new();
     for (name, source) in raw.jobs {
-        let job = load_job(source, dir).map_err(|source| Error::Job {
+        let job = load_job(source, dir, &raw.values).map_err(|source| Error::Job {
             name: name.clone(),
             source: Box::new(source),
         })?;
@@ -163,15 +162,15 @@ pub fn load(path: &Path) -> Result<Project, Error> {
     }
     Ok(Project {
         dir: dir.to_path_buf(),
-        values: raw.values,
         env_file: raw.env_file.map(|p| dir.join(p)),
         schedules: raw.schedules,
         jobs,
     })
 }
 
-/// Reads a job file if `source` is a path, then validates its steps.
-fn load_job(source: JobSource, dir: &Path) -> Result<Job, Error> {
+/// Reads a job file if `source` is a path, validates its steps, and merges the project's
+/// `values` under its own.
+fn load_job(source: JobSource, dir: &Path, values: &BTreeMap<String, Value>) -> Result<Job, Error> {
     let (mut job, dir) = match source {
         JobSource::Path(path) => {
             let path = dir.join(path);
@@ -197,6 +196,7 @@ fn load_job(source: JobSource, dir: &Path) -> Result<Job, Error> {
     )?;
     step::resolve(&mut job.steps, &dir)?;
     state::check(&job.steps, &job.states)?;
+    job.values = values.clone().into_iter().chain(job.values).collect();
     Ok(job)
 }
 
@@ -361,14 +361,13 @@ mod tests {
         let mut project = load_in(
             dir.path(),
             "values: {BASE: https://x, N: 3, CONF: {a: [1]}}\n\
-             jobs:\n  w: {values: {_K2: k}, steps: {e: {cmd: [echo]}}}\n",
+             jobs:\n  w: {values: {N: 4, _K2: k}, steps: {e: {cmd: [echo]}}}\n",
         )
         .unwrap();
         assert_eq!(
-            serde_json::to_value(&project.values).unwrap(),
-            serde_json::json!({"BASE": "https://x", "N": 3, "CONF": {"a": [1]}})
+            serde_json::to_value(&project.take("w").unwrap().values).unwrap(),
+            serde_json::json!({"BASE": "https://x", "N": 4, "CONF": {"a": [1]}, "_K2": "k"})
         );
-        assert_eq!(project.take("w").unwrap().values["_K2"], "k");
 
         let err = load_in(
             dir.path(),

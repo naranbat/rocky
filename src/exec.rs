@@ -94,7 +94,7 @@ fn queued(steps: Vec<Step>) -> impl DoubleEndedIterator<Item = Work> {
 /// `steps.NAME`. A branch's chosen `then`/`else` steps, or a switch's matching case or
 /// `default`, run in its place; a loop's `do` steps run once per list element, with the
 /// element bound to its `as` variable.
-/// The project's `values`, then the job's (which win), are read as `${NAME}`.
+/// The job's `values` (the project's merged in at load) are read as `${NAME}`.
 /// The job's `states` defaults are read from `states/<job>.json` next to the project (created from
 /// the defaults if missing) as `states.NAME`, and each `set.states` writes it back right away.
 /// With `log`, one JSON line per step, branch or switch decision, and loop is printed to stdout.
@@ -108,7 +108,7 @@ pub async fn exec(mut project: Project, job: &str, log: bool) -> Result<Outcome,
     .map(|(name, value)| (name, Value::String(value)))
     .collect();
 
-    let mut values: Map<String, Value> = project.values.into_iter().chain(steps.values).collect();
+    let mut values: Map<String, Value> = steps.values.into_iter().collect();
     let state_path = project.dir.join("states").join(format!("{job}.json"));
     let mut state = Map::new();
     if !steps.states.is_empty() {
@@ -374,7 +374,6 @@ mod tests {
         crate::step::resolve(&mut job.steps, dir).unwrap();
         Project {
             dir: dir.to_path_buf(),
-            values: BTreeMap::new(),
             env_file: None,
             schedules: BTreeMap::new(),
             jobs: BTreeMap::from([("w".to_string(), job)]),
@@ -933,28 +932,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn job_values_beat_project_values_and_keep_their_type() {
-        let mut project = project(
-            "values: {A: job, CONF: {n: 2, tags: [x]}}\n\
+    async fn values_keep_their_type_and_are_not_expanded() {
+        let project = project(
+            "values: {A: a, B: 1, CONF: {n: 2, tags: [x]}, LIT: '${UNDEFINED}'}\n\
              steps:\n  e:\n    cmd: [cat]\n    stdin: {text: '${A} ${B} ${CONF.n} ${LIT}', conf: '${CONF}'}\n",
         );
-        project.values = BTreeMap::from([
-            ("A".to_string(), json!("project")),
-            ("B".to_string(), json!(1)),
-            ("LIT".to_string(), json!("${UNDEFINED}")),
-        ]);
         let outcome = exec(project).await.unwrap();
         assert_eq!(
             stdout(&outcome),
-            &json!({"text": "job 1 2 ${UNDEFINED}", "conf": {"n": 2, "tags": ["x"]}})
+            &json!({"text": "a 1 2 ${UNDEFINED}", "conf": {"n": 2, "tags": ["x"]}})
         );
     }
 
     #[tokio::test]
     async fn values_beat_the_env_file_and_loop_items_beat_values() {
-        let (mut project, _dir) = project_with_env(
+        let (project, _dir) = project_with_env(
             &format!(
-                "{}\
+                "values: {{ID: value, TOKEN: value}}\n{}\
                  \x20 each:\n    for_each: steps.seed.stdout.IDS\n    as: ID\n    do:\n\
                  \x20     e:\n        cmd: [echo, '${{ID}}']\n\
                  \x20 after:\n    cmd: [echo, '${{ID}}-${{TOKEN}}']\n",
@@ -962,10 +956,6 @@ mod tests {
             ),
             &[("ID", "env"), ("TOKEN", "env")],
         );
-        project.values = BTreeMap::from([
-            ("ID".to_string(), json!("value")),
-            ("TOKEN".to_string(), json!("value")),
-        ]);
         let outcome = exec(project).await.unwrap();
         assert_eq!(stdout(&outcome), &json!("value-value"));
     }
