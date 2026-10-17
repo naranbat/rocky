@@ -300,9 +300,9 @@ mod tests {
 
     fn templates_load_at(level: Level) {
         let dir = tempfile::tempdir().unwrap();
-        let book = dir.path().join("project.yaml");
-        create(Kind::Project, level, &book).unwrap();
-        let mut project = project::load(&book).unwrap();
+        let project_file = dir.path().join("project.yaml");
+        create(Kind::Project, level, &project_file).unwrap();
+        let mut project = project::load(&project_file).unwrap();
         let example = project.take("example").unwrap();
         if matches!(level, Level::Full) {
             assert!(
@@ -317,14 +317,14 @@ mod tests {
         let step = |http| Kind::Step { http };
         create(step(false), level, &dir.path().join("a/cmd.yaml")).unwrap();
         create(step(true), level, &dir.path().join("a/http.yaml")).unwrap();
-        let book = dir.path().join("files.yaml");
+        let project_file = dir.path().join("files.yaml");
         std::fs::write(
-            &book,
+            &project_file,
             "jobs:\n  w: jobs/w.yaml\n  \
              a: {steps: {sh: a/cmd.yaml, web: a/http.yaml}}\n",
         )
         .unwrap();
-        let mut project = project::load(&book).unwrap();
+        let mut project = project::load(&project_file).unwrap();
         let w = project.take("w").unwrap();
         if matches!(level, Level::Full) {
             assert!(w.states.contains_key("LAST_STATUS"));

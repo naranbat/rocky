@@ -88,21 +88,10 @@ pub fn set(name: &str, states: &Map<String, Value>, vars: &Map<String, Value>) -
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::BTreeMap;
-
-    use crate::command::CommandResult;
-    use crate::response::Response;
 
     #[test]
     fn formats_http_and_cmd_steps() {
-        let http = |status| {
-            StepResult::Http(Response {
-                status,
-                headers: BTreeMap::new(),
-                body: Value::Null,
-                body_encoding: None,
-            })
-        };
+        let http = StepResult::http;
         let ms = Duration::from_millis(412);
         assert_eq!(
             step("login", &http(200), ms, false),
@@ -116,11 +105,7 @@ mod tests {
             step("login", &http(404), ms, true),
             json!({"event": "step", "step": "login", "status": 404, "ms": 412, "ok": false, "allowed": true})
         );
-        let cmd = StepResult::Cmd(CommandResult {
-            exit_code: 3,
-            stdout: json!(""),
-            stderr: String::new(),
-        });
+        let cmd = StepResult::cmd(3);
         assert_eq!(
             step("check", &cmd, Duration::from_millis(5), false),
             json!({"event": "step", "step": "check", "exit_code": 3, "ms": 5, "ok": false})

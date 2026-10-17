@@ -397,7 +397,33 @@ mod tests {
         assert!(!eval("{this: WORD, eq: null}"));
         assert!(eval("{this: WORD, ne: null}"));
         assert!(!eval("{this: N, gt: 0, eq: null}"));
-        assert!(cond("{this: N, gt: null}").validate().is_err());
+    }
+
+    #[test]
+    fn evaluation_errors() {
+        for (yaml, expected) in [
+            (
+                "{this: MISSING, eq: 1}",
+                "variable `MISSING` is not defined",
+            ),
+            (
+                "{this: MISSING, gt: 1, lt: 5}",
+                "variable `MISSING` is not defined",
+            ),
+            (
+                "{this: N, gt: '${MISSING}'}",
+                "variable `MISSING` is not defined",
+            ),
+            ("{this: WORD, gt: 1}", "`WORD` is not a number"),
+            (
+                "{this: N, gt: '${WORD}'}",
+                "`gt` needs a number, got \"abc\"",
+            ),
+            ("{this: N, contains: 1}", "for `contains`"),
+        ] {
+            let err = cond(yaml).evaluate(&lookup).unwrap_err();
+            assert!(err.to_string().contains(expected), "{yaml}: {err}");
+        }
     }
 
     #[test]
@@ -408,14 +434,6 @@ mod tests {
         assert!(eval("{this: TAGS, contains: 3}"));
         assert!(!eval("{this: TAGS, contains: c}"));
         assert!(eval("{this: OBJ, contains: id}"));
-    }
-
-    #[test]
-    fn contains_on_number_errors() {
-        let err = cond("{this: N, contains: 1}")
-            .evaluate(&lookup)
-            .unwrap_err();
-        assert!(matches!(err, Error::Condition(_)));
     }
 
     #[test]
@@ -484,24 +502,6 @@ mod tests {
     }
 
     #[test]
-    fn undefined_var_errors() {
-        let err = cond("{this: MISSING, eq: 1}")
-            .evaluate(&lookup)
-            .unwrap_err();
-        assert!(matches!(err, Error::UndefinedVar(name) if name == "MISSING"));
-        let err = cond("{this: MISSING, gt: 1, lt: 5}")
-            .evaluate(&lookup)
-            .unwrap_err();
-        assert!(matches!(err, Error::UndefinedVar(name) if name == "MISSING"));
-    }
-
-    #[test]
-    fn non_numeric_threshold_left_side_errors() {
-        let err = cond("{this: WORD, gt: 1}").evaluate(&lookup).unwrap_err();
-        assert!(matches!(err, Error::Condition(msg) if msg.contains("`WORD` is not a number")));
-    }
-
-    #[test]
     fn operator_values_expand_vars() {
         assert!(eval("{this: STATUS, gt: '${N}'}"));
         assert!(!eval("{this: N, gt: '${STATUS}'}"));
@@ -516,24 +516,6 @@ mod tests {
     }
 
     #[test]
-    fn non_numeric_expanded_threshold_errors() {
-        let err = cond("{this: N, gt: '${WORD}'}")
-            .evaluate(&lookup)
-            .unwrap_err();
-        assert!(
-            matches!(err, Error::Condition(msg) if msg.contains("`gt` needs a number, got \"abc\""))
-        );
-    }
-
-    #[test]
-    fn undefined_var_in_operator_errors() {
-        let err = cond("{this: N, gt: '${MISSING}'}")
-            .evaluate(&lookup)
-            .unwrap_err();
-        assert!(matches!(err, Error::UndefinedVar(name) if name == "MISSING"));
-    }
-
-    #[test]
     fn invalid_shapes_rejected() {
         for yaml in [
             "{this: N}",
@@ -545,6 +527,7 @@ mod tests {
             "{this: N, all: []}",
             "{all: [], any: []}",
             "{this: N, gt: ten}",
+            "{this: N, gt: null}",
             "{all: [{this: N, gt: ten}]}",
         ] {
             assert!(

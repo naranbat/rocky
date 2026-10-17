@@ -118,49 +118,30 @@ mod tests {
         parts.iter().map(ToString::to_string).collect()
     }
 
+    /// Runs `args` with `stdin`, the inherited environment and cwd, no timeout, and stdout
+    /// captured.
+    async fn run_cmd(args: &[&str], stdin: Option<&str>) -> Result<CommandResult, Error> {
+        run(&argv(args), stdin, &BTreeMap::new(), None, None, true).await
+    }
+
     #[tokio::test]
     async fn json_stdout_is_parsed() {
-        let result = run(
-            &argv(&["echo", r#"{"a":1}"#]),
-            None,
-            &BTreeMap::new(),
-            None,
-            None,
-            true,
-        )
-        .await
-        .unwrap();
+        let result = run_cmd(&["echo", r#"{"a":1}"#], None).await.unwrap();
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout, json!({"a": 1}));
     }
 
     #[tokio::test]
     async fn text_stdout_loses_trailing_newline() {
-        let result = run(
-            &argv(&["echo", "hello world"]),
-            None,
-            &BTreeMap::new(),
-            None,
-            None,
-            true,
-        )
-        .await
-        .unwrap();
+        let result = run_cmd(&["echo", "hello world"], None).await.unwrap();
         assert_eq!(result.stdout, json!("hello world"));
     }
 
     #[tokio::test]
     async fn captures_stderr_and_exit_code() {
-        let result = run(
-            &argv(&["sh", "-c", "echo oops >&2; exit 3"]),
-            None,
-            &BTreeMap::new(),
-            None,
-            None,
-            true,
-        )
-        .await
-        .unwrap();
+        let result = run_cmd(&["sh", "-c", "echo oops >&2; exit 3"], None)
+            .await
+            .unwrap();
         assert_eq!(result.exit_code, 3);
         assert_eq!(result.stderr, "oops");
         assert_eq!(result.stdout, json!(""));
@@ -185,58 +166,22 @@ mod tests {
 
     #[tokio::test]
     async fn killed_by_a_signal_exits_with_minus_one() {
-        let result = run(
-            &argv(&["sh", "-c", "kill -9 $$"]),
-            None,
-            &BTreeMap::new(),
-            None,
-            None,
-            true,
-        )
-        .await
-        .unwrap();
+        let result = run_cmd(&["sh", "-c", "kill -9 $$"], None).await.unwrap();
         assert_eq!(result.exit_code, -1);
     }
 
     #[tokio::test]
     async fn stdin_is_written_to_the_command() {
-        let result = run(
-            &argv(&["cat"]),
-            Some(r#"{"n": 2}"#),
-            &BTreeMap::new(),
-            None,
-            None,
-            true,
-        )
-        .await
-        .unwrap();
+        let result = run_cmd(&["cat"], Some(r#"{"n": 2}"#)).await.unwrap();
         assert_eq!(result.stdout, json!({"n": 2}));
-        let result = run(
-            &argv(&["wc", "-l"]),
-            Some("a\nb\n"),
-            &BTreeMap::new(),
-            None,
-            None,
-            true,
-        )
-        .await
-        .unwrap();
+        let result = run_cmd(&["wc", "-l"], Some("a\nb\n")).await.unwrap();
         assert_eq!(result.stdout, json!(2));
     }
 
     #[tokio::test]
     async fn large_stdin_and_stdout_do_not_deadlock() {
         let big = "x".repeat(1 << 20);
-        let result = run(
-            &argv(&["cat"]),
-            Some(&big),
-            &BTreeMap::new(),
-            None,
-            None,
-            true,
-        )
-        .await
-        .unwrap();
+        let result = run_cmd(&["cat"], Some(&big)).await.unwrap();
         assert_eq!(result.stdout, json!(big));
     }
 
@@ -260,10 +205,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn timeout_kills_the_commands_children() {
+    async fn timeout_fails_and_kills_the_commands_children() {
         let dir = tempfile::tempdir().unwrap();
         let pid_file = dir.path().join("pid");
         let script = format!("sleep 30 & echo $! > {}; wait", pid_file.display());
+        let started = std::time::Instant::now();
         let err = run(
             &argv(&["sh", "-c", &script]),
             None,
@@ -274,7 +220,11 @@ mod tests {
         )
         .await
         .unwrap_err();
-        assert!(matches!(err, Error::CommandTimeout { .. }), "{err}");
+        assert!(started.elapsed().as_secs() < 3);
+        assert!(
+            matches!(err, Error::CommandTimeout { ref command, secs: 1 } if command == "sh"),
+            "{err}"
+        );
         let pid: i32 = std::fs::read_to_string(&pid_file)
             .unwrap()
             .trim()
@@ -286,24 +236,13 @@ mod tests {
     #[tokio::test]
     async fn command_that_ignores_stdin_still_succeeds() {
         let big = "x".repeat(1 << 20);
-        let result = run(
-            &argv(&["true"]),
-            Some(&big),
-            &BTreeMap::new(),
-            None,
-            None,
-            true,
-        )
-        .await
-        .unwrap();
+        let result = run_cmd(&["true"], Some(&big)).await.unwrap();
         assert_eq!(result.exit_code, 0);
     }
 
     #[tokio::test]
     async fn without_stdin_the_command_reads_nothing() {
-        let result = run(&argv(&["cat"]), None, &BTreeMap::new(), None, None, true)
-            .await
-            .unwrap();
+        let result = run_cmd(&["cat"], None).await.unwrap();
         assert_eq!(result.stdout, json!(""));
     }
 
@@ -327,37 +266,8 @@ mod tests {
 
     #[tokio::test]
     async fn missing_program_is_spawn_error() {
-        let err = run(
-            &argv(&["rocky-no-such-program"]),
-            None,
-            &BTreeMap::new(),
-            None,
-            None,
-            true,
-        )
-        .await
-        .unwrap_err();
+        let err = run_cmd(&["rocky-no-such-program"], None).await.unwrap_err();
         assert!(matches!(err, Error::Spawn { command, .. } if command == "rocky-no-such-program"));
-    }
-
-    #[tokio::test]
-    async fn timeout_fails_with_command_timeout() {
-        let started = std::time::Instant::now();
-        let err = run(
-            &argv(&["sleep", "5"]),
-            None,
-            &BTreeMap::new(),
-            None,
-            Some(1),
-            true,
-        )
-        .await
-        .unwrap_err();
-        assert!(
-            matches!(err, Error::CommandTimeout { ref command, secs: 1 } if command == "sleep"),
-            "{err}"
-        );
-        assert!(started.elapsed().as_secs() < 3);
     }
 
     #[tokio::test]
@@ -400,9 +310,7 @@ mod tests {
     #[tokio::test]
     async fn empty_argv_is_invalid() {
         assert!(matches!(
-            run(&[], None, &BTreeMap::new(), None, None, true)
-                .await
-                .unwrap_err(),
+            run_cmd(&[], None).await.unwrap_err(),
             Error::InvalidStep(_)
         ));
     }

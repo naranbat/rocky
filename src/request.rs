@@ -29,6 +29,22 @@ fn default_true() -> bool {
     true
 }
 
+#[cfg(test)]
+impl RequestSpec {
+    /// A `method` request to `url` with no headers, query or body.
+    pub(crate) fn new(method: &str, url: &str) -> Self {
+        RequestSpec {
+            method: method.to_string(),
+            url: url.to_string(),
+            headers: BTreeMap::new(),
+            query: BTreeMap::new(),
+            json: None,
+            insecure: false,
+            follow_redirects: true,
+        }
+    }
+}
+
 /// A `get`, `post`, `put`, `patch` or `delete` step's value: the URL, or the `http` fields
 /// (its method comes from the key).
 #[derive(Clone, Debug, PartialEq)]
@@ -135,6 +151,10 @@ mod tests {
             (
                 "method: GET\nurl: https://example.com\nheader: {}\n",
                 "unknown field `header`",
+            ),
+            (
+                "env_file: .env\nmethod: GET\nurl: x\n",
+                "unknown field `env_file`",
             ),
             ("method: GET\n", "missing field `url`"),
         ] {

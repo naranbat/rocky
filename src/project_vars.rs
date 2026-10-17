@@ -89,10 +89,10 @@ mod tests {
 
     #[test]
     fn check_finds_undeclared_names_in_nested_steps() {
-        let steps = crate::step::named(serde_yaml::Deserializer::from_str(
+        let steps = crate::step::parse_named(
             "a: {set: {vars: {A: 1}}}\n\
              b:\n  for_each: L\n  do: {c: {set: {vars: {C: 1}}}}\n",
-        ))
+        )
         .unwrap();
         let vars = BTreeMap::from([("A".to_string(), "a".to_string())]);
         let err = check(&steps, &vars).unwrap_err();

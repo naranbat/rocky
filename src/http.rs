@@ -111,21 +111,8 @@ fn parse_method(raw: &str) -> Result<Method, Error> {
 mod tests {
     use super::*;
     use serde_json::json;
-    use std::collections::BTreeMap;
     use wiremock::matchers::{body_json, body_string, header, method, path, query_param};
     use wiremock::{Mock, MockServer, ResponseTemplate};
-
-    fn spec(method: &str, url: String) -> RequestSpec {
-        RequestSpec {
-            method: method.to_string(),
-            url,
-            headers: BTreeMap::new(),
-            query: BTreeMap::new(),
-            json: None,
-            insecure: false,
-            follow_redirects: true,
-        }
-    }
 
     #[tokio::test]
     async fn get_sends_query_and_headers() {
@@ -142,7 +129,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let mut req = spec("GET", format!("{}/users", server.uri()));
+        let mut req = RequestSpec::new("GET", &format!("{}/users", server.uri()));
         req.query.insert("page".into(), "2".into());
         req.headers
             .insert("Authorization".into(), "Bearer abc".into());
@@ -163,7 +150,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let mut req = spec("POST", server.uri());
+        let mut req = RequestSpec::new("POST", &server.uri());
         req.json = Some(json!({"name": "alice"}));
 
         let res = send(&mut Clients::default(), &req, None).await.unwrap();
@@ -179,7 +166,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let mut req = spec("POST", server.uri());
+        let mut req = RequestSpec::new("POST", &server.uri());
         req.headers
             .insert("Content-Type".into(), "application/vnd.api+json".into());
         req.json = Some(json!({}));
@@ -201,7 +188,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let mut req = spec("POST", server.uri());
+        let mut req = RequestSpec::new("POST", &server.uri());
         req.headers
             .insert("Content-Type".into(), "text/plain".into());
         req.json = Some(json!("hello"));
@@ -223,9 +210,13 @@ mod tests {
             .mount(&server)
             .await;
 
-        let res = send(&mut Clients::default(), &spec("GET", server.uri()), None)
-            .await
-            .unwrap();
+        let res = send(
+            &mut Clients::default(),
+            &RequestSpec::new("GET", &server.uri()),
+            None,
+        )
+        .await
+        .unwrap();
         assert_eq!(res.status, 404);
         assert_eq!(res.body, json!("not found"));
     }
@@ -234,7 +225,7 @@ mod tests {
     fn lowercase_method_is_normalized() {
         let request = build(
             &Client::new(),
-            &spec("patch", "http://localhost".into()),
+            &RequestSpec::new("patch", "http://localhost"),
             None,
         )
         .unwrap();
@@ -244,8 +235,12 @@ mod tests {
     #[test]
     fn unknown_method_errors() {
         for raw in ["BAD METHOD", "FETCH"] {
-            let err =
-                build(&Client::new(), &spec(raw, "http://localhost".into()), None).unwrap_err();
+            let err = build(
+                &Client::new(),
+                &RequestSpec::new(raw, "http://localhost"),
+                None,
+            )
+            .unwrap_err();
             assert!(matches!(err, Error::InvalidMethod(_)), "{raw}");
         }
     }
@@ -258,7 +253,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let req = spec("GET", server.uri());
+        let req = RequestSpec::new("GET", &server.uri());
         let err = send(&mut Clients::default(), &req, Some(1))
             .await
             .unwrap_err();
@@ -278,7 +273,7 @@ mod tests {
             .await;
 
         let mut clients = Clients::default();
-        let mut req = spec("GET", format!("{}/old", server.uri()));
+        let mut req = RequestSpec::new("GET", &format!("{}/old", server.uri()));
         assert_eq!(send(&mut clients, &req, None).await.unwrap().status, 200);
 
         req.follow_redirects = false;
@@ -296,7 +291,7 @@ mod tests {
             .await;
 
         let mut clients = Clients::default();
-        let mut req = spec("GET", server.uri());
+        let mut req = RequestSpec::new("GET", &server.uri());
         send(&mut clients, &req, None).await.unwrap();
         send(&mut clients, &req, Some(5)).await.unwrap();
         assert_eq!(clients.0.len(), 1);

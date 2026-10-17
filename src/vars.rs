@@ -89,7 +89,6 @@ pub(crate) fn substitute(
 mod tests {
     use super::*;
     use serde_json::json;
-    use std::collections::BTreeMap;
 
     fn lookup(name: &str) -> Option<Value> {
         match name {
@@ -98,18 +97,6 @@ mod tests {
             "COUNT" => Some(json!(5)),
             "TAGS" => Some(json!(["a"])),
             _ => None,
-        }
-    }
-
-    fn spec(url: &str) -> RequestSpec {
-        RequestSpec {
-            method: "GET".to_string(),
-            url: url.to_string(),
-            headers: BTreeMap::new(),
-            query: BTreeMap::new(),
-            json: None,
-            insecure: false,
-            follow_redirects: true,
         }
     }
 
@@ -123,7 +110,7 @@ mod tests {
 
     #[test]
     fn escaped_whole_body_string_stays_literal() {
-        let mut spec = spec("x");
+        let mut spec = RequestSpec::new("GET", "x");
         spec.json = Some(json!({"tpl": "$${COUNT}"}));
         let spec = apply_with(spec, &lookup).unwrap();
         assert_eq!(spec.json, Some(json!({"tpl": "${COUNT}"})));
@@ -167,7 +154,7 @@ mod tests {
 
     #[test]
     fn applies_to_all_spec_fields() {
-        let mut spec = spec("https://example.com/u/${ID}");
+        let mut spec = RequestSpec::new("GET", "https://example.com/u/${ID}");
         spec.headers = [("Authorization".to_string(), "Bearer ${TOKEN}".to_string())].into();
         spec.query = [("id".to_string(), "${ID}".to_string())].into();
         spec.json = Some(json!({"user": {"id": "${ID}", "tags": ["${TOKEN}", 1, true]}}));
@@ -183,7 +170,7 @@ mod tests {
 
     #[test]
     fn whole_body_var_keeps_json_type() {
-        let mut spec = spec("x");
+        let mut spec = RequestSpec::new("GET", "x");
         spec.json = Some(json!({
             "count": "${COUNT}",
             "tags": "${TAGS}",
@@ -199,7 +186,7 @@ mod tests {
 
     #[test]
     fn whole_body_var_undefined_errors() {
-        let mut spec = spec("x");
+        let mut spec = RequestSpec::new("GET", "x");
         spec.json = Some(json!({"a": "${NOPE}"}));
         let err = apply_with(spec, &lookup).unwrap_err();
         assert!(matches!(err, Error::UndefinedVar(name) if name == "NOPE"));

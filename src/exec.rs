@@ -40,6 +40,28 @@ impl StepResult {
     }
 }
 
+#[cfg(test)]
+impl StepResult {
+    /// An HTTP result with `status`, no headers and no body.
+    pub(crate) fn http(status: u16) -> Self {
+        StepResult::Http(Response {
+            status,
+            headers: BTreeMap::new(),
+            body: Value::Null,
+            body_encoding: None,
+        })
+    }
+
+    /// A command result with `exit_code` and no output.
+    pub(crate) fn cmd(exit_code: i32) -> Self {
+        StepResult::Cmd(CommandResult {
+            exit_code,
+            stdout: Value::Null,
+            stderr: String::new(),
+        })
+    }
+}
+
 pub struct Outcome {
     /// The last step that ran, if any.
     pub result: Option<StepResult>,
@@ -499,18 +521,47 @@ mod tests {
         }
     }
 
-    async fn exec(project: Project, log: bool) -> Result<Outcome, Error> {
-        super::exec(project, "w", log, &ProjectVars::default()).await
+    async fn exec(project: Project) -> Result<Outcome, Error> {
+        exec_with(project, &ProjectVars::default()).await
     }
 
-    /// Like [`project`], with `vars` set.
-    fn project_with_vars(yaml: &str, vars: &[(&str, &str)]) -> Project {
-        let mut project = project(yaml);
+    /// Runs job `w` with shared project `vars`.
+    async fn exec_with(project: Project, vars: &ProjectVars) -> Result<Outcome, Error> {
+        super::exec(project, "w", false, vars).await
+    }
+
+    /// The failing step's name and its error, for a run that must fail in a step.
+    async fn step_error(project: Project) -> (String, Error) {
+        match exec(project).await {
+            Err(Error::Step { name, source }) => (name, *source),
+            Err(err) => panic!("expected a step error, got {err}"),
+            Ok(_) => panic!("expected a step error, got success"),
+        }
+    }
+
+    /// `project` with its project `vars` set to `vars`.
+    fn with_vars(mut project: Project, vars: &[(&str, &str)]) -> Project {
         project.vars = vars
             .iter()
             .map(|(name, value)| (name.to_string(), value.to_string()))
             .collect();
         project
+    }
+
+    /// Like [`project`], with `vars` set.
+    fn project_with_vars(yaml: &str, vars: &[(&str, &str)]) -> Project {
+        with_vars(project(yaml), vars)
+    }
+
+    /// Makes `dir` writable again when dropped, so a test that took write access away
+    /// still leaves a removable temp dir if it fails.
+    struct Writable<'a>(&'a Path);
+
+    impl Drop for Writable<'_> {
+        fn drop(&mut self) {
+            let mode = std::os::unix::fs::PermissionsExt::from_mode(0o755);
+            let _ = std::fs::set_permissions(self.0, mode);
+        }
     }
 
     /// A first step `seed` that prints `values`, so later steps read them as
@@ -528,13 +579,10 @@ mod tests {
 
     #[tokio::test]
     async fn substituted_values_stay_one_argument() {
-        let outcome = exec(
-            project_with_vars(
-                "steps:\n  e:\n    cmd: [echo, '${X}']\n",
-                &[("X", "a; echo injected  b")],
-            ),
-            false,
-        )
+        let outcome = exec(project_with_vars(
+            "steps:\n  e:\n    cmd: [echo, '${X}']\n",
+            &[("X", "a; echo injected  b")],
+        ))
         .await
         .unwrap();
         assert_eq!(stdout(&outcome), &json!("a; echo injected  b"));
@@ -547,7 +595,7 @@ mod tests {
              \x20 print:\n    cmd: [echo, '${B}-${C}-${D}']\n    vars: {C: step}\n",
             &[("B", "project"), ("D", "project")],
         );
-        let outcome = exec(project, false).await.unwrap();
+        let outcome = exec(project).await.unwrap();
         assert_eq!(stdout(&outcome), &json!("job-step-project"));
     }
 
@@ -562,7 +610,7 @@ mod tests {
             ),
             &[("ROOT", "${PROJECTS}"), ("PROJECTS", "/")],
         );
-        let outcome = exec(project, false).await.unwrap();
+        let outcome = exec(project).await.unwrap();
         assert_eq!(
             stdout(&outcome),
             &json!("${steps.seed.stdout.ID}/src ${PROJECTS}/backend")
@@ -571,13 +619,10 @@ mod tests {
 
     #[tokio::test]
     async fn project_vars_referring_to_themselves_error() {
-        let err = exec(
-            project_with_vars(
-                "steps:\n  e:\n    cmd: [echo, '${A}']\n",
-                &[("A", "x${B}"), ("B", "${A}")],
-            ),
-            false,
-        )
+        let err = exec(project_with_vars(
+            "steps:\n  e:\n    cmd: [echo, '${A}']\n",
+            &[("A", "x${B}"), ("B", "${A}")],
+        ))
         .await
         .err()
         .unwrap();
@@ -594,23 +639,19 @@ mod tests {
              \x20 print:\n    cmd: [echo, '${{ACC}}']\n",
             seed(json!({"IDS": [1, 2]}))
         );
-        let outcome = exec(project_with_vars(&yaml, &[("ACC", "")]), false)
+        let outcome = exec(project_with_vars(&yaml, &[("ACC", "")]))
             .await
             .unwrap();
         assert_eq!(stdout(&outcome), &json!("+inner1+inner2"));
 
-        let err = exec(
-            project_with_vars(
-                &format!("{yaml}  after:\n    cmd: [echo, '${{NOPE_P}}']\n"),
-                &[("ACC", "")],
-            ),
-            false,
-        )
-        .await
-        .err()
-        .unwrap();
+        let (_, err) = step_error(project_with_vars(
+            &format!("{yaml}  after:\n    cmd: [echo, '${{NOPE_P}}']\n"),
+            &[("ACC", "")],
+        ))
+        .await;
         assert!(
-            matches!(err, Error::Step { source, .. } if matches!(*source, Error::UndefinedVar(ref v) if v == "NOPE_P"))
+            matches!(err, Error::UndefinedVar(ref v) if v == "NOPE_P"),
+            "{err}"
         );
     }
 
@@ -626,40 +667,16 @@ mod tests {
             dir.path(),
             "steps:\n  hello: greet.yaml\n  print:\n    cmd: [echo, '${steps.hello.stdout}!']\n",
         );
-        let outcome = exec(project, false).await.unwrap();
+        let outcome = exec(project).await.unwrap();
         assert_eq!(stdout(&outcome), &json!("hi file!"));
     }
 
     #[tokio::test]
-    async fn non_zero_exit_stops_job() {
-        let outcome = exec(
-            project(
-                "steps:\n  bad:\n    cmd: [sh, -c, 'exit 3']\n  never:\n    cmd: [echo, never]\n",
-            ),
-            false,
-        )
-        .await
-        .unwrap();
-        assert_eq!(outcome.failed_step.as_deref(), Some("bad"));
-        assert_eq!(
-            outcome
-                .result
-                .as_ref()
-                .and_then(StepResult::failure)
-                .as_deref(),
-            Some("exited with code 3")
-        );
-    }
-
-    #[tokio::test]
     async fn skipped_branch_with_no_step_run_succeeds_without_result() {
-        let outcome = exec(
-            project_with_vars(
-                "steps:\n  r:\n    if: {this: X, eq: 1}\n    then: {a: {cmd: [echo, hi]}}\n",
-                &[("X", "2")],
-            ),
-            false,
-        )
+        let outcome = exec(project_with_vars(
+            "steps:\n  r:\n    if: {this: X, eq: 1}\n    then: {a: {cmd: [echo, hi]}}\n",
+            &[("X", "2")],
+        ))
         .await
         .unwrap();
         assert!(outcome.result.is_none());
@@ -674,11 +691,10 @@ mod tests {
                        \x20 check:\n    if: {this: steps.slow.error, exists: true}\n\
                        \x20   then: {errored: {cmd: [echo, '${steps.slow.error}']}}\n    else: {ok: {cmd: [echo, ok]}}\n";
         let (allowed, failed) = tokio::join!(
-            exec(project(allowed), false),
-            exec(
-                project("steps:\n  slow:\n    cmd: [sleep, '5']\n    timeout: 1\n"),
-                false,
-            ),
+            exec(project(allowed)),
+            exec(project(
+                "steps:\n  slow:\n    cmd: [sleep, '5']\n    timeout: 1\n"
+            )),
         );
         let outcome = allowed.unwrap();
         assert_eq!(outcome.failed_step, None);
@@ -686,10 +702,10 @@ mod tests {
             stdout(&outcome),
             &json!("command `sleep` timed out after 1s")
         );
-        let err = failed.err().unwrap();
-        assert!(
-            matches!(err, Error::Step { source, .. } if matches!(*source, Error::CommandTimeout { .. }))
-        );
+        let Err(Error::Step { source, .. }) = failed else {
+            panic!("expected a step error");
+        };
+        assert!(matches!(*source, Error::CommandTimeout { .. }), "{source}");
     }
 
     #[tokio::test]
@@ -698,9 +714,7 @@ mod tests {
             project(&format!(
                 "{}  size:\n    if: {{this: steps.seed.stdout.N, gt: 3}}\n    then: {{big: {{cmd: [echo, big]}}}}\n    else: {{small: {{cmd: [echo, small]}}}}\n",
                 seed(json!({"N": 5}))
-            )),
-            false,
-        )
+            )))
         .await
         .unwrap();
         assert_eq!(stdout(&outcome), &json!("big"));
@@ -741,52 +755,41 @@ mod tests {
             (json!("200"), "after ok"),
             (json!(404), "after missing"),
         ] {
-            let outcome = exec(switch_project(n.clone(), true), false).await.unwrap();
+            let outcome = exec(switch_project(n.clone(), true)).await.unwrap();
             assert_eq!(stdout(&outcome), &json!(expected), "{n}");
         }
     }
 
     #[tokio::test]
     async fn switch_falls_back_to_default_or_runs_nothing() {
-        let outcome = exec(switch_project(json!(500), true), false).await.unwrap();
+        let outcome = exec(switch_project(json!(500), true)).await.unwrap();
         assert_eq!(stdout(&outcome), &json!("after other"));
-        let outcome = exec(switch_project(json!(500), false), false)
-            .await
-            .unwrap();
+        let outcome = exec(switch_project(json!(500), false)).await.unwrap();
         assert_eq!(stdout(&outcome), &json!("after none"));
     }
 
     #[tokio::test]
     async fn switch_on_undefined_var_errors() {
-        let err = exec(
-            project(
-                "steps:\n  s:\n    switch: NOPE_UNDEFINED\n    cases: {1: {e: {cmd: [echo]}}}\n",
-            ),
-            false,
-        )
-        .await
-        .err()
-        .unwrap();
-        assert!(
-            matches!(err, Error::Step { name, source } if name == "s" && matches!(*source, Error::UndefinedVar(_)))
-        );
+        let (name, err) = step_error(project(
+            "steps:\n  s:\n    switch: NOPE_UNDEFINED\n    cases: {1: {e: {cmd: [echo]}}}\n",
+        ))
+        .await;
+        assert_eq!(name, "s");
+        assert!(matches!(err, Error::UndefinedVar(_)), "{err}");
     }
 
     #[tokio::test]
     async fn for_each_runs_body_per_item_in_order() {
-        let outcome = exec(
-            project_with_vars(
-                &format!(
-                    "{}\
+        let outcome = exec(project_with_vars(
+            &format!(
+                "{}\
                      \x20 each:\n    for_each: steps.seed.stdout.IDS\n    as: ID\n    do:\n\
                      \x20     add:\n        set: {{vars: {{ACC: '${{ACC}}-${{ID}}'}}}}\n\
                      \x20 print:\n    cmd: [echo, '${{ACC}}']\n",
-                    seed(json!({"IDS": [1, 2, 3]}))
-                ),
-                &[("ACC", "start")],
+                seed(json!({"IDS": [1, 2, 3]}))
             ),
-            false,
-        )
+            &[("ACC", "start")],
+        ))
         .await
         .unwrap();
         assert_eq!(stdout(&outcome), &json!("start-1-2-3"));
@@ -804,9 +807,7 @@ mod tests {
                  \x20         minus:\n            set: {vars: {ACC: '${ACC}-${ITEM.id}'}}\n\
                  \x20 print:\n    cmd: [echo, '${ACC}']\n",
                 &[("ACC", "")],
-            ),
-            false,
-        )
+            ))
         .await
         .unwrap();
         assert_eq!(stdout(&outcome), &json!("+1-2"));
@@ -826,9 +827,7 @@ mod tests {
                     seed(json!({"GO": true, "ROWS": [["a", "b"], ["c"]]}))
                 ),
                 &[("ACC", "")],
-            ),
-            false,
-        )
+            ))
         .await
         .unwrap();
         assert_eq!(stdout(&outcome), &json!("abc"));
@@ -843,44 +842,34 @@ mod tests {
                  \x20     inner:\n        for_each: steps.seed.stdout.INNER\n        as: X\n        do: {{e: {{cmd: [echo, '${{X}}']}}}}\n\
                  \x20     print:\n        cmd: [echo, '${{X}}']\n",
                 seed(json!({"OUTER": ["before"], "INNER": [1, 2]}))
-            )),
-            false,
-        )
+            )))
         .await
         .unwrap();
         assert_eq!(stdout(&outcome), &json!("before"));
 
-        let err = exec(
+        let (_, err) = step_error(
             project(&format!(
                 "{}\
                  \x20 each:\n    for_each: steps.seed.stdout.IDS\n    as: NOPE_X\n    do: {{e: {{cmd: [echo, '${{NOPE_X}}']}}}}\n\
                  \x20 print:\n    cmd: [echo, '${{NOPE_X}}']\n",
                 seed(json!({"IDS": [1]}))
-            )),
-            false,
-        )
-        .await
-        .err()
-        .unwrap();
+            )))
+        .await;
         assert!(
-            matches!(err, Error::Step { source, .. } if matches!(*source, Error::UndefinedVar(ref v) if v == "NOPE_X"))
+            matches!(err, Error::UndefinedVar(ref v) if v == "NOPE_X"),
+            "{err}"
         );
     }
 
     #[tokio::test]
     async fn for_each_needs_a_defined_list() {
         let yaml = "steps:\n  each:\n    for_each: NOPE_L\n    do: {e: {cmd: [echo]}}\n";
-        let err = exec(project_with_vars(yaml, &[("NOPE_L", "a,b")]), false)
-            .await
-            .err()
-            .unwrap();
-        assert!(
-            matches!(err, Error::Step { name, source } if name == "each" && matches!(*source, Error::Loop(_)))
-        );
-        let err = exec(project(yaml), false).await.err().unwrap();
-        assert!(
-            matches!(err, Error::Step { name, source } if name == "each" && matches!(*source, Error::UndefinedVar(_)))
-        );
+        let (name, err) = step_error(project_with_vars(yaml, &[("NOPE_L", "a,b")])).await;
+        assert_eq!(name, "each");
+        assert!(matches!(err, Error::Loop(_)), "{err}");
+        let (name, err) = step_error(project(yaml)).await;
+        assert_eq!(name, "each");
+        assert!(matches!(err, Error::UndefinedVar(_)), "{err}");
     }
 
     #[tokio::test]
@@ -891,9 +880,7 @@ mod tests {
                  \x20 each:\n    for_each: steps.seed.stdout.CODES\n    do:\n      check:\n        cmd: [sh, -c, 'exit ${{ITEM}}']\n\
                  \x20 never:\n    cmd: [echo, never]\n",
                 seed(json!({"CODES": [0, 5, 0]}))
-            )),
-            false,
-        )
+            )))
         .await
         .unwrap();
         assert_eq!(outcome.failed_step.as_deref(), Some("check"));
@@ -909,10 +896,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     async fn cmd_step_does_not_block_other_tasks() {
-        let cmd = tokio::spawn(exec(
-            project("steps:\n  sleep:\n    cmd: [sleep, '1']\n"),
-            false,
-        ));
+        let cmd = tokio::spawn(exec(project("steps:\n  sleep:\n    cmd: [sleep, '1']\n")));
         let started = Instant::now();
         let timer = tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
@@ -925,10 +909,9 @@ mod tests {
 
     #[tokio::test]
     async fn capture_stdout_false_discards_stdout() {
-        let outcome = exec(
-            project("steps:\n  e:\n    cmd: [echo, hi]\n    capture_stdout: false\n"),
-            false,
-        )
+        let outcome = exec(project(
+            "steps:\n  e:\n    cmd: [echo, hi]\n    capture_stdout: false\n",
+        ))
         .await
         .unwrap();
         assert_eq!(stdout(&outcome), &Value::Null);
@@ -936,18 +919,15 @@ mod tests {
 
     #[tokio::test]
     async fn cmd_errors_carry_step_name() {
-        let err = exec(
-            project(
-                "steps:\n  r:\n    if: {this: NOPE_UNDEFINED, exists: false}\n    then:\n\
+        let (name, err) = step_error(project(
+            "steps:\n  r:\n    if: {this: NOPE_UNDEFINED, exists: false}\n    then:\n\
                  \x20     inner:\n        cmd: [echo, '${NOPE_UNDEFINED}']\n",
-            ),
-            false,
-        )
-        .await
-        .err()
-        .unwrap();
+        ))
+        .await;
+        assert_eq!(name, "inner");
         assert!(
-            matches!(err, Error::Step { name, source } if name == "inner" && matches!(*source, Error::UndefinedVar(ref v) if v == "NOPE_UNDEFINED"))
+            matches!(err, Error::UndefinedVar(ref v) if v == "NOPE_UNDEFINED"),
+            "{err}"
         );
     }
 
@@ -960,9 +940,7 @@ mod tests {
                  \x20 piped:\n    cmd: [cat]\n    stdin: ${steps.produce.stdout}\n\
                  \x20 check:\n    if: {this: steps.piped.stdout.items.2, eq: 3}\n    then:\n\
                  \x20     print:\n        cmd: [echo, 'first=${steps.produce.stdout.items.0} code=${steps.piped.exit_code}']\n",
-            ),
-            false,
-        )
+            ))
         .await
         .unwrap();
         assert_eq!(stdout(&outcome), &json!("first=1 code=0"));
@@ -970,14 +948,11 @@ mod tests {
 
     #[tokio::test]
     async fn failed_step_with_allow_failure_is_recorded() {
-        let outcome = exec(
-            project(
-                "steps:\n\
+        let outcome = exec(project(
+            "steps:\n\
                  \x20 check:\n    cmd: [sh, -c, 'echo nope >&2; exit 4']\n    allow_failure: true\n\
                  \x20 print:\n    cmd: [echo, '${steps.check.exit_code}:${steps.check.stderr}']\n",
-            ),
-            false,
-        )
+        ))
         .await
         .unwrap();
         assert_eq!(outcome.failed_step, None);
@@ -990,9 +965,7 @@ mod tests {
             project(&format!(
                 "{}  cat:\n    cmd: [cat]\n    stdin: {{n: '${{steps.seed.stdout.N}}', s: 'x=${{steps.seed.stdout.N}}'}}\n",
                 seed(json!({"N": 5}))
-            )),
-            false,
-        )
+            )))
         .await
         .unwrap();
         assert_eq!(stdout(&outcome), &json!({"n": 5, "s": "x=5"}));
@@ -1004,9 +977,7 @@ mod tests {
             project(&format!(
                 "{}  env:\n    cmd: [sh, -c, 'printf \"%s|%s\" \"$A\" \"$B\"']\n    env: {{A: 'x=${{steps.seed.stdout.N}}', B: {{n: '${{steps.seed.stdout.N}}'}}}}\n",
                 seed(json!({"N": 5}))
-            )),
-            false,
-        )
+            )))
         .await
         .unwrap();
         assert_eq!(stdout(&outcome), &json!("x=5|{\"n\":5}"));
@@ -1025,7 +996,7 @@ mod tests {
                 seed(json!({"NAME": "out", "N": 7}))
             ),
         );
-        let outcome = exec(project, false).await.unwrap();
+        let outcome = exec(project).await.unwrap();
         assert_eq!(stdout(&outcome), &json!(7));
         assert_eq!(
             std::fs::read_to_string(dir.path().join("out.json")).unwrap(),
@@ -1047,7 +1018,7 @@ mod tests {
                 seed(json!({"SUB": "work", "ABS": other.path()}))
             ),
         );
-        exec(project, false).await.unwrap();
+        exec(project).await.unwrap();
         assert!(dir.path().join("work/rel").exists());
         assert!(other.path().join("abs").exists());
     }
@@ -1066,7 +1037,7 @@ mod tests {
             "steps:\n  img:\n    http: {{method: GET, url: \"{}\"}}\n  print:\n    cmd: [echo, \"${{steps.img.body_encoding}}\"]\n",
             server.uri()
         ));
-        let outcome = exec(project, false).await.unwrap();
+        let outcome = exec(project).await.unwrap();
         assert_eq!(stdout(&outcome), &json!("base64"));
     }
 
@@ -1083,10 +1054,10 @@ mod tests {
                     \x20 inc:\n    cmd: [expr, '${states.COUNT}', +, '1']\n\
                     \x20 save:\n    set: {states: {COUNT: '${steps.inc.stdout}'}}\n\
                     \x20 check:\n    if: {this: states.COUNT, gt: 1}\n    then: {again: {cmd: [echo, 'again ${states.COUNT} ${states.KEEP}']}}\n    else: {first: {cmd: [echo, 'first ${states.COUNT} ${states.KEEP}']}}\n";
-        let outcome = exec(project_in(dir.path(), yaml), false).await.unwrap();
+        let outcome = exec(project_in(dir.path(), yaml)).await.unwrap();
         assert_eq!(stdout(&outcome), &json!("first 1 k"));
         assert_eq!(state_file(dir.path()), json!({"COUNT": 1, "KEEP": "k"}));
-        let outcome = exec(project_in(dir.path(), yaml), false).await.unwrap();
+        let outcome = exec(project_in(dir.path(), yaml)).await.unwrap();
         assert_eq!(stdout(&outcome), &json!("again 2 k"));
         assert_eq!(state_file(dir.path()), json!({"COUNT": 2, "KEEP": "k"}));
     }
@@ -1103,9 +1074,9 @@ mod tests {
              \x20 print:\n    cmd: [echo, '${{ACC}}']\n",
             seed(json!({"IDS": [1, 2, 3, 4]}))
         );
-        let mut project = project_in(dir.path(), &yaml);
-        project.vars = BTreeMap::from([("ACC".to_string(), String::new())]);
-        let outcome = exec(project, false).await.unwrap();
+        let outcome = exec(with_vars(project_in(dir.path(), &yaml), &[("ACC", "")]))
+            .await
+            .unwrap();
         assert_eq!(stdout(&outcome), &json!("-1-2+3+4"));
     }
 
@@ -1115,7 +1086,7 @@ mod tests {
                     \x20 bump:\n    set: {vars: {B: new}}\n\
                     \x20 print:\n    cmd: [echo, '${A} ${B}']\n";
         let project = project_with_vars(yaml, &[("A", "prefix-${B}"), ("B", "old")]);
-        let outcome = exec(project, false).await.unwrap();
+        let outcome = exec(project).await.unwrap();
         assert_eq!(stdout(&outcome), &json!("prefix-new new"));
     }
 
@@ -1128,23 +1099,17 @@ mod tests {
         }
         let vars: Vec<(&str, &str)> = vars.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect();
         let project = project_with_vars("steps:\n  e:\n    cmd: [echo, 'x${V30}x']\n", &vars);
-        let outcome = exec(project, false).await.unwrap();
+        let outcome = exec(project).await.unwrap();
         assert_eq!(stdout(&outcome), &json!("xx"));
     }
 
     #[tokio::test]
     async fn allow_failure_does_not_hide_an_invalid_url() {
-        let err = exec(
-            project("steps:\n  bad:\n    get: 'not a url'\n    allow_failure: true\n"),
-            false,
-        )
-        .await
-        .err()
-        .unwrap();
-        assert!(
-            matches!(err, Error::Step { ref source, .. } if matches!(**source, Error::Http(_))),
-            "{err}"
-        );
+        let (_, err) = step_error(project(
+            "steps:\n  bad:\n    get: 'not a url'\n    allow_failure: true\n",
+        ))
+        .await;
+        assert!(matches!(err, Error::Http(_)), "{err}");
     }
 
     #[tokio::test]
@@ -1157,13 +1122,10 @@ mod tests {
              \x20 save:\n    set: {{states: {{N: 1}}, vars: {{V: new}}}}\n",
             states.display()
         );
-        let mut project = project_in(dir.path(), &yaml);
-        project.vars = BTreeMap::from([("V".to_string(), "old".to_string())]);
+        let project = with_vars(project_in(dir.path(), &yaml), &[("V", "old")]);
         let project_vars = ProjectVars::default();
-        let result = super::exec(project, "w", false, &project_vars).await;
-        let writable = std::os::unix::fs::PermissionsExt::from_mode(0o755);
-        std::fs::set_permissions(&states, writable).unwrap();
-        assert!(result.is_err());
+        let _writable = Writable(&states);
+        assert!(exec_with(project, &project_vars).await.is_err());
         assert_eq!(project_vars.snapshot(), (0, Map::new()));
         assert_eq!(state_file(dir.path()), json!({"N": 0}));
     }
@@ -1176,9 +1138,7 @@ mod tests {
                     \x20 check:\n    for_each: L\n    do: {e: {cmd: [echo, '${N} ${L.1} ${ITEM}']}}\n";
         let project_vars = ProjectVars::default();
         let project = project_with_vars(yaml, &[("L", "none"), ("N", "0")]);
-        let outcome = super::exec(project, "w", false, &project_vars)
-            .await
-            .unwrap();
+        let outcome = exec_with(project, &project_vars).await.unwrap();
         assert_eq!(stdout(&outcome), &json!("n=0 2 2"));
         assert_eq!(
             Value::Object(project_vars.snapshot().1),
@@ -1195,18 +1155,12 @@ mod tests {
             &vars,
         );
         let reader = || project_with_vars("steps:\n  e:\n    cmd: [echo, '${TOKEN}']\n", &vars);
-        let outcome = super::exec(reader(), "w", false, &project_vars)
-            .await
-            .unwrap();
+        let outcome = exec_with(reader(), &project_vars).await.unwrap();
         assert_eq!(stdout(&outcome), &json!("none"));
-        super::exec(writer, "w", false, &project_vars)
-            .await
-            .unwrap();
-        let outcome = super::exec(reader(), "w", false, &project_vars)
-            .await
-            .unwrap();
+        exec_with(writer, &project_vars).await.unwrap();
+        let outcome = exec_with(reader(), &project_vars).await.unwrap();
         assert_eq!(stdout(&outcome), &json!("abc"));
-        let outcome = exec(reader(), false).await.unwrap();
+        let outcome = exec(reader()).await.unwrap();
         assert_eq!(stdout(&outcome), &json!("none"));
     }
 
@@ -1226,7 +1180,7 @@ mod tests {
         };
         let spawn = |project: Project| {
             let project_vars = project_vars.clone();
-            tokio::spawn(async move { super::exec(project, "w", false, &project_vars).await })
+            tokio::spawn(async move { exec_with(project, &project_vars).await })
         };
         let (a, b) = tokio::join!(spawn(project("a")), spawn(project("b")));
         a.unwrap().unwrap();
@@ -1245,9 +1199,7 @@ mod tests {
             "steps:\n  e:\n    cmd: [echo, '${URL}']\n",
             &[("HOST", "orig"), ("URL", "${HOST}/x")],
         );
-        let outcome = super::exec(project, "w", false, &project_vars)
-            .await
-            .unwrap();
+        let outcome = exec_with(project, &project_vars).await.unwrap();
         assert_eq!(stdout(&outcome), &json!("new/x"));
     }
 
@@ -1259,7 +1211,7 @@ mod tests {
              \x20 e:\n    cmd: [echo, '${A}-${B}']\n",
             &[("A", "project"), ("B", "project")],
         );
-        let outcome = exec(project, false).await.unwrap();
+        let outcome = exec(project).await.unwrap();
         assert_eq!(stdout(&outcome), &json!("job-updated"));
     }
 
@@ -1273,23 +1225,20 @@ mod tests {
             &[("A", "project")],
         );
         project.env_file = Some(env);
-        let outcome = exec(project, false).await.unwrap();
+        let outcome = exec(project).await.unwrap();
         assert_eq!(stdout(&outcome), &json!("project-env"));
     }
 
     #[tokio::test]
     async fn state_is_saved_before_a_later_failure() {
         let dir = tempfile::tempdir().unwrap();
-        let outcome = exec(
-            project_in(
-                dir.path(),
-                "states: {N: 0}\n\
+        let outcome = exec(project_in(
+            dir.path(),
+            "states: {N: 0}\n\
                  steps:\n\
                  \x20 save:\n    set: {states: {N: 'n=${states.N}'}}\n\
                  \x20 bad:\n    cmd: [sh, -c, 'exit 1']\n",
-            ),
-            false,
-        )
+        ))
         .await
         .unwrap();
         assert_eq!(outcome.failed_step.as_deref(), Some("bad"));
@@ -1299,21 +1248,20 @@ mod tests {
     #[tokio::test]
     async fn job_without_state_writes_no_file() {
         let dir = tempfile::tempdir().unwrap();
-        exec(
-            project_in(dir.path(), "steps:\n  e:\n    cmd: [echo]\n"),
-            false,
-        )
-        .await
-        .unwrap();
-        assert!(!dir.path().join("states").exists());
+        let project = project_in(
+            dir.path(),
+            "steps:\n  keep:\n    set: {vars: {V: new}}\n  e:\n    cmd: [echo]\n",
+        );
+        exec(with_vars(project, &[("V", "old")])).await.unwrap();
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
     }
 
     #[tokio::test]
     async fn process_environment_is_the_last_fallback() {
         let yaml = "steps:\n  e:\n    cmd: [echo, '${CARGO_PKG_NAME}']\n";
-        let outcome = exec(project(yaml), false).await.unwrap();
+        let outcome = exec(project(yaml)).await.unwrap();
         assert_eq!(stdout(&outcome), &json!("rocky"));
-        let outcome = exec(project_with_vars(yaml, &[("CARGO_PKG_NAME", "rb")]), false)
+        let outcome = exec(project_with_vars(yaml, &[("CARGO_PKG_NAME", "rb")]))
             .await
             .unwrap();
         assert_eq!(stdout(&outcome), &json!("rb"));
@@ -1321,15 +1269,12 @@ mod tests {
 
     #[tokio::test]
     async fn loop_item_beats_vars() {
-        let outcome = exec(
-            project(&format!(
-                "{}\
+        let outcome = exec(project(&format!(
+            "{}\
                  \x20 each:\n    for_each: steps.seed.stdout.IDS\n    as: ID\n    do:\n\
                  \x20     e:\n        cmd: [echo, '${{ID}}']\n        vars: {{ID: shadow}}\n",
-                seed(json!({"IDS": [1]}))
-            )),
-            false,
-        )
+            seed(json!({"IDS": [1]}))
+        )))
         .await
         .unwrap();
         assert_eq!(stdout(&outcome), &json!(1));
@@ -1338,12 +1283,9 @@ mod tests {
     #[tokio::test]
     async fn default_cwd_is_the_current_directory_not_the_project_dir() {
         let dir = tempfile::tempdir().unwrap();
-        let outcome = exec(
-            project_in(dir.path(), "steps:\n  e:\n    cmd: [pwd]\n"),
-            false,
-        )
-        .await
-        .unwrap();
+        let outcome = exec(project_in(dir.path(), "steps:\n  e:\n    cmd: [pwd]\n"))
+            .await
+            .unwrap();
         let printed = std::path::PathBuf::from(stdout(&outcome).as_str().unwrap());
         assert_eq!(
             printed.canonicalize().unwrap(),
@@ -1358,7 +1300,7 @@ mod tests {
                     steps:\n\
                     \x20 swap:\n    set: {states: {A: '${states.B}', B: '${states.A}'}}\n\
                     \x20 print:\n    cmd: [echo, '${states.A}-${states.B}']\n";
-        let outcome = exec(project_in(dir.path(), yaml), false).await.unwrap();
+        let outcome = exec(project_in(dir.path(), yaml)).await.unwrap();
         assert_eq!(stdout(&outcome), &json!("2-1"));
         assert_eq!(state_file(dir.path()), json!({"A": 2, "B": 1}));
 
@@ -1368,7 +1310,7 @@ mod tests {
              \x20 print:\n    cmd: [echo, '${A}-${B}']\n",
             &[("A", "1"), ("B", "2")],
         );
-        let outcome = exec(project, false).await.unwrap();
+        let outcome = exec(project).await.unwrap();
         assert_eq!(stdout(&outcome), &json!("2-1"));
     }
 
@@ -1377,7 +1319,7 @@ mod tests {
         let yaml = "steps:\n  s:\n    switch: V\n    cases: {'${X}': {lit: {cmd: [echo, literal]}}}\n\
                     \x20   default: {other: {cmd: [echo, other]}}\n";
         for (v, expected) in [("a", "other"), ("$${X}", "literal")] {
-            let outcome = exec(project_with_vars(yaml, &[("X", "a"), ("V", v)]), false)
+            let outcome = exec(project_with_vars(yaml, &[("X", "a"), ("V", v)]))
                 .await
                 .unwrap();
             assert_eq!(stdout(&outcome), &json!(expected), "{v}");
@@ -1386,29 +1328,20 @@ mod tests {
 
     #[test]
     fn failure_is_http_400_or_more_a_non_zero_exit_or_an_error() {
-        let response = |status| {
-            StepResult::Http(Response {
-                status,
-                headers: BTreeMap::new(),
-                body: Value::Null,
-                body_encoding: None,
-            })
-        };
-        assert_eq!(response(399).failure(), None);
+        assert_eq!(StepResult::http(399).failure(), None);
         assert_eq!(
-            response(400).failure().as_deref(),
+            StepResult::http(400).failure().as_deref(),
             Some("returned HTTP 400")
         );
         assert_eq!(
-            response(404).failure().as_deref(),
+            StepResult::http(404).failure().as_deref(),
             Some("returned HTTP 404")
         );
-        let cmd = StepResult::Cmd(CommandResult {
-            exit_code: 0,
-            stdout: Value::Null,
-            stderr: String::new(),
-        });
-        assert_eq!(cmd.failure(), None);
+        assert_eq!(StepResult::cmd(0).failure(), None);
+        assert_eq!(
+            StepResult::cmd(3).failure().as_deref(),
+            Some("exited with code 3")
+        );
         let errored = StepResult::Errored {
             error: "timed out".to_string(),
         };

@@ -133,15 +133,24 @@ mod tests {
         BTreeMap::from([("A".to_string(), json!(0)), ("B".to_string(), json!("b"))])
     }
 
+    fn read_json(path: &Path) -> Value {
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+    }
+
+    fn file_names(dir: &Path) -> Vec<std::ffi::OsString> {
+        std::fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect()
+    }
+
     #[test]
     fn missing_file_is_created_from_defaults() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("states/w.json");
         let state = load(&path, &defaults()).unwrap();
         assert_eq!(Value::Object(state), json!({"A": 0, "B": "b"}));
-        let written: Value =
-            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(written, json!({"A": 0, "B": "b"}));
+        assert_eq!(read_json(&path), json!({"A": 0, "B": "b"}));
     }
 
     #[test]
@@ -173,14 +182,8 @@ mod tests {
             let state = Map::from_iter([("A".to_string(), json!(n))]);
             save(&path, &state).unwrap();
         }
-        let written: Value =
-            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(written, json!({"A": 2}));
-        let names: Vec<_> = std::fs::read_dir(dir.path())
-            .unwrap()
-            .map(|entry| entry.unwrap().file_name())
-            .collect();
-        assert_eq!(names, ["w.json"]);
+        assert_eq!(read_json(&path), json!({"A": 2}));
+        assert_eq!(file_names(dir.path()), ["w.json"]);
     }
 
     #[test]
@@ -191,11 +194,7 @@ mod tests {
         std::fs::create_dir_all(path.join("inside")).unwrap();
         let err = save(&path, &Map::new()).unwrap_err();
         assert!(matches!(err, Error::Write { .. }), "{err}");
-        let names: Vec<_> = std::fs::read_dir(dir.path())
-            .unwrap()
-            .map(|entry| entry.unwrap().file_name())
-            .collect();
-        assert_eq!(names, ["w.json"]);
+        assert_eq!(file_names(dir.path()), ["w.json"]);
     }
 
     #[test]
@@ -214,10 +213,9 @@ mod tests {
                 "E",
             ),
         ] {
-            let steps = crate::step::named(serde_yaml::Deserializer::from_str(&format!(
-                "a: {{set: {{states: {{A: 1}}}}}}\n{nested}"
-            )))
-            .unwrap();
+            let steps =
+                crate::step::parse_named(&format!("a: {{set: {{states: {{A: 1}}}}}}\n{nested}"))
+                    .unwrap();
             let err = check(&steps, &defaults()).unwrap_err();
             assert!(err.to_string().contains(&format!("`{name}`")), "{err}");
             check(&steps[..1], &defaults()).unwrap();

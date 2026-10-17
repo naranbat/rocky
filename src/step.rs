@@ -164,6 +164,12 @@ pub fn named<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<Step>, D:
     deserializer.deserialize_map(NamedVisitor)
 }
 
+/// Parses `yaml`, a map of step name to step, without resolving step files.
+#[cfg(test)]
+pub(crate) fn parse_named(yaml: &str) -> Result<Vec<Step>, serde_yaml::Error> {
+    named(serde_yaml::Deserializer::from_str(yaml))
+}
+
 /// An entry's value: a step file path, or the step's fields inline.
 struct Source(Step);
 
@@ -493,19 +499,29 @@ fn check_names<'a>(
 mod tests {
     use super::*;
 
-    fn parse(yaml: &str) -> Result<Vec<Step>, serde_yaml::Error> {
-        named(serde_yaml::Deserializer::from_str(yaml))
-    }
-
     fn resolve_in(dir: &Path, yaml: &str) -> Result<Vec<Step>, Error> {
-        let mut steps = parse(yaml).unwrap();
+        let mut steps = parse_named(yaml).unwrap();
         resolve(&mut steps, dir)?;
         Ok(steps)
     }
 
+    /// The steps in `yaml`, resolved against the current directory.
+    fn resolve_here(yaml: &str) -> Result<Vec<Step>, Error> {
+        resolve_in(Path::new(""), yaml)
+    }
+
+    /// The message of the invalid-step error that resolving `yaml` must give.
+    fn invalid_step(yaml: &str) -> String {
+        match resolve_here(yaml) {
+            Err(Error::InvalidStep(msg)) => msg,
+            Err(err) => panic!("{yaml}: expected an invalid step, got {err}"),
+            Ok(_) => panic!("{yaml}: expected an invalid step, got none"),
+        }
+    }
+
     #[test]
     fn resolves_paths_against_project_dir() {
-        let dir = Path::new("/book");
+        let dir = Path::new("/project");
         let steps = resolve_in(
             dir,
             "login:\n  http: {method: GET, url: x}\n\
@@ -523,14 +539,14 @@ mod tests {
 
     #[test]
     fn keeps_map_order_and_rejects_lists_and_duplicates() {
-        let steps = parse("z: {cmd: [echo]}\na: {cmd: [echo]}\nm: {cmd: [echo]}\n").unwrap();
+        let steps = parse_named("z: {cmd: [echo]}\na: {cmd: [echo]}\nm: {cmd: [echo]}\n").unwrap();
         let names: Vec<_> = steps.iter().map(|a| a.name.as_str()).collect();
         assert_eq!(names, ["z", "a", "m"]);
-        let err = parse("- cmd: [echo]\n").unwrap_err();
+        let err = parse_named("- cmd: [echo]\n").unwrap_err();
         assert!(err.to_string().contains("a map of step name"), "{err}");
-        let err = parse("a: {cmd: [echo]}\na: {cmd: [echo]}\n").unwrap_err();
+        let err = parse_named("a: {cmd: [echo]}\na: {cmd: [echo]}\n").unwrap_err();
         assert!(err.to_string().contains("duplicate"), "{err}");
-        let err = parse("a: {name: b, cmd: [echo]}\n").unwrap_err();
+        let err = parse_named("a: {name: b, cmd: [echo]}\n").unwrap_err();
         assert!(err.to_string().contains("unknown field `name`"), "{err}");
     }
 
@@ -545,21 +561,16 @@ mod tests {
             ),
             ("a:\n  cmd: []\n", "`a` has an empty `cmd`"),
         ] {
-            let err = resolve_in(Path::new(""), yaml).unwrap_err();
-            assert!(
-                matches!(&err, Error::InvalidStep(msg) if msg.contains(expected)),
-                "{yaml}: {err}"
-            );
+            let msg = invalid_step(yaml);
+            assert!(msg.contains(expected), "{yaml}: {msg}");
         }
     }
 
     #[test]
     fn method_keys_become_http() {
-        let steps = resolve_in(
-            Path::new(""),
-            "a:\n  get: x\nb:\n  post: {url: y, json: {k: 1}}\nc:\n  delete: z\n",
-        )
-        .unwrap();
+        let steps =
+            resolve_here("a:\n  get: x\nb:\n  post: {url: y, json: {k: 1}}\nc:\n  delete: z\n")
+                .unwrap();
         let specs: Vec<_> = steps.iter().filter_map(|a| a.http.as_ref()).collect();
         assert_eq!(specs.len(), 3);
         assert_eq!(
@@ -597,17 +608,14 @@ mod tests {
                 "`a` is a branch (`if`) and cannot have `http`",
             ),
         ] {
-            let err = resolve_in(Path::new(""), yaml).unwrap_err();
-            assert!(
-                matches!(&err, Error::InvalidStep(msg) if msg.contains(expected)),
-                "{yaml}: {err}"
-            );
+            let msg = invalid_step(yaml);
+            assert!(msg.contains(expected), "{yaml}: {msg}");
         }
     }
 
     #[test]
     fn http_must_be_inline() {
-        assert!(parse("a:\n  http: req.yaml\n").is_err());
+        assert!(parse_named("a:\n  http: req.yaml\n").is_err());
     }
 
     #[test]
@@ -621,18 +629,17 @@ mod tests {
                 "capture_stdout",
             ),
         ] {
-            let err = resolve_in(Path::new(""), yaml).unwrap_err();
+            let msg = invalid_step(yaml);
             assert!(
-                matches!(&err, Error::InvalidStep(msg) if msg.contains(&format!("`a` has `{field}`, which only works with `cmd`"))),
-                "{yaml}: {err}"
+                msg.contains(&format!("`a` has `{field}`, which only works with `cmd`")),
+                "{yaml}: {msg}"
             );
         }
     }
 
     #[test]
     fn timeout_works_on_every_step_kind_but_not_branches_or_loops() {
-        resolve_in(
-            Path::new(""),
+        resolve_here(
             "h:\n  http: {method: GET, url: x}\n  timeout: 5\ns:\n  cmd: [echo]\n  timeout: 5\n",
         )
         .unwrap();
@@ -640,10 +647,10 @@ mod tests {
             "a:\n  if: {this: X, eq: 1}\n  then: {b: {cmd: [echo]}}\n  timeout: 1\n",
             "a:\n  for_each: X\n  do: {b: {cmd: [echo]}}\n  timeout: 1\n",
         ] {
-            let err = resolve_in(Path::new(""), yaml).unwrap_err();
+            let msg = invalid_step(yaml);
             assert!(
-                matches!(&err, Error::InvalidStep(msg) if msg.contains("`a` is a") && msg.contains("`timeout`")),
-                "{yaml}: {err}"
+                msg.contains("`a` is a") && msg.contains("`timeout`"),
+                "{yaml}: {msg}"
             );
         }
     }
@@ -674,10 +681,10 @@ mod tests {
                 "item",
             ),
         ] {
-            let err = resolve_in(Path::new(""), yaml).unwrap_err();
-            assert!(
-                matches!(&err, Error::InvalidStep(msg) if msg == &format!("`a`: `{field}` name `{var}` {}", var_name::VAR_RULE)),
-                "{yaml}: {err}"
+            assert_eq!(
+                invalid_step(yaml),
+                format!("`a`: `{field}` name `{var}` {}", var_name::VAR_RULE),
+                "{yaml}"
             );
         }
     }
@@ -691,17 +698,17 @@ mod tests {
             ("1a:\n  cmd: [echo]\n", "1a"),
             ("states:\n  cmd: [echo]\n", "states"),
         ] {
-            let err = resolve_in(Path::new(""), yaml).unwrap_err();
-            assert!(
-                matches!(&err, Error::InvalidStep(msg) if msg == &format!("step name `{name}` {}", var_name::RULE)),
-                "{yaml}: {err}"
+            assert_eq!(
+                invalid_step(yaml),
+                format!("step name `{name}` {}", var_name::RULE),
+                "{yaml}"
             );
         }
     }
 
     #[test]
     fn resolves_paths_inside_nested_branches_and_loops() {
-        let dir = Path::new("/book");
+        let dir = Path::new("/project");
         let steps = resolve_in(
             dir,
             "r:\n  if: {this: X, gt: 1}\n  then:\n    a:\n      cmd: [a]\n      cwd: a\n  else:\n\
@@ -733,11 +740,8 @@ mod tests {
                 "`r` has `then`/`else` but no `if`",
             ),
         ] {
-            let err = resolve_in(Path::new(""), yaml).unwrap_err();
-            assert!(
-                matches!(&err, Error::InvalidStep(msg) if msg.contains(expected)),
-                "{yaml}: {err}"
-            );
+            let msg = invalid_step(yaml);
+            assert!(msg.contains(expected), "{yaml}: {msg}");
         }
     }
 
@@ -773,17 +777,14 @@ mod tests {
                 "`l` has an empty `cmd`",
             ),
         ] {
-            let err = resolve_in(Path::new(""), &yaml).unwrap_err();
-            assert!(
-                matches!(&err, Error::InvalidStep(msg) if msg.contains(expected)),
-                "{yaml}: {err}"
-            );
+            let msg = invalid_step(&yaml);
+            assert!(msg.contains(expected), "{yaml}: {msg}");
         }
     }
 
     #[test]
     fn resolves_paths_inside_switch_cases() {
-        let dir = Path::new("/book");
+        let dir = Path::new("/project");
         let steps = resolve_in(
             dir,
             "s:\n  switch: X\n  cases:\n    1: {a: {cmd: [a], cwd: a}}\n\
@@ -830,21 +831,19 @@ mod tests {
                 "`s` has an empty `cmd`",
             ),
         ] {
-            let err = resolve_in(Path::new(""), &yaml).unwrap_err();
-            assert!(
-                matches!(&err, Error::InvalidStep(msg) if msg.contains(expected)),
-                "{yaml}: {err}"
-            );
+            let msg = invalid_step(&yaml);
+            assert!(msg.contains(expected), "{yaml}: {msg}");
         }
         assert!(
-            parse(
+            parse_named(
                 "s:\n  switch: X\n  cases: [{match: 1, do: {a: {http: {method: GET, url: x}}}}]\n"
             )
             .is_err()
         );
-        let err =
-            parse("s:\n  switch: X\n  cases: {1: {a: {cmd: [echo]}}, 1: {b: {cmd: [echo]}}}\n")
-                .unwrap_err();
+        let err = parse_named(
+            "s:\n  switch: X\n  cases: {1: {a: {cmd: [echo]}}, 1: {b: {cmd: [echo]}}}\n",
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("duplicate case `1`"), "{err}");
     }
 
@@ -898,11 +897,9 @@ mod tests {
 
     #[test]
     fn set_only_goes_with_vars() {
-        let steps = resolve_in(
-            Path::new(""),
-            "s:\n  vars: {A: b}\n  set: {states: {N: '${A}'}, vars: {M: 1}}\n",
-        )
-        .unwrap();
+        let steps =
+            resolve_here("s:\n  vars: {A: b}\n  set: {states: {N: '${A}'}, vars: {M: 1}}\n")
+                .unwrap();
         let set = steps[0].set.as_ref().unwrap();
         assert_eq!(set.states["N"], Value::from("${A}"));
         assert_eq!(set.vars["M"], Value::from(1));
@@ -914,9 +911,10 @@ mod tests {
             "s:\n  set: {vars: {N: 1}}\n  cwd: w\n",
             "s:\n  set: {vars: {N: 1}}\n  env: {A: b}\n",
         ] {
+            let msg = invalid_step(yaml);
             assert!(
-                matches!(resolve_in(Path::new(""), yaml), Err(Error::InvalidStep(msg)) if msg.contains("`s` is a `set` step and can only have `vars`")),
-                "{yaml}"
+                msg.contains("`s` is a `set` step and can only have `vars`"),
+                "{yaml}: {msg}"
             );
         }
     }
@@ -924,25 +922,24 @@ mod tests {
     #[test]
     fn set_needs_states_or_vars() {
         for yaml in ["s:\n  set: {}\n", "s:\n  set: {states: {}}\n"] {
+            let msg = invalid_step(yaml);
             assert!(
-                matches!(resolve_in(Path::new(""), yaml), Err(Error::InvalidStep(msg)) if msg.contains("`s`: `set` needs `states` or `vars`")),
-                "{yaml}"
+                msg.contains("`s`: `set` needs `states` or `vars`"),
+                "{yaml}: {msg}"
             );
         }
-        assert!(parse("s:\n  set: {state: {N: 1}}\n").is_err());
-        assert!(parse("s:\n  states_update: {N: 1}\n").is_err());
+        assert!(parse_named("s:\n  set: {state: {N: 1}}\n").is_err());
+        assert!(parse_named("s:\n  states_update: {N: 1}\n").is_err());
     }
 
     #[test]
     fn rejects_invalid_condition() {
-        let err = resolve_in(
-            Path::new(""),
+        let msg = invalid_step(
             "r:\n  if: {this: X, gt: ten}\n  then: {a: {http: {method: GET, url: x}}}\n",
-        )
-        .unwrap_err();
+        );
         assert!(
-            matches!(&err, Error::InvalidStep(msg) if msg.starts_with("`r`: invalid condition: `gt` needs a number")),
-            "{err}"
+            msg.starts_with("`r`: invalid condition: `gt` needs a number"),
+            "{msg}"
         );
     }
 }
