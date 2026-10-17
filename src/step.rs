@@ -474,16 +474,16 @@ fn resolve_leaf(step: &Step, name: &str) -> Result<(), Error> {
     Ok(())
 }
 
-/// Checks that every name in the `field` of step `name` is a valid variable name.
+/// Checks that every name in the `field` (`vars` or `as`) of step `name` is a valid var name.
 fn check_names<'a>(
     name: &str,
     field: &str,
     mut vars: impl Iterator<Item = &'a String>,
 ) -> Result<(), Error> {
-    match vars.find(|var| !var_name::is_valid(var)) {
+    match vars.find(|var| !var_name::is_valid_var(var)) {
         Some(var) => Err(Error::InvalidStep(format!(
             "`{name}`: `{field}` name `{var}` {}",
-            var_name::RULE
+            var_name::VAR_RULE
         ))),
         None => Ok(()),
     }
@@ -667,10 +667,16 @@ mod tests {
                 "",
             ),
             ("a:\n  cmd: [echo]\n  vars: {1A: x}\n", "vars", "1A"),
+            ("a:\n  cmd: [echo]\n  vars: {lower: x}\n", "vars", "lower"),
+            (
+                "a:\n  for_each: X\n  as: item\n  do: {b: {cmd: [echo]}}\n",
+                "as",
+                "item",
+            ),
         ] {
             let err = resolve_in(Path::new(""), yaml).unwrap_err();
             assert!(
-                matches!(&err, Error::InvalidStep(msg) if msg == &format!("`a`: `{field}` name `{var}` {}", var_name::RULE)),
+                matches!(&err, Error::InvalidStep(msg) if msg == &format!("`a`: `{field}` name `{var}` {}", var_name::VAR_RULE)),
                 "{yaml}: {err}"
             );
         }

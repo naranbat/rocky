@@ -149,7 +149,8 @@ pub async fn exec(
 
         if let Some(set) = step.set.take() {
             // Worked out from the current project `vars` and applied under one lock, so a
-            // concurrent `set` of the same var isn't lost.
+            // concurrent `set` of the same var isn't lost. The states are saved first, under the
+            // lock too, so a failed save leaves the project `vars` unchanged.
             let (states, set_vars) = project_vars.update_with(|version, current| {
                 let rebuilt;
                 let outer = if version == outer_version {
@@ -170,14 +171,15 @@ pub async fn exec(
                     Ok::<_, Error>(set)
                 };
                 let (states, set_vars) = (substitute(set.states)?, substitute(set.vars)?);
+                if !states.is_empty() {
+                    let mut saved = state.clone();
+                    saved.extend(states.clone());
+                    state::save(&state_path, &saved).map_err(to_step_error)?;
+                }
                 Ok(((states, set_vars.clone()), set_vars))
             })?;
             if !states.is_empty() {
                 state.extend(states.clone());
-                let (path, saved) = (state_path.clone(), state.clone());
-                tokio::task::spawn_blocking(move || state::save(&path, &saved))
-                    .await?
-                    .map_err(to_step_error)?;
                 values.insert("states".to_string(), Value::Object(state.clone()));
             }
             // Logged once the states are saved, so a failed save isn't logged as set.
@@ -1143,6 +1145,27 @@ mod tests {
             matches!(err, Error::Step { ref source, .. } if matches!(**source, Error::Http(_))),
             "{err}"
         );
+    }
+
+    #[tokio::test]
+    async fn set_leaves_vars_unchanged_when_its_states_cannot_be_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        let states = dir.path().join("states");
+        let yaml = format!(
+            "states: {{N: 0}}\nsteps:\n\
+             \x20 lock:\n    cmd: [chmod, '555', '{}']\n\
+             \x20 save:\n    set: {{states: {{N: 1}}, vars: {{V: new}}}}\n",
+            states.display()
+        );
+        let mut project = project_in(dir.path(), &yaml);
+        project.vars = BTreeMap::from([("V".to_string(), "old".to_string())]);
+        let project_vars = ProjectVars::default();
+        let result = super::exec(project, "w", false, &project_vars).await;
+        let writable = std::os::unix::fs::PermissionsExt::from_mode(0o755);
+        std::fs::set_permissions(&states, writable).unwrap();
+        assert!(result.is_err());
+        assert_eq!(project_vars.snapshot(), (0, Map::new()));
+        assert_eq!(state_file(dir.path()), json!({"N": 0}));
     }
 
     #[tokio::test]

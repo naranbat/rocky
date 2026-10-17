@@ -51,7 +51,7 @@ These only fill in `${...}`. A command doesn't see `vars` or env file values in 
 
 ## Names
 
-Every name you declare, under any `vars` or `states`, in a loop's `as`, or as a step key, must be an identifier: a letter or `_`, then letters, digits or `_` (`TOKEN`, `user_id`, `_tmp2`). `steps` and `states` are reserved. Anything else, such as `my-var` or `a.b`, fails when the project loads. Names from an env file or the environment aren't checked.
+A name under any `vars` or in a loop's `as` must be uppercase: an uppercase letter or `_`, then uppercase letters, digits or `_` (`TOKEN`, `USER_ID`, `_TMP2`). A name under `states` or a step key must be an identifier: a letter or `_`, then letters, digits or `_` (`count`, `user_id`); `steps` and `states` are reserved. Anything else, such as `user_id` under `vars`, `my-var` or `a.b`, fails when the project loads. Names from an env file or the environment aren't checked.
 
 ## `vars` levels
 

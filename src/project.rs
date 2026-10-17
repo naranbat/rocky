@@ -136,7 +136,12 @@ pub fn load(path: &Path) -> Result<Project, Error> {
     if raw.jobs.is_empty() {
         return Err(Error::InvalidProject("project has no jobs".to_string()));
     }
-    check_names("vars", raw.vars.keys())?;
+    check_names(
+        "vars",
+        raw.vars.keys(),
+        var_name::is_valid_var,
+        var_name::VAR_RULE,
+    )?;
     if let Some(name) = raw
         .schedules
         .keys()
@@ -177,20 +182,34 @@ fn load_job(source: JobSource, dir: &Path, vars: &BTreeMap<String, String>) -> R
     if job.steps.is_empty() {
         return Err(Error::InvalidProject("job has no steps".to_string()));
     }
-    check_names("vars", job.vars.keys())?;
-    check_names("states", job.states.keys())?;
+    check_names(
+        "vars",
+        job.vars.keys(),
+        var_name::is_valid_var,
+        var_name::VAR_RULE,
+    )?;
+    check_names(
+        "states",
+        job.states.keys(),
+        var_name::is_valid,
+        var_name::RULE,
+    )?;
     step::resolve(&mut job.steps, &dir)?;
     state::check(&job.steps, &job.states)?;
     project_vars::check(&job.steps, vars)?;
     Ok(job)
 }
 
-/// Checks that every name declared in `field` is a valid variable name.
-fn check_names<'a>(field: &str, mut names: impl Iterator<Item = &'a String>) -> Result<(), Error> {
-    match names.find(|name| !var_name::is_valid(name)) {
+/// Checks that every name declared in `field` passes `is_valid`, described by `rule`.
+fn check_names<'a>(
+    field: &str,
+    mut names: impl Iterator<Item = &'a String>,
+    is_valid: fn(&str) -> bool,
+    rule: &str,
+) -> Result<(), Error> {
+    match names.find(|name| !is_valid(name)) {
         Some(name) => Err(Error::InvalidProject(format!(
-            "`{field}` name `{name}` {}",
-            var_name::RULE
+            "`{field}` name `{name}` {rule}"
         ))),
         None => Ok(()),
     }
@@ -347,7 +366,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            matches!(&err, Error::InvalidProject(msg) if msg == &format!("`vars` name `steps` {}", var_name::RULE)),
+            matches!(&err, Error::InvalidProject(msg) if msg == &format!("`vars` name `steps` {}", var_name::VAR_RULE)),
             "{err}"
         );
         for (yaml, bad) in [

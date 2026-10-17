@@ -152,7 +152,7 @@ The whole project, every job including nested branches and loops, is checked whe
 - `cwd`, `stdin`, `env` or `capture_stdout` without `cmd`; `timeout` on a branch, switch or loop; `then`/`else` without `if`; `cases`/`default` without `switch`; `do`/`as` without `for_each`
 - a missing step or job file, a step file with a `name` field, or a step file that uses itself, directly or through other files
 - a name that appears twice in `jobs`, `schedules`, any `vars` or `states`, a `set`, a request's `headers` or `query`, a cmd step's `env`, or a switch's `cases`; a `schedules` entry for a job that doesn't exist
-- a step key, or a [variable name](variables.md#names) under any `vars` or `states` or in `as`, that isn't an identifier or is `steps` or `states`
+- a [variable name](variables.md#names) under any `vars` or in `as` that isn't uppercase (`A-Z`, `0-9`, `_`), or a step key or name under `states` that isn't an identifier or is `steps` or `states`
 - a `set` with neither `states` nor `vars`, or with any other step key than `vars`
 - a `set.states` name the job's `states` doesn't declare
 - a `set.vars` name the project's `vars` doesn't declare
