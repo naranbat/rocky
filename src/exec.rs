@@ -102,8 +102,9 @@ pub async fn exec(
         Some(path) => tokio::task::spawn_blocking(move || env_file::load(&path)).await??,
         None => BTreeMap::new(),
     };
-    // Checks every project var expands before any step runs.
-    outer_vars(&project.vars, &project_vars.snapshot(), &env)?;
+    // Also checks every project var expands before any step runs.
+    let mut outer_version = project_vars.version();
+    let mut outer = outer_vars(&project.vars, &project_vars.snapshot(), &env)?;
 
     let mut values = Map::new();
     let state_path = project.dir.join("states").join(format!("{job}.json"));
@@ -135,8 +136,13 @@ pub async fn exec(
                 continue;
             }
         };
-        // Other jobs may have updated project `vars` since the last step.
-        let outer = outer_vars(&project.vars, &project_vars.snapshot(), &env)?;
+        // Other jobs may have updated project `vars` since the last step. The version is read
+        // first, so an update in between only causes one more rebuild.
+        let version = project_vars.version();
+        if version != outer_version {
+            outer = outer_vars(&project.vars, &project_vars.snapshot(), &env)?;
+            outer_version = version;
+        }
         scope.extend(std::mem::take(&mut step.vars));
         let to_step_error = |source| Error::Step {
             name: name.clone(),

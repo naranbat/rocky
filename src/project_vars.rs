@@ -10,16 +10,29 @@ use crate::step::Step;
 /// Project `vars` set by `set` steps, in memory only: every job run given the
 /// same `ProjectVars` reads and updates one map. Names never updated aren't in it.
 #[derive(Clone, Debug, Default)]
-pub struct ProjectVars(Arc<Mutex<Map<String, Value>>>);
+pub struct ProjectVars(Arc<Mutex<Vars>>);
+
+#[derive(Debug, Default)]
+struct Vars {
+    values: Map<String, Value>,
+    /// Bumped on every update, so readers can tell whether their copy is current.
+    version: u64,
+}
 
 impl ProjectVars {
     pub fn snapshot(&self) -> Map<String, Value> {
-        self.lock().clone()
+        self.lock().values.clone()
+    }
+
+    pub fn version(&self) -> u64 {
+        self.lock().version
     }
 
     #[cfg(test)]
     pub fn update(&self, set: Map<String, Value>) {
-        self.lock().extend(set);
+        let mut vars = self.lock();
+        vars.values.extend(set);
+        vars.version += 1;
     }
 
     /// Calls `f` with the current values and applies the updates it returns, holding the
@@ -29,14 +42,15 @@ impl ProjectVars {
         f: impl FnOnce(&Map<String, Value>) -> Result<(T, Map<String, Value>), Error>,
     ) -> Result<T, Error> {
         let mut vars = self.lock();
-        let (result, set) = f(&vars)?;
-        vars.extend(set);
+        let (result, set) = f(&vars.values)?;
+        vars.values.extend(set);
+        vars.version += 1;
         Ok(result)
     }
 
     /// A run that panicked can't have left the map half-updated (each change is one
     /// `extend`), so a poisoned lock is still safe to use.
-    fn lock(&self) -> MutexGuard<'_, Map<String, Value>> {
+    fn lock(&self) -> MutexGuard<'_, Vars> {
         self.0.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
@@ -66,6 +80,7 @@ mod tests {
         ]));
         vars.update(Map::from_iter([("A".to_string(), json!([2]))]));
         assert_eq!(Value::Object(vars.snapshot()), json!({"A": [2], "B": "b"}));
+        assert_eq!(vars.version(), 2);
     }
 
     #[test]
