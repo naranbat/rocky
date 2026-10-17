@@ -1,0 +1,18 @@
+# Fixed values: the project's are seen by every job, a job's only by its own steps.
+#   rocky exec examples/values.yaml greet
+values:
+  GREETING: hello
+  SITE:
+    name: rocky
+    retries: 3
+
+jobs:
+  greet:
+    values:
+      GREETING: hi            # wins over the project's GREETING in this job
+    steps:
+      say:
+        cmd: [echo, '${GREETING} from ${SITE.name}, ${SITE.retries} retries']
+      site:
+        cmd: [cat]
+        stdin: ${SITE}        # exactly ${NAME}: the whole object, as JSON

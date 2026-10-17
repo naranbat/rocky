@@ -32,7 +32,7 @@ pub enum Error {
         source: Box<dyn std::error::Error + Send + Sync>,
     },
     #[error(
-        "variable `{0}` is not defined (checked steps, states, loop items, env_file, environment)"
+        "variable `{0}` is not defined (checked steps, states, loop items, values, env_file, environment)"
     )]
     UndefinedVar(String),
     #[error("unclosed `${{` in `{0}`")]

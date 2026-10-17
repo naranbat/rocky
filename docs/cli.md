@@ -53,7 +53,7 @@ Writes a starter file that loads as-is, creating missing parent directories, and
 | Level | Writes |
 |---|---|
 | `basic` (default) | The smallest file that runs, as in the table above |
-| `full` | Every field, each with a comment. A full project or job has `states`, an HTTP step, a cmd step, a branch, a switch, a loop and a `set` of `states`, and the project adds `schedules`. A full step is an HTTP or cmd step with all of its fields. Fields that need another file (`env_file`, a step file) are commented out, so the file still loads and runs as-is. Its steps use `${USER}` from the environment |
+| `full` | Every field, each with a comment. A full project or job has `values`, `states`, an HTTP step, a cmd step, a branch, a switch, a loop and a `set` of `states`, and the project adds `schedules`. A full step is an HTTP or cmd step with all of its fields. Fields that need another file (`env_file`, a step file) are commented out, so the file still loads and runs as-is. Its steps use `${USER}` from the environment |
 
 ```
 $ rocky new job jobs/deploy.yaml
@@ -74,7 +74,7 @@ add it to a project:
 |---|---|---|---|
 | Success | last step's result, or `null` if no HTTP or cmd step ran (`validate`: ``<PROJECT> is valid (jobs: …)``) | — | `0` |
 | A step fails (HTTP 4xx/5xx or non-zero exit) without `allow_failure` | that step's result | ``Error: step `name` returned HTTP 404`` or ``Error: step `name` exited with code 3`` | `1` |
-| Any other step error | — | ``Error: step `name` failed`` plus `Caused by:` lines, e.g. ``variable `NAME` is not defined (checked steps, states, loop items, env_file, environment)``, ``failed to start command `x` `` or ``command `x` timed out after 5s`` | `1` |
+| Any other step error | — | ``Error: step `name` failed`` plus `Caused by:` lines, e.g. ``variable `NAME` is not defined (checked steps, states, loop items, values, env_file, environment)``, ``failed to start command `x` `` or ``command `x` timed out after 5s`` | `1` |
 | Invalid file (bad YAML, unknown field, invalid step, condition or schedule) | — | the load error; nothing runs | `1` |
 | `exec` or `run` stopped with Ctrl-C (SIGINT), SIGTERM, SIGHUP or SIGQUIT | — | — | 128 + the signal number (`130`, `143`, `129`, `131`); running commands, and the processes they started, are killed |
 | Unknown job name | — | ``Error: no job `x` (available: `a`, `b`)`` | `1` |

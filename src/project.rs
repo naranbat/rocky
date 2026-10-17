@@ -12,11 +12,13 @@ use crate::schedule::Schedule;
 use crate::step::{self, Step};
 use crate::{state, var_name};
 
-/// Named jobs sharing an `env_file`, described in a YAML file.
+/// Named jobs sharing `values` and an `env_file`, described in a YAML file.
 #[derive(Debug)]
 pub struct Project {
     /// The project file's directory; job state files go in its `states/`.
     pub dir: PathBuf,
+    /// Static values for `${NAME}` in every job's steps.
+    pub values: BTreeMap<String, Value>,
     pub env_file: Option<PathBuf>,
     /// Job name to when `rocky run` runs it.
     pub schedules: BTreeMap<String, Schedule>,
@@ -27,6 +29,8 @@ pub struct Project {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawProject {
+    #[serde(default, deserialize_with = "unique")]
+    values: BTreeMap<String, Value>,
     env_file: Option<PathBuf>,
     #[serde(default, deserialize_with = "unique")]
     schedules: BTreeMap<String, Schedule>,
@@ -101,6 +105,9 @@ impl<'de> Deserialize<'de> for JobSource {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Job {
+    /// Static values for `${NAME}` in this job's steps, checked before the project's `values`.
+    #[serde(default, deserialize_with = "unique")]
+    pub values: BTreeMap<String, Value>,
     /// State names to their defaults, kept across runs in `states/<job>.json`.
     #[serde(default, deserialize_with = "unique")]
     pub states: BTreeMap<String, Value>,
@@ -139,6 +146,12 @@ pub fn load(path: &Path) -> Result<Project, Error> {
             "schedule for unknown job `{name}`"
         )));
     }
+    check_names(
+        "values",
+        raw.values.keys(),
+        var_name::is_valid_var,
+        var_name::VAR_RULE,
+    )?;
     let dir = path.parent().unwrap_or(Path::new(""));
     let mut jobs = BTreeMap::new();
     for (name, source) in raw.jobs {
@@ -150,6 +163,7 @@ pub fn load(path: &Path) -> Result<Project, Error> {
     }
     Ok(Project {
         dir: dir.to_path_buf(),
+        values: raw.values,
         env_file: raw.env_file.map(|p| dir.join(p)),
         schedules: raw.schedules,
         jobs,
@@ -169,6 +183,12 @@ fn load_job(source: JobSource, dir: &Path) -> Result<Job, Error> {
     if job.steps.is_empty() {
         return Err(Error::InvalidProject("job has no steps".to_string()));
     }
+    check_names(
+        "values",
+        job.values.keys(),
+        var_name::is_valid_var,
+        var_name::VAR_RULE,
+    )?;
     check_names(
         "states",
         job.states.keys(),
@@ -336,6 +356,41 @@ mod tests {
     }
 
     #[test]
+    fn loads_and_checks_values_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = load_in(
+            dir.path(),
+            "values: {BASE: https://x, N: 3, CONF: {a: [1]}}\n\
+             jobs:\n  w: {values: {_K2: k}, steps: {e: {cmd: [echo]}}}\n",
+        )
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(&project.values).unwrap(),
+            serde_json::json!({"BASE": "https://x", "N": 3, "CONF": {"a": [1]}})
+        );
+        assert_eq!(project.take("w").unwrap().values["_K2"], "k");
+
+        let err = load_in(
+            dir.path(),
+            "values: {a: x}\njobs:\n  w: {steps: {e: {cmd: [echo]}}}\n",
+        )
+        .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            format!("invalid project: `values` name `a` {}", var_name::VAR_RULE)
+        );
+        let err = load_in(
+            dir.path(),
+            "jobs:\n  w: {values: {A-B: x}, steps: {e: {cmd: [echo]}}}\n",
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, Error::Job { name, source } if name == "w" && source.to_string().contains("`A-B`")),
+            "{err}"
+        );
+    }
+
+    #[test]
     fn rejects_vars() {
         let dir = tempfile::tempdir().unwrap();
         for yaml in [
@@ -362,6 +417,14 @@ mod tests {
             (
                 format!("schedules: {{w: {{every: 1s}}, w: {{every: 2s}}}}\njobs: {{{w}}}\n"),
                 "schedules: duplicate key `w`",
+            ),
+            (
+                format!("values: {{A: x, A: y}}\njobs: {{{w}}}\n"),
+                "values: duplicate key `A`",
+            ),
+            (
+                "jobs:\n  w: {values: {A: x, A: y}, steps: {e: {cmd: [echo]}}}\n".to_string(),
+                "jobs.w.values: duplicate key `A`",
             ),
             (
                 "jobs:\n  w: {states: {N: 0, N: 1}, steps: {e: {cmd: [echo]}}}\n"

@@ -1,6 +1,6 @@
 # Env
 
-Write `${NAME}` to insert a value. `NAME` can be a plain name (`${API_TOKEN}`) or a dot path into a JSON value (`${steps.login.body.user.id}`, `${USER.id}`). Plain names come from the project's env file or the process environment; `steps`, `states` and loop items come from the run itself.
+Write `${NAME}` to insert a value. `NAME` can be a plain name (`${API_TOKEN}`) or a dot path into a JSON value (`${steps.login.body.user.id}`, `${USER.id}`). Plain names come from `values`, the project's env file or the process environment; `steps`, `states` and loop items come from the run itself.
 
 ```sh
 # example.env
@@ -26,7 +26,34 @@ jobs:
 
 Examples: [`examples/env-file.yaml`](../examples/env-file.yaml) and [`examples/cmd-env.yaml`](../examples/cmd-env.yaml) with [`examples/example.env`](../examples/example.env).
 
-There is no `vars` field: a value you'd hard-code goes straight into the step, and a value that changes between machines or is secret goes in the env file. To keep a value between runs, use [state](state.md).
+A value you'd hard-code goes in [`values`](#values), and a value that changes between machines or is secret goes in the env file. To keep a value between runs, use [state](state.md).
+
+## Values
+
+Fixed values written in the YAML, read as `${NAME}`.
+
+```yaml
+values:                      # the project's: seen by every step of every job
+  GREETING: hello
+  SITE:
+    name: rocky
+    retries: 3
+jobs:
+  greet:
+    values:                  # the job's: seen by this job's steps only
+      GREETING: hi           # wins over the project's GREETING in this job
+    steps:
+      say:
+        cmd: [echo, '${GREETING} from ${SITE.name}, ${SITE.retries} retries']
+```
+
+Example: [`examples/values.yaml`](../examples/values.yaml).
+
+- `values` can go at the top level of a project and in a job, inline or in a job file. Steps nested in branches, switches and loops, and step files, see their job's values. Steps can't have their own `values`.
+- A value can be a string, number, boolean, list or object, and keeps its JSON type (see [typed values](#typed-values)). Use a dot path to read inside one: `${SITE.name}`.
+- Values are used as written: `${...}` inside a value is not expanded.
+- A job value with the same name as a project value replaces it for that job.
+- A `set` step can't change a value; use [state](state.md) for that.
 
 ## Env file
 
@@ -66,7 +93,7 @@ Only at the top level of a project, with a path relative to the project file. It
 | condition operator values other than `matches` | |
 | [`set`](state.md#set) values | |
 
-An undefined variable fails the step: ``variable `NAME` is not defined (checked steps, states, loop items, env_file, environment)``.
+An undefined variable fails the step: ``variable `NAME` is not defined (checked steps, states, loop items, values, env_file, environment)``.
 
 ## Where values come from
 
@@ -75,6 +102,8 @@ An undefined variable fails the step: ``variable `NAME` is not defined (checked 
 | earlier steps, as `steps.NAME...` ([Projects](projects.md#using-earlier-steps-output)) | any JSON type |
 | loop element from [`for_each`](loops.md) | any JSON type |
 | job [state](state.md), as `states.NAME` | any JSON type |
+| the job's [`values`](#values) | any JSON type |
+| the project's [`values`](#values) | any JSON type |
 | the project's [env file](#env-file) | string |
 | the process environment | string |
 
@@ -85,16 +114,18 @@ These only fill in `${...}`. A command doesn't see env file values in its enviro
 First match wins, for every kind of step, and for conditions, `switch` and `for_each`:
 
 1. loop variables, `steps.NAME...` and `states.NAME`
-2. project `env_file`
-3. the process environment
+2. job `values`
+3. project `values`
+4. project `env_file`
+5. the process environment
 
 ## Names
 
-A loop's `as` name must be uppercase: an uppercase letter or `_`, then uppercase letters, digits or `_` (`ITEM`, `USER_ID`, `_TMP2`). A name under `states` or a step key must be an identifier: a letter or `_`, then letters, digits or `_` (`count`, `user_id`); `steps` and `states` are reserved. Anything else fails when the project loads. Names from an env file or the environment aren't checked.
+A `values` name and a loop's `as` name must be uppercase: an uppercase letter or `_`, then uppercase letters, digits or `_` (`ITEM`, `USER_ID`, `_TMP2`). A name under `states` or a step key must be an identifier: a letter or `_`, then letters, digits or `_` (`count`, `user_id`); `steps` and `states` are reserved. Anything else fails when the project loads. Names from an env file or the environment aren't checked.
 
 ## Typed values
 
-Values from env files and the environment are strings. Values from loops, `steps` and `states` keep their JSON type when a **`json`** or **`stdin`** field, a `set` value or a condition operator value is **exactly** `${NAME}`. Anywhere else, they're rendered as text, with objects and arrays as compact JSON.
+Values from env files and the environment are strings. Values from `values`, loops, `steps` and `states` keep their JSON type when a **`json`** or **`stdin`** field, a `set` value or a condition operator value is **exactly** `${NAME}`. Anywhere else, they're rendered as text, with objects and arrays as compact JSON.
 
 ```yaml
 # after a step `stats` that printed {"count": 5, "tags": ["a", "b"]}

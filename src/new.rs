@@ -44,6 +44,13 @@ const FULL_PROJECT_HEADER: &str = "\
 #   rocky exec <this file> example   runs one job once
 #   rocky run <this file>            runs the jobs in `schedules` until stopped
 
+# Fixed values read as ${NAME} in every job's steps: a string, number or object (${SITE.url}).
+# Names are uppercase letters, digits and `_`. A job's own `values` win over these.
+values:
+  SITE:
+    url: https://httpbin.org
+    retries: 3
+
 # A .env file for values used as ${NAME} (secrets, settings), relative to this file. It is read
 # when a run starts, so it must exist. ${USER} below comes from it or from the environment.
 # env_file: .env
@@ -219,7 +226,9 @@ pub fn ask_http(mut input: impl BufRead, mut out: impl Write) -> Result<bool, Er
 /// A job's `steps` with one step of every kind, using every field.
 fn full_steps() -> String {
     format!(
-        "states:                             # kept between runs in states/<job>.json, read as ${{states.NAME}}\n  \
+        "values:                             # fixed values for this job's steps, read as ${{NAME}}\n  \
+         REGION: eu-west-1\n\
+         states:                             # kept between runs in states/<job>.json, read as ${{states.NAME}}\n  \
          LAST_STATUS: none                 # the default, used until `set` changes it\n  \
          PREVIOUS_STATUS: none\n\
          steps:\n  \

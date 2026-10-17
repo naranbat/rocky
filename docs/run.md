@@ -68,7 +68,7 @@ Every log line is one JSON object on **stdout**, with `job`, `time` (local time 
 | `skipped` | `reason`: why the job won't run, e.g. its `at` time has passed |
 
 ```json
-{"job":"poll","time":"2026-10-09T09:30:00+09:00","event":"error","error":"step `get` failed: variable `TOKEN` is not defined (checked steps, states, loop items, env_file, environment)"}
+{"job":"poll","time":"2026-10-09T09:30:00+09:00","event":"error","error":"step `get` failed: variable `TOKEN` is not defined (checked steps, states, loop items, values, env_file, environment)"}
 ```
 
 A step that ends in an error gets no `step` line; the `error` line names it. See also [Debugging](debugging.md#run-log-lines).
