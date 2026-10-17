@@ -1,0 +1,31 @@
+# Commands connected with `pipe`, without a shell. Only runs commands.
+# Run: rocky exec examples/pipe.yaml words
+jobs:
+  words:
+    values:
+      TOP: 2
+    tasks:
+      # The most common words, like `tr -s ' ' '\n' | sort | uniq -c | sort -rn | head -n 2 |
+      # awk '{print $2}'` in a shell. Each command's stdout streams into the next one's stdin;
+      # `stdin` goes to `cmd`, and the result's `stdout` is the last command's output.
+      # `${...}` works in every command.
+      top:
+        cmd: [tr, -s, " ", "\n"]
+        pipe:
+          - [sort]
+          - [uniq, -c]
+          - [sort, -rn]
+          - [head, -n, "${TOP}"]
+          - [awk, "{print $2}"]
+        stdin: the cat saw the dog and the cat ran
+
+      # Like `set -o pipefail`: `exit_code` is the last non-zero one, here 3 although `cat`
+      # succeeds. `stderr` collects every command's stderr.
+      failing:
+        cmd: [sh, -c, "echo 'no input' >&2; exit 3"]
+        pipe:
+          - [cat]
+        allow_failure: true
+
+      report:
+        cmd: [echo, "top: ${tasks.top.stdout} | failing: ${tasks.failing.exit_code} (${tasks.failing.stderr})"]

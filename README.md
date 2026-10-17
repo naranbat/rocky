@@ -24,6 +24,7 @@ These projects in [`examples/`](examples/) run as they are:
 - [`imports.yaml`](examples/imports.yaml): the same, with every job in its own file under [`jobs/`](examples/jobs/)
 - [`env-file.yaml`](examples/env-file.yaml): the env file [`example.env`](examples/example.env), against httpbin.org
 - [`cmd-env.yaml`](examples/cmd-env.yaml): values passed to commands with `env`; only runs commands
+- [`pipe.yaml`](examples/pipe.yaml): commands connected with `pipe`, without a shell; only runs commands
 - [`values.yaml`](examples/values.yaml): fixed values at project and job level; only runs commands
 - [`state.yaml`](examples/state.yaml): a counter kept between runs; only runs commands
 
