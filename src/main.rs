@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 use nix::sys::signal::Signal;
-use rocky::{error, exec, new, process_group, project, run};
+use rocky::{error, exec, new, process_group, project, run, socket};
 use tokio::signal::unix::{SignalKind, signal};
 
 #[derive(Parser)]
@@ -32,6 +32,15 @@ enum Command {
         /// Also run any job of the project when a client of this Unix socket sends `{"job": "NAME"}`.
         #[arg(long)]
         socket: Option<PathBuf>,
+    },
+    /// Ask a `rocky run --socket` to run one job.
+    ///
+    /// Returns once the run is queued; the run logs to `run`'s output like a scheduled one.
+    Trigger {
+        /// The socket `run` listens on.
+        socket: PathBuf,
+        /// The job to run.
+        job: String,
     },
     /// Check a project for errors without running it.
     ///
@@ -75,6 +84,10 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         Command::Run { file, socket } => until_stopped(run::run(&file, socket.as_deref())).await?,
+        Command::Trigger { socket, job } => {
+            socket::send(&socket, &job).await?;
+            println!("queued `{job}`");
+        }
         Command::Validate { file } => {
             let project = project::load(&file)?;
             let names: Vec<_> = project.jobs.keys().map(|n| format!("`{n}`")).collect();

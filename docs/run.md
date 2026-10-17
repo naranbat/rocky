@@ -87,10 +87,17 @@ A task that ends in an error gets no `task` line; the `error` line names it. See
 
 `rocky run <project> --socket <PATH>` also listens on a Unix domain socket at `PATH`. A client can then run **any** job of the project, scheduled or not. With `--socket`, the project doesn't need `schedules`.
 
-Each request is one line of JSON, `{"job": "NAME"}`. Each request gets one JSON line back. A connection can send any number of requests.
+Each request is one line of JSON, `{"job": "NAME"}`. Each request gets one JSON line back. A connection can send any number of requests. [`rocky trigger`](cli.md#rocky-trigger-socket-job) sends one request for you:
 
 ```sh
 $ rocky run project.yaml --socket /tmp/rocky.sock &
+$ rocky trigger /tmp/rocky.sock report
+queued `report`
+```
+
+Any other client works too:
+
+```sh
 $ echo '{"job": "report"}' | socat - UNIX-CONNECT:/tmp/rocky.sock
 {"ok":true}
 $ echo '{"job": "deploy"}' | socat - UNIX-CONNECT:/tmp/rocky.sock

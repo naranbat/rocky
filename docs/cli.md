@@ -1,11 +1,12 @@
 # Command line
 
-`rocky` has four subcommands. `exec`, `run` and `validate` take a [project](projects.md) file as their first positional argument; `new` writes starter files.
+`rocky` has five subcommands. `exec`, `run` and `validate` take a [project](projects.md) file as their first positional argument; `trigger` asks a running `run` to run a job; `new` writes starter files.
 
 ```sh
 rocky exec <PROJECT> <JOB>
 rocky run <PROJECT>
 rocky run <PROJECT> --socket <PATH>
+rocky trigger <SOCKET> <JOB>
 rocky validate <PROJECT>
 rocky new project <PATH>
 rocky new job <PATH>
@@ -31,6 +32,19 @@ Error: no job `deploy` (available: `login`, `report`)
 Runs every job listed in the project's [`schedules`](schedules.md), until stopped with Ctrl-C, SIGTERM, SIGHUP or SIGQUIT, or until only finished `at` schedules are left. Each run writes [JSON log lines](run.md#output) to stdout. See [Run](run.md).
 
 `--socket <PATH>` also listens on a Unix domain socket, so clients can run any job by sending `{"job": "NAME"}`. With it, `schedules` are optional and `run` runs until stopped. See [Triggering jobs over a socket](run.md#triggering-jobs-over-a-socket).
+
+## `rocky trigger <SOCKET> <JOB>`
+
+Asks the `rocky run --socket <SOCKET>` listening on `SOCKET` to run `JOB`, any job of its project. It returns once the run is queued and prints one line; the run logs to `run`'s output. See [Triggering jobs over a socket](run.md#triggering-jobs-over-a-socket).
+
+```
+$ rocky trigger /tmp/rocky.sock report
+queued `report`
+$ rocky trigger /tmp/rocky.sock deploy
+Error: no job `deploy` (available: `poll`, `report`)
+```
+
+If nothing listens on `SOCKET`, it fails with ``Error: socket <SOCKET>`` and the cause on a `Caused by:` line.
 
 ## `rocky validate <PROJECT>`
 
@@ -81,6 +95,7 @@ add it to a project:
 | Invalid file (bad YAML, unknown field, invalid task, condition or schedule) | — | the load error; nothing runs | `1` |
 | `exec` or `run` stopped with Ctrl-C (SIGINT), SIGTERM, SIGHUP or SIGQUIT | — | — | 128 + the signal number (`130`, `143`, `129`, `131`); running commands, and the processes they started, are killed |
 | Unknown job name | — | ``Error: no job `x` (available: `a`, `b`)`` | `1` |
+| `trigger`: nothing listens on the socket | — | ``Error: socket <SOCKET>`` plus a `Caused by:` line | `1` |
 
 Tasks are labelled by their key in error messages, at any depth: a task `notify` inside a loop's `do` is ``task `notify` ``.
 

@@ -91,6 +91,8 @@ pub enum Error {
     },
     #[error("socket {} is in use by another process", .0.display())]
     SocketInUse(PathBuf),
+    #[error("{0}")]
+    Trigger(String),
 }
 
 impl Error {

@@ -918,3 +918,37 @@ fn run_socket_replaces_a_stale_socket_but_not_a_live_one() {
         lines.iter().any(|line| line["event"] == "done")
     });
 }
+
+#[test]
+fn trigger_queues_a_job_and_reports_errors() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = write(
+        dir.path(),
+        "project.yaml",
+        "jobs:\n  a:\n    tasks: {e: {cmd: [echo]}}\n",
+    );
+    let socket = dir.path().join("rocky.sock");
+    let trigger = |job: &str| rocky(&["trigger", path_str(&socket), job], dir.path());
+
+    let missing = trigger("a");
+    assert_eq!(missing.status.code(), Some(1));
+    assert_stderr_contains(&missing, "socket");
+
+    let child = spawn_rocky(
+        &["run", path_str(&project), "--socket", path_str(&socket)],
+        dir.path(),
+    );
+    connect(&socket);
+    let queued = trigger("a");
+    assert!(queued.status.success(), "{}", stderr(&queued));
+    assert_eq!(String::from_utf8_lossy(&queued.stdout), "queued `a`\n");
+
+    let unknown = trigger("nope");
+    assert_eq!(unknown.status.code(), Some(1));
+    assert_eq!(stderr(&unknown), "Error: no job `nope` (available: `a`)\n");
+    assert!(unknown.stdout.is_empty());
+
+    lines_until(child, |lines| {
+        lines.iter().any(|line| line["event"] == "done")
+    });
+}

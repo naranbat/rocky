@@ -1,6 +1,7 @@
 //! `run --socket`: a Unix domain socket that triggers jobs. Each line a client sends is a
 //! request `{"job": "NAME"}`; each gets one JSON line back, `{"ok": true}` once the run is
-//! queued, or `{"error": "..."}`. The run itself is logged like a scheduled one.
+//! queued, or `{"error": "..."}`. The run itself is logged like a scheduled one. `rocky
+//! trigger` is the client.
 
 use std::fs::Permissions;
 use std::os::unix::fs::{FileTypeExt, PermissionsExt};
@@ -38,6 +39,35 @@ pub async fn bind(path: &Path) -> Result<UnixListener, Error> {
     let listener = UnixListener::bind(path).map_err(failed)?;
     std::fs::set_permissions(path, Permissions::from_mode(0o600)).map_err(failed)?;
     Ok(listener)
+}
+
+/// Asks the `run` listening on `socket` to run `job`, and returns once the run is queued.
+/// An error reply from `run` becomes the error.
+pub async fn send(socket: &Path, job: &str) -> Result<(), Error> {
+    let failed = |source| Error::Socket {
+        path: socket.to_path_buf(),
+        source,
+    };
+    let stream = UnixStream::connect(socket).await.map_err(failed)?;
+    let (read, mut write) = stream.into_split();
+    let request = json!({"job": job});
+    write
+        .write_all(format!("{request}\n").as_bytes())
+        .await
+        .map_err(failed)?;
+    let mut reply = String::new();
+    BufReader::new(read)
+        .read_line(&mut reply)
+        .await
+        .map_err(failed)?;
+    let reply: Value = serde_json::from_str(&reply).unwrap_or_default();
+    if reply["ok"] == true {
+        return Ok(());
+    }
+    Err(Error::Trigger(match reply["error"].as_str() {
+        Some(error) => error.to_string(),
+        None => format!("unexpected reply from socket {}", socket.display()),
+    }))
 }
 
 /// Serves clients of `listener` until accepting a connection fails. `project` is the
