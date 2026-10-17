@@ -1,6 +1,6 @@
-# rocky
+# Rocky
 
-A CLI for automating repeatable work: chain HTTP requests and commands into YAML projects, run on demand or on a schedule. A project file holds named jobs; each job runs tasks in order, where later tasks read earlier results, and can keep named values between runs. Run a job with `rocky exec`, or run jobs on a schedule with `rocky run`, and get the result back as JSON, with status, headers, and body kept separate.
+A CLI for automating repeatable work: chain HTTP requests and commands into YAML projects, run on demand or on a schedule. A project file holds named jobs; each job runs tasks in order, where later tasks read earlier results, and can keep named values between runs. Run a job with `rocky exec`, or run jobs on a schedule with `rocky run`, and get the result back as JSON (for HTTP tasks, status, headers, and body kept separate).
 
 ## Install
 
