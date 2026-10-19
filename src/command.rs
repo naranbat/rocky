@@ -233,10 +233,11 @@ mod tests {
         assert_eq!(result.stdout, json!(big));
     }
 
-    /// Whether process `pid` is gone, waiting up to 2s for it to be killed. A zombie counts
-    /// as gone: in a container without an init process, nothing may reap it.
-    fn gone(pid: i32) -> bool {
-        (0..40).any(|_| {
+    /// Whether process `pid` is gone, waiting up to 2s for it to be killed. Waits on the
+    /// runtime, so the run's tasks can reap a killed stage. A zombie counts as gone: in a
+    /// container without an init process, nothing may reap it.
+    async fn gone(pid: i32) -> bool {
+        for _ in 0..40 {
             // The state follows the `)` closing the command name.
             let zombie = std::fs::read_to_string(format!("/proc/{pid}/stat")).is_ok_and(|stat| {
                 stat.rsplit_once(')')
@@ -245,11 +246,12 @@ mod tests {
             // Signal 0 only checks that the process exists.
             let alive =
                 nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), None).is_ok() && !zombie;
-            if alive {
-                std::thread::sleep(std::time::Duration::from_millis(50));
+            if !alive {
+                return true;
             }
-            !alive
-        })
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        false
     }
 
     #[tokio::test]
@@ -278,7 +280,7 @@ mod tests {
             .trim()
             .parse()
             .unwrap();
-        assert!(gone(pid), "`sleep` ({pid}) still runs");
+        assert!(gone(pid).await, "`sleep` ({pid}) still runs");
     }
 
     #[tokio::test]
@@ -445,7 +447,7 @@ mod tests {
                 .trim()
                 .parse()
                 .unwrap();
-            assert!(gone(pid), "`{name}` stage ({pid}) still runs");
+            assert!(gone(pid).await, "`{name}` stage ({pid}) still runs");
         }
     }
 }
