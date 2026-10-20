@@ -532,6 +532,17 @@ fn run_on_start_and_the_at_run_log_control_flow() {
 }
 
 #[test]
+fn run_on_start_alone_runs_once_and_exits() {
+    let dir = tempfile::tempdir().unwrap();
+    let output = run_yaml(
+        dir.path(),
+        "jobs:\n  hello:\n    schedule: {run_on_start: true}\n    tasks:\n      greet:\n        cmd: [echo, hi]\n",
+    );
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(events(&output), ["task", "done"]);
+}
+
+#[test]
 fn run_rejects_a_project_without_a_schedule() {
     let dir = tempfile::tempdir().unwrap();
     let output = run_yaml(dir.path(), "jobs:\n  a:\n    tasks: {e: {cmd: [echo]}}\n");

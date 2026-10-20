@@ -62,7 +62,8 @@ const FULL_SCHEDULE: &str = "\
 # When `rocky run` runs this job; `exec` checks it but doesn't run it. Exactly one of `every` (30s, 5m, 2h;
 # optional `delay` before the first run), `hourly` (a minute, 0-59), `daily` (\"09:30\"),
 # `weekly` ([mon, fri] with `time: \"09:30\"`) or `at` (\"2027-10-10T09:30:00\"), in local time.
-# All but `every` take `run_on_start: true` to also run once when `run` starts.
+# All but `every` take `run_on_start: true` to also run once when `run` starts; on its own,
+# `run_on_start: true` runs the job once when `run` starts.
 schedule:
   every: 1h
   delay: 10s

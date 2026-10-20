@@ -14,6 +14,8 @@ pub enum Schedule {
     Every { interval: Duration, delay: Duration },
     /// At wall-clock times in the local time zone, and once at start if `run_on_start`.
     Clock { clock: Clock, run_on_start: bool },
+    /// Once, when `run` starts: `run_on_start` without a clock.
+    OnStart,
 }
 
 #[derive(Debug)]
@@ -184,6 +186,7 @@ impl TryFrom<RawSchedule> for Schedule {
                     ))
                 })?)
             }
+            (None, None, None, None, None) if run_on_start => return Ok(Schedule::OnStart),
             _ => {
                 return Err(invalid(
                     "needs exactly one of `every`, `hourly`, `daily`, `weekly` or `at`".to_string(),
@@ -269,6 +272,7 @@ mod tests {
             ("daily: \"09:30\"\ndelay: 5s\n", "only works with `every`"),
             ("every: 5m\ndaily: \"09:30\"\n", "exactly one"),
             ("{}\n", "exactly one"),
+            ("run_on_start: false\n", "exactly one"),
             (
                 "daily: \"09:30\"\nweekly: [mon]\ntime: \"09:30\"\n",
                 "exactly one",
@@ -394,6 +398,14 @@ mod tests {
                 "{yaml}"
             );
         }
+    }
+
+    #[test]
+    fn parses_run_on_start_alone() {
+        assert!(matches!(
+            parse("run_on_start: true\n").unwrap(),
+            Schedule::OnStart
+        ));
     }
 
     #[test]

@@ -1,6 +1,6 @@
 # Run
 
-`rocky run <project>` runs every job of the [project](projects.md) that has a `schedule`, until stopped with Ctrl-C, SIGTERM, SIGHUP or SIGQUIT, or until only finished `at` schedules are left. Jobs without a `schedule` are skipped; run them with `rocky exec`.
+`rocky run <project>` runs every job of the [project](projects.md) that has a `schedule`, until stopped with Ctrl-C, SIGTERM, SIGHUP or SIGQUIT, or until only finished `at` and `run_on_start`-only schedules are left. Jobs without a `schedule` are skipped; run them with `rocky exec`.
 
 ```yaml
 jobs:
