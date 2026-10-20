@@ -26,7 +26,7 @@ enum Command {
     },
     /// Run a project's scheduled jobs.
     ///
-    /// Runs until stopped. Prints one JSON line per task, branch, switch, loop and run, also appended to `logs/<date>.log`.
+    /// Runs until stopped, or until only finished `at` schedules are left. Prints one JSON line per task, branch, switch, loop and run, also appended to `logs/<date>.log`.
     Run {
         file: PathBuf,
         /// Also run any job of the project when a client of this Unix socket sends `{"job": "NAME"}`.
