@@ -1,21 +1,15 @@
 # A project: jobs that share an env file. Every job sends requests to https://httpbin.org.
 #   rocky exec examples/httpbin.yaml login       # run one job
-#   rocky run examples/httpbin.yaml              # run the jobs listed in `schedules`
+#   rocky run examples/httpbin.yaml              # run the jobs that have a `schedule`
 env_file: httpbin.env                 # BASE, USER and COUNT
-
-# When `rocky run` runs each job. `rocky exec` checks this but doesn't run it.
-schedules:
-  login:
-    every: 5m                         # every 30s, 5m, 2h...
-    delay: 10s                        # optional: wait before the first run
-  mixed:
-    daily: "09:30"                    # local time, every day
-  conditional:
-    hourly: 15                        # at minute 15 of every hour
 
 jobs:
   # List, "log in", then use their results.
   login:
+    # When `rocky run` runs this job. `rocky exec` checks this but doesn't run it.
+    schedule:
+      every: 5m                       # every 30s, 5m, 2h...
+      delay: 10s                      # optional: wait before the first run
     tasks:
       list:
         get:
@@ -41,6 +35,8 @@ jobs:
   # HTTP and cmd tasks together, including writing and reading a file. Any task can read an earlier task's
   # result with ${tasks.NAME.path}.
   mixed:
+    schedule:
+      daily: "09:30"                  # local time, every day
     tasks:
       today:
         cmd: [date, +%Y-%m-%d]        # program + arguments, run without a shell
@@ -71,6 +67,8 @@ jobs:
 
   # Branching: if count > 10 call /big, else check the message.
   conditional:
+    schedule:
+      hourly: 15                      # at minute 15 of every hour
     tasks:
       stats:
         get:

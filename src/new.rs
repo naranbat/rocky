@@ -42,7 +42,7 @@ get: https://httpbin.org/get
 const FULL_PROJECT_HEADER: &str = "\
 # A project: named jobs. Every field is shown; delete what you don't need.
 #   rocky exec <this file> example   runs one job once
-#   rocky run <this file>            runs the jobs in `schedules` until stopped
+#   rocky run <this file>            runs the jobs that have a `schedule` until stopped
 
 # Fixed values read as ${NAME} in every job's tasks: any YAML value (string, number, boolean,
 # list, object). Names are uppercase letters, digits and `_`. A job's own `values` win over these.
@@ -53,18 +53,19 @@ values:
 # when a run starts, so it must exist. ${USER} below comes from it or from the environment.
 # env_file: .env
 
-# When `rocky run` runs each job; `exec` ignores this. Exactly one of `every` (30s, 5m,
-# 2h; optional `delay` before the first run), `hourly` (a minute, 0-59), `daily` (\"09:30\"),
-# `weekly` ([mon, fri] with `time: \"09:30\"`) or `at` (\"2027-10-10T09:30:00\"), in local time.
-# All but `every` take `run_on_start: true` to also run once when `run` starts.
-schedules:
-  example:
-    every: 1h
-    delay: 10s
-
 # Job name: its tasks, or the path of a job file (`report: jobs/report.yaml`).
 jobs:
   example:
+";
+
+const FULL_SCHEDULE: &str = "\
+# When `rocky run` runs this job; `exec` ignores it. Exactly one of `every` (30s, 5m, 2h;
+# optional `delay` before the first run), `hourly` (a minute, 0-59), `daily` (\"09:30\"),
+# `weekly` ([mon, fri] with `time: \"09:30\"`) or `at` (\"2027-10-10T09:30:00\"), in local time.
+# All but `every` take `run_on_start: true` to also run once when `run` starts.
+schedule:
+  every: 1h
+  delay: 10s
 ";
 
 const FULL_JOB_HEADER: &str = "\
@@ -170,7 +171,7 @@ pub fn create(kind: Kind, level: Level, path: &Path) -> Result<String, Error> {
             let name = path.file_stem().unwrap_or_default().to_string_lossy();
             (
                 if full {
-                    format!("{FULL_JOB_HEADER}{}", full_tasks())
+                    format!("{FULL_JOB_HEADER}\n{}", full_tasks())
                 } else {
                     JOB.to_string()
                 },
@@ -217,10 +218,10 @@ pub fn ask_http(mut input: impl BufRead, mut out: impl Write) -> Result<bool, Er
     }
 }
 
-/// A job's `tasks` with one task of every kind, using every field.
+/// A job's `schedule`, and its `tasks` with one task of every kind, using every field.
 fn full_tasks() -> String {
     format!(
-        "values:                             # fixed values for this job's tasks, read as ${{NAME}}\n  \
+        "{FULL_SCHEDULE}values:                             # fixed values for this job's tasks, read as ${{NAME}}\n  \
          REGION: eu-west-1\n  \
          LIMITS: {{retries: 3}}             # an object: read inside it with ${{LIMITS.retries}}\n\
          tasks:\n  \
@@ -281,6 +282,7 @@ mod tests {
         create(Kind::Project, level, &project_file).unwrap();
         let mut project = project::load(&project_file).unwrap();
         let example = project.take("example").unwrap();
+        assert_eq!(example.schedule.is_some(), matches!(level, Level::Full));
         if matches!(level, Level::Full) {
             assert_eq!(example.values["REGION"], "eu-west-1");
             assert_eq!(example.values["LIMITS"]["retries"], 3);
@@ -299,6 +301,7 @@ mod tests {
         .unwrap();
         let mut project = project::load(&project_file).unwrap();
         let w = project.take("w").unwrap();
+        assert_eq!(w.schedule.is_some(), matches!(level, Level::Full));
         if matches!(level, Level::Full) {
             assert_eq!(w.values["REGION"], "eu-west-1");
         }

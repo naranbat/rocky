@@ -12,7 +12,7 @@ use crate::job_lock::JobLocks;
 use crate::schedule::{Clock, Schedule};
 use crate::{exec, progress, project, socket};
 
-/// Runs every job listed in the project's `schedules` until all schedules are done (only `at`
+/// Runs every job that has a `schedule` until all schedules are done (only `at`
 /// jobs ever finish). Every log line is one JSON object on stdout (also appended to
 /// `logs/<date>.log`) with `job`, `time` and `event` fields. Each run reloads the
 /// project and prints a line per task, branch and loop, then a `done` line (with `failed_task` and its `reason` if a task
@@ -22,14 +22,17 @@ use crate::{exec, progress, project, socket};
 /// the other jobs keep running.
 ///
 /// With a `socket`, `run` also runs the jobs that clients of it trigger (see [`socket`]),
-/// doesn't need `schedules`, and runs until stopped. A job's runs, scheduled or triggered,
-/// never overlap: each waits for the one before it.
+/// doesn't need any job to have a `schedule`, and runs until stopped. A job's runs,
+/// scheduled or triggered, never overlap: each waits for the one before it.
 pub async fn run(path: &Path, socket: Option<&Path>) -> Result<(), Error> {
     let project = project::load(path)?;
-    if project.schedules.is_empty() && socket.is_none() {
-        return Err(Error::InvalidProject(
-            "project has no `schedules`".to_string(),
-        ));
+    let scheduled: Vec<_> = project
+        .jobs
+        .into_iter()
+        .filter_map(|(name, job)| job.schedule.map(|schedule| (name, schedule)))
+        .collect();
+    if scheduled.is_empty() && socket.is_none() {
+        return Err(Error::InvalidProject("no job has a `schedule`".to_string()));
     }
     let listener = match socket {
         Some(socket) => Some((socket::bind(socket).await?, socket)),
@@ -39,7 +42,7 @@ pub async fn run(path: &Path, socket: Option<&Path>) -> Result<(), Error> {
     let now = Zoned::now();
     let mut jobs = JoinSet::new();
     let mut names = HashMap::new();
-    for (name, schedule) in project.schedules {
+    for (name, schedule) in scheduled {
         if let Schedule::Clock {
             clock,
             run_on_start: false,

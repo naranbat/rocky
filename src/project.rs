@@ -16,8 +16,6 @@ use crate::var_name;
 #[derive(Debug)]
 pub struct Project {
     pub env_file: Option<PathBuf>,
-    /// Job name to when `rocky run` runs it.
-    pub schedules: BTreeMap<String, Schedule>,
     pub jobs: BTreeMap<String, Job>,
 }
 
@@ -28,8 +26,6 @@ struct RawProject {
     #[serde(default, deserialize_with = "unique")]
     values: BTreeMap<String, Value>,
     env_file: Option<PathBuf>,
-    #[serde(default, deserialize_with = "unique")]
-    schedules: BTreeMap<String, Schedule>,
     #[serde(deserialize_with = "unique")]
     jobs: BTreeMap<String, JobSource>,
 }
@@ -97,10 +93,13 @@ impl<'de> Deserialize<'de> for JobSource {
     }
 }
 
-/// Tasks run in order, by `rocky exec`, or by `rocky run` on the project's `schedules`.
+/// Tasks run in order, by `rocky exec`, or by `rocky run` on the job's `schedule`.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Job {
+    /// When `rocky run` runs this job.
+    #[serde(default)]
+    pub schedule: Option<Schedule>,
     /// Static values for `${NAME}` in this job's tasks. Once loaded, the project's `values`
     /// are merged in, with the job's own winning.
     #[serde(default, deserialize_with = "unique")]
@@ -131,15 +130,6 @@ pub fn load(path: &Path) -> Result<Project, Error> {
     if raw.jobs.is_empty() {
         return Err(Error::InvalidProject("project has no jobs".to_string()));
     }
-    if let Some(name) = raw
-        .schedules
-        .keys()
-        .find(|name| !raw.jobs.contains_key(*name))
-    {
-        return Err(Error::InvalidProject(format!(
-            "schedule for unknown job `{name}`"
-        )));
-    }
     check_names(
         "values",
         raw.values.keys(),
@@ -157,7 +147,6 @@ pub fn load(path: &Path) -> Result<Project, Error> {
     }
     Ok(Project {
         env_file: raw.env_file.map(|p| dir.join(p)),
-        schedules: raw.schedules,
         jobs,
     })
 }
@@ -244,18 +233,17 @@ mod tests {
         let mut project = load_in(
             dir.path(),
             "env_file: .env\n\
-             schedules: {a: {every: 5m}}\n\
              jobs:\n\
-             \x20 a:\n    tasks:\n      e:\n        cmd: [echo]\n        cwd: work\n\
+             \x20 a:\n    schedule: {every: 5m}\n    tasks:\n      e:\n        cmd: [echo]\n        cwd: work\n\
              \x20 b:\n    tasks: {e: {cmd: [echo]}}\n",
         )
         .unwrap();
         assert_eq!(project.env_file, Some(dir.path().join(".env")));
         let a = project.take("a").unwrap();
-        assert!(project.schedules.contains_key("a"));
+        assert!(a.schedule.is_some());
         assert_eq!(a.tasks[0].dir, dir.path());
         let b = project.take("b").unwrap();
-        assert!(b.tasks[0].cmd.is_some() && !project.schedules.contains_key("b"));
+        assert!(b.tasks[0].cmd.is_some() && b.schedule.is_none());
     }
 
     #[test]
@@ -263,11 +251,16 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let sub = dir.path().join("jobs");
         std::fs::create_dir(&sub).unwrap();
-        std::fs::write(sub.join("w.yaml"), "tasks: {e: echo.yaml}\n").unwrap();
+        std::fs::write(
+            sub.join("w.yaml"),
+            "schedule: {every: 1s}\ntasks: {e: echo.yaml}\n",
+        )
+        .unwrap();
         std::fs::write(sub.join("echo.yaml"), "cmd: [echo]\ncwd: w\n").unwrap();
         let mut project = load_in(dir.path(), "jobs:\n  w: jobs/w.yaml\n").unwrap();
         let w = project.take("w").unwrap();
         assert_eq!(w.tasks[0].dir, sub);
+        assert!(w.schedule.is_some());
 
         let err = load_in(dir.path(), "jobs:\n  m: nope.yaml\n").unwrap_err();
         assert!(
@@ -361,10 +354,6 @@ mod tests {
                 "jobs: duplicate key `w`",
             ),
             (
-                format!("schedules: {{w: {{every: 1s}}, w: {{every: 2s}}}}\njobs: {{{w}}}\n"),
-                "schedules: duplicate key `w`",
-            ),
-            (
                 format!("values: {{A: x, A: y}}\njobs: {{{w}}}\n"),
                 "values: duplicate key `A`",
             ),
@@ -399,22 +388,13 @@ mod tests {
         for yaml in [
             "jobs:\n  w: {tasks: {e: {cmd: [echo], extract: {}}}}\n",
             "jobs: [\n",
-            "jobs:\n  w: {schedule: {every: 1s}, tasks: {e: {cmd: [echo]}}}\n",
+            "schedules: {w: {every: 1s}}\njobs:\n  w: {tasks: {e: {cmd: [echo]}}}\n",
         ] {
             assert!(
                 matches!(load_in(dir.path(), yaml), Err(Error::Yaml { .. })),
                 "{yaml}"
             );
         }
-        let err = load_in(
-            dir.path(),
-            "schedules: {x: {every: 1s}}\njobs: {w: {tasks: {e: {cmd: [echo]}}}}\n",
-        )
-        .unwrap_err();
-        assert_eq!(
-            err.to_string(),
-            "invalid project: schedule for unknown job `x`"
-        );
         let err = load_in(
             dir.path(),
             "jobs:\n  w:\n    tasks: {e: {cmd: [echo]}}\n    actoins: 1\n",

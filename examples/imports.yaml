@@ -5,10 +5,6 @@
 #   rocky run examples/imports.yaml
 env_file: httpbin.env             # BASE and USER, shared by every imported job
 
-schedules:
-  health:
-    every: 5m
-
 jobs:
   health: jobs/health.yaml
   report: jobs/report.yaml

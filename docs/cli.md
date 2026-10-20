@@ -18,7 +18,7 @@ rocky --version       # or -V
 
 ## `rocky exec <PROJECT> <JOB>`
 
-Runs one job of a project once and prints the result of the **last task that ran** as pretty-printed JSON on stdout. The project's `schedules` are checked but not run.
+Runs one job of a project once and prints the result of the **last task that ran** as pretty-printed JSON on stdout. Job `schedule`s are checked but not run.
 
 The job name is required. An unknown name fails before anything runs and lists the names there are:
 
@@ -29,9 +29,9 @@ Error: no job `deploy` (available: `login`, `report`)
 
 ## `rocky run <PROJECT>`
 
-Runs every job listed in the project's [`schedules`](schedules.md), until stopped with Ctrl-C, SIGTERM, SIGHUP or SIGQUIT, or until only finished `at` schedules are left. Each run writes [JSON log lines](run.md#output) to stdout. See [Run](run.md).
+Runs every job of the project that has a [`schedule`](schedules.md), until stopped with Ctrl-C, SIGTERM, SIGHUP or SIGQUIT, or until only finished `at` schedules are left. Each run writes [JSON log lines](run.md#output) to stdout. See [Run](run.md).
 
-`--socket <PATH>` also listens on a Unix domain socket, so clients can run any job by sending `{"job": "NAME"}`. With it, `schedules` are optional and `run` runs until stopped. See [Triggering jobs over a socket](run.md#triggering-jobs-over-a-socket).
+`--socket <PATH>` also listens on a Unix domain socket, so clients can run any job by sending `{"job": "NAME"}`. With it, no job needs a `schedule` and `run` runs until stopped. See [Triggering jobs over a socket](run.md#triggering-jobs-over-a-socket).
 
 ## `rocky trigger <SOCKET> <JOB>`
 
@@ -70,7 +70,7 @@ Writes a starter file that loads as-is, creating missing parent directories, and
 | Level | Writes |
 |---|---|
 | `basic` (default) | The smallest file that runs, as in the table above |
-| `full` | Every field, each with a comment. A full project or job has `values`, an HTTP task, a cmd task, a branch, a switch and a loop, and the project adds `schedules`. A full task is an HTTP or cmd task with all of its fields. Fields that need another file (`env_file`, a task file) are commented out, so the file still loads and runs as-is. Its tasks use `${USER}` from the environment |
+| `full` | Every field, each with a comment. A full project or job has a `schedule`, `values`, an HTTP task, a cmd task, a branch, a switch and a loop. A full task is an HTTP or cmd task with all of its fields. Fields that need another file (`env_file`, a task file) are commented out, so the file still loads and runs as-is. Its tasks use `${USER}` from the environment |
 
 ```
 $ rocky new job jobs/deploy.yaml

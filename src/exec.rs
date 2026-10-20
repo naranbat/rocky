@@ -348,7 +348,6 @@ mod tests {
         crate::task::resolve(&mut job.tasks, dir).unwrap();
         Project {
             env_file: None,
-            schedules: BTreeMap::new(),
             jobs: BTreeMap::from([("w".to_string(), job)]),
         }
     }

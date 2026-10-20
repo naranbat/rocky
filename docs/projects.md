@@ -1,6 +1,6 @@
 # Projects
 
-A project is a YAML file of named **jobs**. A job is a map of named **tasks** that `rocky exec` executes in order, or that `rocky run` runs on the project's [schedules](schedules.md). Jobs and tasks are both named by their key, and can be written inline or kept in their own YAML files (see [Job and task files](#job-and-task-files)). A task sends an **HTTP request** or runs a **command**, and every task can use the result of any earlier task. `exec` prints the result of the last task that ran as JSON.
+A project is a YAML file of named **jobs**. A job is a map of named **tasks** that `rocky exec` executes in order, or that `rocky run` runs on its [schedule](schedules.md). Jobs and tasks are both named by their key, and can be written inline or kept in their own YAML files (see [Job and task files](#job-and-task-files)). A task sends an **HTTP request** or runs a **command**, and every task can use the result of any earlier task. `exec` prints the result of the last task that ran as JSON.
 
 ```yaml
 jobs:
@@ -51,13 +51,13 @@ Examples: [`httpbin.yaml`](../examples/httpbin.yaml) (jobs `login`, `mixed`, `co
 |---|---|
 | `values` | Map of uppercase name → fixed value (any YAML value: string, number, boolean, list or object), read as `${NAME}` by every job. See [Env](env.md#values). |
 | `env_file` | A `.env` file shared by all jobs, relative to the project file. See [Env](env.md#env-file). |
-| `schedules` | Optional. Map of job name → schedule: when `rocky run` runs that job. See [Schedules](schedules.md). `exec` ignores it. |
 | `jobs` | Required, at least one. Map of job name → job, or → the path of a job file. |
 
 ## Job fields
 
 | Field | Notes |
 |---|---|
+| `schedule` | Optional. When `rocky run` runs this job. See [Schedules](schedules.md). `exec` ignores it. |
 | `values` | Map of uppercase name → fixed value, read as `${NAME}` by this job's tasks; wins over a project value of the same name. See [Env](env.md#values). |
 | `tasks` | Required, and must not be empty. Map of task name → task, or → the path of a task file. Tasks run in the order they are written. |
 
@@ -145,10 +145,10 @@ The whole project, every job including nested branches and loops, is checked whe
 - a task with none, or both, of `http` and `cmd`
 - `cwd`, `stdin`, `env` or `capture_stdout` without `cmd`; `capture_body` without `http`; `timeout` on a branch, switch or loop; `then`/`else` without `if`; `cases`/`default` without `switch`; `do`/`as` without `for_each`
 - a missing task or job file, a task file with a `name` field, or a task file that uses itself, directly or through other files
-- a name that appears twice in `jobs`, `schedules`, a request's `headers` or `query`, a cmd task's `env`, or a switch's `cases`; a `schedules` entry for a job that doesn't exist
+- a name that appears twice in `jobs`, a request's `headers` or `query`, a cmd task's `env`, or a switch's `cases`
 - a [variable name](env.md#names) in `as` that isn't uppercase (`A-Z`, `0-9`, `_`), or a task key that isn't an identifier or is `tasks`
 - an invalid [condition](conditions.md) or [schedule](schedules.md)
-- unknown keys anywhere, including `schedule` inside a job and `vars` anywhere
+- unknown keys anywhere, including `schedules` in the project and `vars` anywhere
 
 Errors inside a job are reported under its name:
 
@@ -185,7 +185,7 @@ post: { url: "https://httpbin.org/anything/login", json: { token: demo-token } }
 
 - A task file holds one task, without a `name`: the key that points at it names it, so one file can be used under several names. It can use other task files, inside a branch or loop too, but not itself, directly or through other files.
 - The entry is just a path, so everything else goes in the file. To change a field for one use, write the task inline.
-- A job file has the job fields `values` and `tasks`. The project keeps `env_file` and `schedules`.
+- A job file has the job fields `schedule`, `values` and `tasks`. The project keeps `env_file`.
 
 Example: [`imports.yaml`](../examples/imports.yaml), whose jobs all come from [`jobs/`](../examples/jobs/) and share its env file.
 

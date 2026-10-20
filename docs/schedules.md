@@ -1,18 +1,17 @@
 # Schedules
 
-A project's optional `schedules` map tells [`rocky run`](run.md) when to run each job. Each key is a job name. Each value is a schedule with exactly one of `every`, `hourly`, `daily`, `weekly` or `at`. `rocky exec` checks it but doesn't run it.
+A job's optional `schedule` tells [`rocky run`](run.md) when to run it. It has exactly one of `every`, `hourly`, `daily`, `weekly` or `at`. `rocky exec` checks it but doesn't run it.
 
 ```yaml
-schedules:
-  poll: {every: 5m}
-  report: {daily: "09:30"}
 jobs:
-  poll: {tasks: {date: {cmd: [date]}}}
-  report: jobs/report.yaml
+  poll:
+    schedule: {every: 5m}
+    tasks: {date: {cmd: [date]}}
+  report: jobs/report.yaml                   # its `schedule` goes in the job file
   manual: {tasks: {date: {cmd: [date]}}}     # not scheduled: `exec` only
 ```
 
-A job has at most one schedule. A name that isn't in `jobs` is an error: ``invalid project: schedule for unknown job `x` ``.
+A job has at most one schedule.
 
 | Field | Runs | Example |
 | --- | --- | --- |
@@ -25,10 +24,9 @@ A job has at most one schedule. A name that isn't in `jobs` is an error: ``inval
 ## `every` and `delay`
 
 ```yaml
-schedules:
-  poll:
-    every: 5m
-    delay: 10s   # optional
+schedule:
+  every: 5m
+  delay: 10s   # optional
 ```
 
 - A duration is a whole number followed by `s`, `m` or `h`: `30s`, `5m`, `2h`. Combined forms (`1h30m`) and other units (`1d`) are not supported; write `90m` or `24h`.
@@ -48,11 +46,10 @@ schedules:
 ## `run_on_start`
 
 ```yaml
-schedules:
-  report:
-    weekly: [mon, fri]
-    time: "09:30"
-    run_on_start: true   # optional, default false
+schedule:
+  weekly: [mon, fri]
+  time: "09:30"
+  run_on_start: true   # optional, default false
 ```
 
 `run_on_start: true` runs the job once as soon as `run` starts, then follows the schedule. Slots that pass during that first run are skipped, except an `at` time, which then runs late since it's the only one. It works with `hourly`, `daily`, `weekly` and `at`.
@@ -61,7 +58,7 @@ An `at` time that is already in the past when `run` starts is not an error: with
 
 ## Errors
 
-Schedules are checked whenever the project loads, by `exec` as well as `run`. The message is reported inside a YAML error with the line, e.g. ``invalid YAML in project.yaml`` caused by ``schedules: invalid schedule: `5 min` is not a duration like `30s`, `5m` or `2h` at line 2 column 3``.
+Schedules are checked whenever the project loads, by `exec` as well as `run`. The message is reported inside a YAML error with the line, e.g. ``invalid YAML in project.yaml`` caused by ``jobs.poll: invalid schedule: `5 min` is not a duration like `30s`, `5m` or `2h` at line 3 column 5``.
 
 | Problem | Message |
 |---|---|

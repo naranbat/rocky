@@ -385,9 +385,8 @@ fn run_runs_at_job_once_and_exits() {
     let output = run_yaml(
         dir.path(),
         &format!(
-            "schedules:\n  hello:\n    at: \"{at}\"\n\
-             jobs:\n\
-             \x20 hello:\n    tasks:\n      greet:\n        cmd: [echo, hi]\n\
+            "jobs:\n\
+             \x20 hello:\n    schedule:\n      at: \"{at}\"\n    tasks:\n      greet:\n        cmd: [echo, hi]\n\
              \x20 manual:\n    tasks:\n      never:\n        cmd: [echo, never]\n"
         ),
     );
@@ -420,8 +419,7 @@ fn run_reports_unwritable_log_file_and_keeps_printing() {
     let output = run_yaml(
         dir.path(),
         &format!(
-            "schedules:\n  hello:\n    at: \"{at}\"\n\
-             jobs:\n  hello:\n    tasks:\n      greet:\n        cmd: [echo, hi]\n"
+            "jobs:\n  hello:\n    schedule:\n      at: \"{at}\"\n    tasks:\n      greet:\n        cmd: [echo, hi]\n"
         ),
     );
     assert!(output.status.success(), "{}", stderr(&output));
@@ -447,7 +445,7 @@ fn stop_signals_stop_and_kill_running_commands() {
             let project = write(
                 dir.path(),
                 "project.yaml",
-                &format!("schedules:\n  w:\n    at: \"{at}\"\njobs:\n  w:\n    tasks:\n{wait}"),
+                &format!("jobs:\n  w:\n    schedule:\n      at: \"{at}\"\n    tasks:\n{wait}"),
             );
             spawn_run(&project, dir.path())
         } else {
@@ -480,8 +478,7 @@ fn run_keeps_logging_when_stdout_is_closed() {
         dir.path(),
         "project.yaml",
         &format!(
-            "schedules:\n  hello:\n    at: \"{at}\"\n\
-             jobs:\n  hello:\n    tasks:\n      greet:\n        cmd: [echo, hi]\n"
+            "jobs:\n  hello:\n    schedule:\n      at: \"{at}\"\n    tasks:\n      greet:\n        cmd: [echo, hi]\n"
         ),
     );
 
@@ -503,8 +500,7 @@ fn run_runs_at_late_when_the_start_run_overlaps_it() {
     let output = run_yaml(
         dir.path(),
         &format!(
-            "schedules:\n  slow:\n    at: \"{at}\"\n    run_on_start: true\n\
-             jobs:\n  slow:\n    tasks:\n      wait:\n        cmd: [sleep, '1']\n"
+            "jobs:\n  slow:\n    schedule:\n      at: \"{at}\"\n      run_on_start: true\n    tasks:\n      wait:\n        cmd: [sleep, '1']\n"
         ),
     );
     let done = events(&output)
@@ -521,9 +517,8 @@ fn run_on_start_and_the_at_run_log_control_flow() {
     let output = run_yaml(
         dir.path(),
         &format!(
-            "schedules:\n  hello:\n    at: \"{at}\"\n    run_on_start: true\n\
-             jobs:\n\
-             \x20 hello:\n    values: {{N: 1}}\n    tasks:\n\
+            "jobs:\n\
+             \x20 hello:\n    schedule:\n      at: \"{at}\"\n      run_on_start: true\n    values: {{N: 1}}\n    tasks:\n\
              \x20     check:\n        if: {{this: N, eq: 1}}\n        then: {{hi: {{cmd: [echo, hi]}}}}\n\
              \x20     route:\n        switch: N\n        cases: {{1: {{one: {{cmd: [echo, one]}}}}}}\n\
              \x20     list:\n        cmd: [echo, '[1]']\n\
@@ -537,11 +532,11 @@ fn run_on_start_and_the_at_run_log_control_flow() {
 }
 
 #[test]
-fn run_rejects_a_project_without_schedules() {
+fn run_rejects_a_project_without_a_schedule() {
     let dir = tempfile::tempdir().unwrap();
     let output = run_yaml(dir.path(), "jobs:\n  a:\n    tasks: {e: {cmd: [echo]}}\n");
     assert_eq!(output.status.code(), Some(1));
-    assert_stderr_contains(&output, "project has no `schedules`");
+    assert_stderr_contains(&output, "no job has a `schedule`");
 }
 
 #[test]
@@ -582,7 +577,7 @@ fn run_reports_errored_run_on_stdout() {
     let output = run_yaml(
         dir.path(),
         &format!(
-            "schedules:\n  broken:\n    at: \"{at}\"\njobs:\n  broken:\n    tasks:\n      e:\n        cmd: [echo, '${{ROCKY_TEST_UNDEFINED}}']\n"
+            "jobs:\n  broken:\n    schedule:\n      at: \"{at}\"\n    tasks:\n      e:\n        cmd: [echo, '${{ROCKY_TEST_UNDEFINED}}']\n"
         ),
     );
     let out = stdout_json(&output);
@@ -601,11 +596,10 @@ fn run_every_jobs_run_independently_and_survive_errors_and_failures() {
     let project = write(
         dir.path(),
         "project.yaml",
-        "schedules: {ok: {every: 1s}, broken: {every: 1s}, failing: {every: 1s}}\n\
-         jobs:\n\
-         \x20 ok:\n    tasks: {ok: {cmd: [echo, ok]}}\n\
-         \x20 broken:\n    tasks: {e: {cmd: [echo, '${ROCKY_TEST_UNDEFINED}']}}\n\
-         \x20 failing:\n    tasks: {check: {cmd: [sh, -c, 'exit 3']}, never: {cmd: [echo, never]}}\n",
+        "jobs:\n\
+         \x20 ok:\n    schedule: {every: 1s}\n    tasks: {ok: {cmd: [echo, ok]}}\n\
+         \x20 broken:\n    schedule: {every: 1s}\n    tasks: {e: {cmd: [echo, '${ROCKY_TEST_UNDEFINED}']}}\n\
+         \x20 failing:\n    schedule: {every: 1s}\n    tasks: {check: {cmd: [sh, -c, 'exit 3']}, never: {cmd: [echo, never]}}\n",
     );
 
     let events = |lines: &[Value], job: &str, event: &str| {
@@ -722,8 +716,7 @@ fn validate_accepts_a_valid_project_without_running_it() {
     let file = write(
         dir.path(),
         "project.yaml",
-        "schedules:\n  b: {at: '2000-01-01T00:00:00'}\n\
-         jobs:\n  b:\n    tasks:\n      t:\n        cmd: [touch, ran]\n  a:\n    tasks:\n      g:\n        http: {method: GET, url: 'http://127.0.0.1:1'}\n",
+        "jobs:\n  b:\n    schedule: {at: '2000-01-01T00:00:00'}\n    tasks:\n      t:\n        cmd: [touch, ran]\n  a:\n    tasks:\n      g:\n        http: {method: GET, url: 'http://127.0.0.1:1'}\n",
     );
     let out = validate(&file, dir.path());
     assert!(out.status.success(), "{}", stderr(&out));
@@ -756,9 +749,8 @@ fn run_skips_an_at_schedule_in_the_past_and_runs_the_others() {
     let output = run_yaml(
         dir.path(),
         &format!(
-            "schedules:\n  old: {{at: '2000-01-01T00:00:00'}}\n  new: {{at: \"{at}\"}}\n\
-             jobs:\n  old:\n    tasks:\n      t:\n        cmd: [touch, old]\n\
-             \x20 new:\n    tasks:\n      t:\n        cmd: [touch, new]\n"
+            "jobs:\n  old:\n    schedule: {{at: '2000-01-01T00:00:00'}}\n    tasks:\n      t:\n        cmd: [touch, old]\n\
+             \x20 new:\n    schedule: {{at: \"{at}\"}}\n    tasks:\n      t:\n        cmd: [touch, new]\n"
         ),
     );
     assert!(output.status.success(), "{}", stderr(&output));

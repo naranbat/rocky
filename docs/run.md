@@ -1,28 +1,25 @@
 # Run
 
-`rocky run <project>` runs every job listed in the [project's](projects.md) `schedules`, until stopped with Ctrl-C, SIGTERM, SIGHUP or SIGQUIT, or until only finished `at` schedules are left. Jobs that aren't listed are skipped; run them with `rocky exec`.
+`rocky run <project>` runs every job of the [project](projects.md) that has a `schedule`, until stopped with Ctrl-C, SIGTERM, SIGHUP or SIGQUIT, or until only finished `at` schedules are left. Jobs without a `schedule` are skipped; run them with `rocky exec`.
 
 ```yaml
-schedules:
-  poll:
-    every: 5m
-    delay: 10s                       # optional: wait before the first run
-  morning-report:
-    daily: "09:30"
-  migrate:
-    at: "2027-10-10T09:30:00"        # once
 jobs:
   poll:
+    schedule:
+      every: 5m
+      delay: 10s                     # optional: wait before the first run
     tasks:
       get:
         get: "https://httpbin.org/get"
 
   morning-report:
+    schedule:
+      daily: "09:30"
     tasks:
       greet:
         cmd: [echo, "${USER}"]
 
-  migrate: jobs/migrate.yaml     # a job file
+  migrate: jobs/migrate.yaml     # a job file; its `schedule` (e.g. `at: "2027-10-10T09:30:00"`) is in the file
 ```
 
 ```sh
@@ -35,7 +32,7 @@ Example: [`examples/httpbin.yaml`](../examples/httpbin.yaml) schedules `login`, 
 
 | Field | Notes |
 |---|---|
-| `schedules` (project) | Job name → when to run it. See [Schedules](schedules.md). |
+| `schedule` (job) | When to run the job. See [Schedules](schedules.md). |
 
 The job name labels its log lines and errors.
 
@@ -44,7 +41,7 @@ The job name labels its log lines and errors.
 The whole project is loaded and checked before anything runs. Any error stops `run`:
 
 - an invalid project, job, task or schedule (see [Validation](projects.md#validation))
-- no `schedules`: ``invalid project: project has no `schedules` `` (allowed with `--socket`)
+- no job with a `schedule`: ``invalid project: no job has a `schedule` `` (allowed with `--socket`)
 - with `--socket`: a socket another `rocky run` still listens on (``socket <PATH> is in use by another process``), or one that can't be created
 
 ## Output
@@ -84,7 +81,7 @@ A task that ends in an error gets no `task` line; the `error` line names it. See
 
 ## Triggering jobs over a socket
 
-`rocky run <project> --socket <PATH>` also listens on a Unix domain socket at `PATH`. A client can then run **any** job of the project, scheduled or not. With `--socket`, the project doesn't need `schedules`.
+`rocky run <project> --socket <PATH>` also listens on a Unix domain socket at `PATH`. A client can then run **any** job of the project, scheduled or not. With `--socket`, no job needs a `schedule`.
 
 Each request is one line of JSON, `{"job": "NAME"}`. Each request gets one JSON line back. A connection can send any number of requests. [`rocky trigger`](cli.md#rocky-trigger-socket-job) sends one request for you:
 
