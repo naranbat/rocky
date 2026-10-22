@@ -53,7 +53,8 @@ values:
 # when a run starts, so it must exist. ${USER} below comes from it or from the environment.
 # env_file: .env
 
-# Job name: its tasks, or the path of a job file (`report: jobs/report.yaml`).
+# Job name: its tasks, the path of a job file (`report: jobs/report.yaml`), or a job file with its
+# own `schedule` and `values`, winning over the file's (`eu: {file: jobs/report.yaml, values: {REGION: eu-west-1}}`).
 jobs:
   example:
 ";
