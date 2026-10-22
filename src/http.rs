@@ -110,13 +110,18 @@ fn timeout_secs(timeout: Option<u64>) -> u64 {
 
 /// Accepts standard methods in any case; rejects everything else.
 fn parse_method(raw: &str) -> Result<Method, Error> {
-    let upper = raw.to_ascii_uppercase();
-    match upper.as_str() {
-        "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS" | "TRACE" | "CONNECT" => {
-            Method::from_bytes(upper.as_bytes()).map_err(|_| Error::InvalidMethod(raw.to_string()))
-        }
-        _ => Err(Error::InvalidMethod(raw.to_string())),
-    }
+    Ok(match raw.to_ascii_uppercase().as_str() {
+        "GET" => Method::GET,
+        "POST" => Method::POST,
+        "PUT" => Method::PUT,
+        "PATCH" => Method::PATCH,
+        "DELETE" => Method::DELETE,
+        "HEAD" => Method::HEAD,
+        "OPTIONS" => Method::OPTIONS,
+        "TRACE" => Method::TRACE,
+        "CONNECT" => Method::CONNECT,
+        _ => return Err(Error::InvalidMethod(raw.to_string())),
+    })
 }
 
 #[cfg(test)]

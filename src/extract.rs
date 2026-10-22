@@ -10,12 +10,8 @@ pub fn lookup(values: &Map<String, Value>, name: &str) -> Option<Value> {
     select(values.get(root)?, path)
 }
 
-/// Selects a value by dot path (`body.items.0.id`); `.` selects the whole value.
-/// Numeric segments index into arrays.
+/// Selects a value by dot path (`body.items.0.id`). Numeric segments index into arrays.
 pub fn select(value: &Value, path: &str) -> Option<Value> {
-    if path == "." {
-        return Some(value.clone());
-    }
     path.split('.')
         .try_fold(value, |current, segment| match current {
             Value::Object(map) => map.get(segment),
@@ -59,10 +55,9 @@ mod tests {
     }
 
     #[test]
-    fn selects_whole_body_and_envelope() {
+    fn selects_whole_body() {
         let env = envelope();
         assert_eq!(select(&env, "body"), Some(env["body"].clone()));
-        assert_eq!(select(&env, "."), Some(env.clone()));
     }
 
     #[test]

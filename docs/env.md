@@ -138,7 +138,7 @@ So `users: ${tasks.fetch.body}` sends the whole fetched object, not a string. Fo
 
 ## Dot paths
 
-- Each `.` tasks into an object key. A numeric segment indexes an array: `${tasks.list.body.items.0.id}`.
+- Each `.` steps into an object key. A numeric segment indexes an array: `${tasks.list.body.items.0.id}`.
 - A name that exists exactly as written is used before it is split at `.`.
 - Keys that themselves contain `.` can't be addressed.
 

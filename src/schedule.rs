@@ -42,11 +42,11 @@ impl Clock {
                         .subsec_nanosecond(0)
                         .build()
                 };
-                // An hour on always lands after `now`. The earlier half-hour tasks catch
+                // An hour on always lands after `now`. The earlier half-hour offsets catch
                 // the slot in this hour, and in zones whose clocks move by 30 minutes.
                 let mut next = at_minute(now.checked_add(1.hour())?)?;
-                for task in [0, 30] {
-                    let candidate = at_minute(now.checked_add(task.minutes())?)?;
+                for offset in [0, 30] {
+                    let candidate = at_minute(now.checked_add(offset.minutes())?)?;
                     if candidate > *now && candidate < next {
                         next = candidate;
                     }

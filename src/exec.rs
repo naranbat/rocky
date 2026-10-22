@@ -67,6 +67,14 @@ pub struct Outcome {
     pub failed_task: Option<String>,
 }
 
+impl Outcome {
+    /// Why `failed_task` failed, if a task did.
+    pub fn reason(&self) -> Option<String> {
+        self.failed_task.as_ref()?;
+        self.result.as_ref().and_then(TaskResult::failure)
+    }
+}
+
 /// Queued work: a task to run with its label, or a loop's remaining items.
 enum Work {
     Task { task: Box<Task>, name: String },
@@ -251,27 +259,16 @@ async fn perform(
     let find = |var: &str| lookup(var, values, env);
     match (request, &task.cmd) {
         (Some(spec), None) => {
+            let spec = vars::apply_with(spec, &find)?;
             let capture_body = task.capture_body.unwrap_or(true);
-            send(spec, task.timeout, capture_body, &find, clients).await
+            let response = http::send(clients, &spec, task.timeout, capture_body).await?;
+            Ok(TaskResult::Http(response))
         }
         (None, Some(argv)) => execute(argv, task, &find).await,
         _ => Err(Error::InvalidTask(
             "must have exactly one of `http` or `cmd`".to_string(),
         )),
     }
-}
-
-/// Sends the request, stopping it after `timeout` seconds (default 30).
-async fn send(
-    spec: RequestSpec,
-    timeout: Option<u64>,
-    capture_body: bool,
-    find: &(dyn Fn(&str) -> Option<Value> + Sync),
-    clients: &mut http::Clients,
-) -> Result<TaskResult, Error> {
-    let spec = vars::apply_with(spec, find)?;
-    let response = http::send(clients, &spec, timeout, capture_body).await?;
-    Ok(TaskResult::Http(response))
 }
 
 /// Runs `argv`, piped into `task`'s `pipe` stages, with `task`'s `stdin`, `env`, `cwd`,

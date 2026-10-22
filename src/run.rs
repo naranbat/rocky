@@ -145,10 +145,7 @@ pub(crate) async fn run_once(path: &Path, name: &str, locks: &JobLocks) {
     .await;
     let event = match outcome {
         Ok(Ok(outcome)) => {
-            let reason = outcome
-                .failed_task
-                .as_ref()
-                .and(outcome.result.as_ref().and_then(exec::TaskResult::failure));
+            let reason = outcome.reason();
             json!({"event": "done", "failed_task": outcome.failed_task, "reason": reason})
         }
         Ok(Err(err)) => {

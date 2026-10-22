@@ -74,12 +74,8 @@ async fn main() -> anyhow::Result<()> {
         Command::Exec { file, job } => {
             let outcome = until_stopped(exec::exec(project::load(&file)?, &job, false)).await?;
             println!("{}", serde_json::to_string_pretty(&outcome.result)?);
-            if let Some(task) = outcome.failed_task {
-                let reason = outcome
-                    .result
-                    .as_ref()
-                    .and_then(exec::TaskResult::failure)
-                    .unwrap_or_default();
+            if let Some(task) = &outcome.failed_task {
+                let reason = outcome.reason().unwrap_or_default();
                 anyhow::bail!("task `{task}` {reason}");
             }
         }
@@ -90,8 +86,11 @@ async fn main() -> anyhow::Result<()> {
         }
         Command::Validate { file } => {
             let project = project::load(&file)?;
-            let names: Vec<_> = project.jobs.keys().map(|n| format!("`{n}`")).collect();
-            println!("{} is valid (jobs: {})", file.display(), names.join(", "));
+            println!(
+                "{} is valid (jobs: {})",
+                file.display(),
+                project.job_names()
+            );
         }
         Command::New { kind, level } => {
             let (kind, path) = match kind {

@@ -152,13 +152,17 @@ impl Project {
     pub fn take(&mut self, name: &str) -> Result<Job, Error> {
         self.jobs.remove(name).ok_or_else(|| Error::UnknownJob {
             name: name.to_string(),
-            available: self
-                .jobs
-                .keys()
-                .map(|n| format!("`{n}`"))
-                .collect::<Vec<_>>()
-                .join(", "),
+            available: self.job_names(),
         })
+    }
+
+    /// The job names, each in backticks, joined with `, `.
+    pub fn job_names(&self) -> String {
+        self.jobs
+            .keys()
+            .map(|n| format!("`{n}`"))
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 }
 
@@ -169,12 +173,7 @@ pub fn load(path: &Path) -> Result<Project, Error> {
     if raw.jobs.is_empty() {
         return Err(Error::InvalidProject("project has no jobs".to_string()));
     }
-    check_names(
-        "values",
-        raw.values.keys(),
-        var_name::is_valid_var,
-        var_name::VAR_RULE,
-    )?;
+    check_names(raw.values.keys())?;
     let dir = path.parent().unwrap_or(Path::new(""));
     let mut jobs = BTreeMap::new();
     for (name, source) in raw.jobs {
@@ -210,12 +209,7 @@ fn load_job(source: JobSource, dir: &Path, values: &BTreeMap<String, Value>) -> 
     if job.tasks.is_empty() {
         return Err(Error::InvalidProject("job has no tasks".to_string()));
     }
-    check_names(
-        "values",
-        job.values.keys(),
-        var_name::is_valid_var,
-        var_name::VAR_RULE,
-    )?;
+    check_names(job.values.keys())?;
     task::resolve(&mut job.tasks, &dir)?;
     job.values = values.clone().into_iter().chain(job.values).collect();
     Ok(job)
@@ -227,16 +221,12 @@ fn read_job(path: &Path) -> Result<(Job, PathBuf), Error> {
     Ok((job, path.parent().unwrap_or(Path::new("")).to_path_buf()))
 }
 
-/// Checks that every name declared in `field` passes `is_valid`, described by `rule`.
-fn check_names<'a>(
-    field: &str,
-    mut names: impl Iterator<Item = &'a String>,
-    is_valid: fn(&str) -> bool,
-    rule: &str,
-) -> Result<(), Error> {
-    match names.find(|name| !is_valid(name)) {
+/// Checks that every `values` name is a valid var name.
+fn check_names<'a>(mut names: impl Iterator<Item = &'a String>) -> Result<(), Error> {
+    match names.find(|name| !var_name::is_valid_var(name)) {
         Some(name) => Err(Error::InvalidProject(format!(
-            "`{field}` name `{name}` {rule}"
+            "`values` name `{name}` {}",
+            var_name::VAR_RULE
         ))),
         None => Ok(()),
     }

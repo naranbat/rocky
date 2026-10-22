@@ -139,7 +139,7 @@ pub fn named<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<Task>, D:
         fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Vec<Task>, A::Error> {
             let mut tasks: Vec<Task> = Vec::new();
             while let Some(name) = map.next_key::<String>()? {
-                if tasks.iter().any(|a| a.name == name) {
+                if tasks.iter().any(|task| task.name == name) {
                     return Err(de::Error::custom(format!("duplicate task `{name}`")));
                 }
                 let Source(mut task) = map.next_value()?;
@@ -361,7 +361,14 @@ fn resolve_loop(
             "`{name}` needs a non-empty `do`"
         )));
     }
-    check_names(name, "as", task.item_var.iter())?;
+    if let Some(var) = &task.item_var
+        && !var_name::is_valid_var(var)
+    {
+        return Err(Error::InvalidTask(format!(
+            "`{name}`: `as` name `{var}` {}",
+            var_name::VAR_RULE
+        )));
+    }
     resolve_all(&mut task.body, dir, stack)
 }
 
@@ -444,21 +451,6 @@ fn resolve_leaf(task: &Task, name: &str) -> Result<(), Error> {
     Ok(())
 }
 
-/// Checks that every name in the `field` (`as`) of task `name` is a valid var name.
-fn check_names<'a>(
-    name: &str,
-    field: &str,
-    mut vars: impl Iterator<Item = &'a String>,
-) -> Result<(), Error> {
-    match vars.find(|var| !var_name::is_valid_var(var)) {
-        Some(var) => Err(Error::InvalidTask(format!(
-            "`{name}`: `{field}` name `{var}` {}",
-            var_name::VAR_RULE
-        ))),
-        None => Ok(()),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -504,7 +496,7 @@ mod tests {
     #[test]
     fn keeps_map_order_and_rejects_lists_and_duplicates() {
         let tasks = parse_named("z: {cmd: [echo]}\na: {cmd: [echo]}\nm: {cmd: [echo]}\n").unwrap();
-        let names: Vec<_> = tasks.iter().map(|a| a.name.as_str()).collect();
+        let names: Vec<_> = tasks.iter().map(|task| task.name.as_str()).collect();
         assert_eq!(names, ["z", "a", "m"]);
         let err = parse_named("- cmd: [echo]\n").unwrap_err();
         assert!(err.to_string().contains("a map of task name"), "{err}");
@@ -539,7 +531,7 @@ mod tests {
         let tasks =
             resolve_here("a:\n  get: x\nb:\n  post: {url: y, json: {k: 1}}\nc:\n  delete: z\n")
                 .unwrap();
-        let specs: Vec<_> = tasks.iter().filter_map(|a| a.http.as_ref()).collect();
+        let specs: Vec<_> = tasks.iter().filter_map(|task| task.http.as_ref()).collect();
         assert_eq!(specs.len(), 3);
         assert_eq!(
             (specs[0].method.as_str(), specs[0].url.as_str()),
