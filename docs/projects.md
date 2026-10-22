@@ -51,7 +51,7 @@ Examples: [`httpbin.yaml`](../examples/httpbin.yaml) (jobs `login`, `mixed`, `co
 |---|---|
 | `values` | Map of uppercase name → fixed value (any YAML value: string, number, boolean, list or object), read as `${NAME}` by every job. See [Env](env.md#values). |
 | `env_file` | A `.env` file shared by all jobs, relative to the project file. See [Env](env.md#env-file). |
-| `jobs` | Required, at least one. Map of job name → job, or → the path of a job file. |
+| `jobs` | Required, at least one. Map of job name → job, → the path of a job file, or → a job file with its own `schedule` and `values` (see [Reusing a job file](#reusing-a-job-file)). |
 
 ## Job fields
 
@@ -143,6 +143,7 @@ The whole project, every job including nested branches and loops, is checked whe
 - no `jobs`, an empty `tasks`, an empty `cmd`, `do`, `cases`, or `then` *and* `else`
 - `tasks`, `then`, `else`, `do` or `default` written as a list instead of a map, or two tasks with the same key in one map
 - a task with none, or both, of `http` and `cmd`
+- a job entry with both `file` and `tasks`, or with neither
 - `cwd`, `stdin`, `env` or `capture_stdout` without `cmd`; `capture_body` without `http`; `timeout` on a branch, switch or loop; `then`/`else` without `if`; `cases`/`default` without `switch`; `do`/`as` without `for_each`
 - a missing task or job file, a task file with a `name` field, or a task file that uses itself, directly or through other files
 - a name that appears twice in `jobs`, a request's `headers` or `query`, a cmd task's `env`, or a switch's `cases`
@@ -184,10 +185,39 @@ post: { url: "https://httpbin.org/anything/login", json: { token: demo-token } }
 ```
 
 - A task file holds one task, without a `name`: the key that points at it names it, so one file can be used under several names. It can use other task files, inside a branch or loop too, but not itself, directly or through other files.
-- The entry is just a path, so everything else goes in the file. To change a field for one use, write the task inline.
-- A job file has the job fields `schedule`, `values` and `tasks`. The project keeps `env_file`.
+- A task file entry is just a path, so everything else goes in the file. To change a field for one use, write the task inline.
+- A job file has the job fields `schedule`, `values` and `tasks`. The project keeps `env_file`. To run one job file with different values or schedules, see below.
 
 Example: [`imports.yaml`](../examples/imports.yaml), whose jobs all come from [`jobs/`](../examples/jobs/) and share its env file.
+
+### Reusing a job file
+
+A job entry can name its file under `file`, with its own `schedule` and `values`, so one file can run as several jobs:
+
+```yaml
+jobs:
+  titles:
+    file: jobs/fetch.yaml
+    values:
+      TARGET: https://httpbin.org/json
+  news:
+    file: jobs/fetch.yaml
+    schedule: {every: 1h}
+    values:
+      TARGET: https://example.com/news
+
+# jobs/fetch.yaml: an ordinary job file
+tasks:
+  show:
+    get: ${TARGET}
+```
+
+- Only `file`, `schedule` and `values` are allowed; the tasks come from the file.
+- The entry's `values` win over the file's, which win over the project's.
+- The entry's `schedule` replaces the file's; without one, the file's is kept.
+- A value the file uses but nobody sets is an undefined variable, which fails when its task runs.
+
+Example: `echo_health` in [`imports.yaml`](../examples/imports.yaml).
 
 ## Paths
 

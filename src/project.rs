@@ -61,10 +61,33 @@ where
     deserializer.deserialize_map(UniqueVisitor(PhantomData))
 }
 
-/// A `jobs` entry: a job YAML file, or the same fields inline.
+/// A `jobs` entry: a job YAML file, the same fields inline, or a job file with its own
+/// `schedule` and `values`.
 enum JobSource {
     Path(PathBuf),
     Inline(Job),
+    File {
+        file: PathBuf,
+        schedule: Option<Schedule>,
+        values: BTreeMap<String, Value>,
+    },
+}
+
+/// A `jobs` entry written as a map: an inline job, or `file` with overrides.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct JobEntry {
+    file: Option<PathBuf>,
+    #[serde(default)]
+    schedule: Option<Schedule>,
+    #[serde(default, deserialize_with = "unique")]
+    values: BTreeMap<String, Value>,
+    #[serde(default, deserialize_with = "some_named")]
+    tasks: Option<Vec<Task>>,
+}
+
+fn some_named<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<Vec<Task>>, D::Error> {
+    task::named(deserializer).map(Some)
 }
 
 /// Picks the variant by YAML shape, so a mistake in an inline job reports the real
@@ -85,7 +108,23 @@ impl<'de> Deserialize<'de> for JobSource {
             }
 
             fn visit_map<A: MapAccess<'de>>(self, map: A) -> Result<JobSource, A::Error> {
-                Job::deserialize(de::value::MapAccessDeserializer::new(map)).map(JobSource::Inline)
+                let entry = JobEntry::deserialize(de::value::MapAccessDeserializer::new(map))?;
+                match (entry.file, entry.tasks) {
+                    (Some(file), None) => Ok(JobSource::File {
+                        file,
+                        schedule: entry.schedule,
+                        values: entry.values,
+                    }),
+                    (None, Some(tasks)) => Ok(JobSource::Inline(Job {
+                        schedule: entry.schedule,
+                        values: entry.values,
+                        tasks,
+                    })),
+                    (Some(_), Some(_)) => Err(de::Error::custom(
+                        "a job can't have both `file` and `tasks`",
+                    )),
+                    (None, None) => Err(de::Error::missing_field("tasks")),
+                }
             }
         }
 
@@ -151,16 +190,22 @@ pub fn load(path: &Path) -> Result<Project, Error> {
     })
 }
 
-/// Reads a job file if `source` is a path, validates its tasks, and merges the project's
-/// `values` under its own.
+/// Reads a job file if `source` names one, applies the entry's `schedule` and `values` over
+/// the file's, validates its tasks, and merges the project's `values` under its own.
 fn load_job(source: JobSource, dir: &Path, values: &BTreeMap<String, Value>) -> Result<Job, Error> {
     let (mut job, dir) = match source {
-        JobSource::Path(path) => {
-            let path = dir.join(path);
-            let job = read_yaml(&path)?;
-            (job, path.parent().unwrap_or(Path::new("")).to_path_buf())
-        }
+        JobSource::Path(path) => read_job(&dir.join(path))?,
         JobSource::Inline(job) => (job, dir.to_path_buf()),
+        JobSource::File {
+            file,
+            schedule,
+            values,
+        } => {
+            let (mut job, dir) = read_job(&dir.join(file))?;
+            job.schedule = schedule.or(job.schedule);
+            job.values.extend(values);
+            (job, dir)
+        }
     };
     if job.tasks.is_empty() {
         return Err(Error::InvalidProject("job has no tasks".to_string()));
@@ -174,6 +219,12 @@ fn load_job(source: JobSource, dir: &Path, values: &BTreeMap<String, Value>) -> 
     task::resolve(&mut job.tasks, &dir)?;
     job.values = values.clone().into_iter().chain(job.values).collect();
     Ok(job)
+}
+
+/// Reads a job file, returning it with the directory its relative paths resolve against.
+fn read_job(path: &Path) -> Result<(Job, PathBuf), Error> {
+    let job = read_yaml(path)?;
+    Ok((job, path.parent().unwrap_or(Path::new("")).to_path_buf()))
 }
 
 /// Checks that every name declared in `field` passes `is_valid`, described by `rule`.
@@ -265,6 +316,71 @@ mod tests {
         let err = load_in(dir.path(), "jobs:\n  m: nope.yaml\n").unwrap_err();
         assert!(
             matches!(&err, Error::Job { name, source } if name == "m" && matches!(**source, Error::Io { .. })),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn reuses_a_job_file_with_its_own_schedule_and_values() {
+        let dir = tempfile::tempdir().unwrap();
+        let sub = dir.path().join("jobs");
+        std::fs::create_dir(&sub).unwrap();
+        std::fs::write(
+            sub.join("fetch.yaml"),
+            "schedule: {every: 1s}\nvalues: {TARGET: file, N: 1}\ntasks: {e: {cmd: [echo], cwd: w}}\n",
+        )
+        .unwrap();
+        let mut project = load_in(
+            dir.path(),
+            "values: {TARGET: project, BASE: b}\n\
+             jobs:\n\
+             \x20 a: {file: jobs/fetch.yaml, values: {TARGET: a}}\n\
+             \x20 b: {file: jobs/fetch.yaml, schedule: {every: 1h}, values: {TARGET: b}}\n\
+             \x20 c: {file: jobs/fetch.yaml}\n",
+        )
+        .unwrap();
+        let values = |job: &Job| serde_json::to_value(&job.values).unwrap();
+        let a = project.take("a").unwrap();
+        assert_eq!(
+            values(&a),
+            serde_json::json!({"TARGET": "a", "N": 1, "BASE": "b"})
+        );
+        assert_eq!(a.tasks[0].dir, sub);
+        let b = project.take("b").unwrap();
+        assert_eq!(values(&b)["TARGET"], "b");
+        assert_ne!(format!("{:?}", a.schedule), format!("{:?}", b.schedule));
+        let c = project.take("c").unwrap();
+        assert_eq!(values(&c)["TARGET"], "file");
+        assert_eq!(format!("{:?}", a.schedule), format!("{:?}", c.schedule));
+    }
+
+    #[test]
+    fn rejects_bad_job_file_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("j.yaml"), "tasks: {e: {cmd: [echo]}}\n").unwrap();
+        for (yaml, expected) in [
+            (
+                "jobs:\n  w: {file: j.yaml, tasks: {e: {cmd: [echo]}}}\n",
+                "can't have both `file` and `tasks`",
+            ),
+            ("jobs:\n  w: {values: {A: x}}\n", "missing field `tasks`"),
+            (
+                "jobs:\n  w: {file: j.yaml, cmd: [echo]}\n",
+                "unknown field `cmd`",
+            ),
+        ] {
+            let err = load_in(dir.path(), yaml).unwrap_err();
+            let cause = std::error::Error::source(&err).unwrap().to_string();
+            assert!(cause.contains(expected), "{yaml}: {cause}");
+        }
+        let err = load_in(dir.path(), "jobs:\n  w: {file: j.yaml, values: {a: x}}\n").unwrap_err();
+        assert!(
+            matches!(&err, Error::Job { name, source } if name == "w" && source.to_string().contains("`a`")),
+            "{err}"
+        );
+        let err = load_in(dir.path(), "jobs:\n  w: {file: nope.yaml}\n").unwrap_err();
+        assert!(
+            matches!(&err, Error::Job { source, .. } if matches!(**source, Error::Io { .. })),
             "{err}"
         );
     }

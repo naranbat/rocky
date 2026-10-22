@@ -52,7 +52,7 @@ Example: [`examples/values.yaml`](../examples/values.yaml).
 - `values` can go at the top level of a project and in a job, inline or in a job file. Tasks nested in branches, switches and loops, and task files, see their job's values. Tasks can't have their own `values`.
 - A value can be a string, number, boolean, list or object, and keeps its JSON type (see [typed values](#typed-values)). Use a dot path to read inside one: `${SITE.name}`.
 - Values are used as written: `${...}` inside a value is not expanded.
-- A job value with the same name as a project value replaces it for that job.
+- A job value with the same name as a project value replaces it for that job. A job entry that [reuses a job file](projects.md#reusing-a-job-file) can set `values` too; they replace the file's.
 
 ## Env file
 

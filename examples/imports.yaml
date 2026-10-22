@@ -2,6 +2,7 @@
 # The files share this project's env file; paths inside them are relative to each file.
 #   rocky exec examples/imports.yaml health
 #   rocky exec examples/imports.yaml report
+#   rocky exec examples/imports.yaml echo_health
 #   rocky run examples/imports.yaml
 env_file: httpbin.env             # BASE and USER, shared by every imported job
 
@@ -9,3 +10,8 @@ jobs:
   health: jobs/health.yaml
   report: jobs/report.yaml
   files: jobs/files.yaml          # also used by httpbin.yaml
+  echo_health:                    # health.yaml again, with its own schedule and BASE
+    file: jobs/health.yaml
+    schedule: {every: 1h}
+    values:
+      BASE: https://httpbin.org/anything   # values win over the env file
