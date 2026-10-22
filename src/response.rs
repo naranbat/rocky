@@ -48,7 +48,7 @@ pub fn body_value(content_type: Option<&str>, bytes: &[u8]) -> (Value, Option<&'
     }
 }
 
-pub fn is_json(content_type: &str) -> bool {
+pub(crate) fn is_json(content_type: &str) -> bool {
     let media_type = content_type
         .split(';')
         .next()

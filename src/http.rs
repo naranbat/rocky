@@ -34,7 +34,11 @@ impl Clients {
 }
 
 /// Builds the request on `client` without sending it. `timeout` is in seconds and defaults to 30.
-pub fn build(client: &Client, spec: &RequestSpec, timeout: Option<u64>) -> Result<Request, Error> {
+pub(crate) fn build(
+    client: &Client,
+    spec: &RequestSpec,
+    timeout: Option<u64>,
+) -> Result<Request, Error> {
     let method = parse_method(&spec.method)?;
 
     let mut builder = client

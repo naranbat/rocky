@@ -13,13 +13,13 @@ use crate::schedule::{Clock, Schedule};
 use crate::{exec, progress, project, socket};
 
 /// Runs every job that has a `schedule` until all schedules are done (only `at` and
-/// `run_on_start`-only jobs ever finish). Every log line is one JSON object on stdout (also appended to
-/// `logs/<date>.log`) with `job`, `time` and `event` fields. Each run reloads the
-/// project and prints a line per task, branch and loop, then a `done` line (with `failed_task` and its `reason` if a task
-/// failed); a run that errors or panics prints an `error` line. Either way the job's next
-/// runs still happen. An `at` job whose time has passed (without `run_on_start`) prints a
-/// `skipped` line instead of running. A job whose schedule fails prints a `stopped` line and stops;
-/// the other jobs keep running.
+/// `run_on_start`-only jobs ever finish). Every log line is one JSON object on stdout
+/// (also appended to `logs/<date>.log`) with `job`, `time` and `event` fields. Each run
+/// reloads the project and prints a line per task, branch and loop, then a `done` line
+/// (with `failed_task` and its `reason` if a task failed); a run that errors or panics
+/// prints an `error` line. Either way the job's next runs still happen. An `at` job whose
+/// time has passed (without `run_on_start`) prints a `skipped` line instead of running. A
+/// job whose schedule fails prints a `stopped` line and stops; the other jobs keep running.
 ///
 /// With a `socket`, `run` also runs the jobs that clients of it trigger (see [`socket`]),
 /// doesn't need any job to have a `schedule`, and runs until stopped. A job's runs,

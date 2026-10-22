@@ -11,7 +11,7 @@ pub fn lookup(values: &Map<String, Value>, name: &str) -> Option<Value> {
 }
 
 /// Selects a value by dot path (`body.items.0.id`). Numeric segments index into arrays.
-pub fn select(value: &Value, path: &str) -> Option<Value> {
+pub(crate) fn select(value: &Value, path: &str) -> Option<Value> {
     path.split('.')
         .try_fold(value, |current, segment| match current {
             Value::Object(map) => map.get(segment),
