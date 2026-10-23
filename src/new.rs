@@ -130,6 +130,17 @@ const FULL_CONTROL: &str = "
       tag:
         cmd: [echo, \"tag ${TAG}\"]
 
+  # A `while` loop: runs `do` again and again while the condition holds, checked before each run.
+  poll:
+    while:
+      any:
+        - {this: tasks.status, exists: false}   # not run yet: run `do` at least once
+        - {this: tasks.status.stdout, ne: 200}
+    max: 5                              # optional: fail if still true after 5 runs
+    do:
+      status:                           # httpbin picks 200 or 503 at random
+        cmd: [curl, -sS, -o, /dev/null, -w, '%{http_code}', 'https://httpbin.org/status/200,503']
+
   # A task file: one task kept in its own file, relative to this file.
   # notify: tasks/notify.yaml
 ";
