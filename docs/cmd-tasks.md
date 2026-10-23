@@ -7,17 +7,17 @@ jobs:
   titles:
     tasks:
       show:
-        get: "https://httpbin.org/json"
+        cmd: [curl, -sS, --fail-with-body, https://httpbin.org/json]   # JSON output is parsed
 
-      # Process an HTTP body with jq. A JSON value as stdin is written as compact JSON,
+      # Process it with jq. A JSON value as stdin is written as compact JSON,
       # and jq's JSON output is parsed, so `tasks.titles.stdout` is an array.
       titles:
         cmd: [jq, -c, '[.slideshow.slides[].title]']
-        stdin: ${tasks.show.body}
+        stdin: ${tasks.show.stdout}
 
       # Need a pipe? List the programs after `cmd` under `pipe`; no shell is involved.
       slug:
-        cmd: [printf, "%s", "${tasks.show.body.slideshow.title}"]
+        cmd: [printf, "%s", "${tasks.show.stdout.slideshow.title}"]
         pipe:
           - [tr, " ", -]
 
@@ -41,7 +41,7 @@ Example: the `mixed` job in [`examples/httpbin.yaml`](../examples/httpbin.yaml).
 | `cmd` | A non-empty list: the program, then its arguments. A single string such as `cmd: "ls -la"` is rejected; write `[ls, -la]`. |
 | `pipe` | Optional. A list of further commands, each written like `cmd`, connected by pipes. See [Pipes](#pipes). |
 
-The common task field `allow_failure` works as for HTTP tasks. See [Projects](projects.md#task-fields).
+The common task field `allow_failure` is described in [Projects](projects.md#task-fields).
 
 ## Arguments and substitution
 
@@ -60,7 +60,7 @@ top_titles:
   pipe:
     - [sort, -u]
     - [head, -n, "3"]
-  stdin: ${tasks.show.body}
+  stdin: ${tasks.show.stdout}
 ```
 
 - Each command's stdout goes straight into the next one's stdin, so data streams through unchanged. Nothing is parsed or trimmed between stages.
@@ -72,7 +72,7 @@ top_titles:
 
 ## `stdin`
 
-- `${...}` is substituted in it. A string is written as-is; any other value (an object, an array, or a field that is exactly `${NAME}` holding one) is written as compact JSON, so `stdin: ${tasks.fetch.body}` is ready for `jq`.
+- `${...}` is substituted in it. A string is written as-is; any other value (an object, an array, or a field that is exactly `${NAME}` holding one) is written as compact JSON, so `stdin: ${tasks.fetch.stdout}` is ready for `jq`.
 - Without `stdin`, the command's standard input is empty (`/dev/null`), so it never waits for keyboard input.
 - A command may exit without reading all of its input; that isn't an error.
 
@@ -110,7 +110,7 @@ build:
 
 Example of `env`: [`examples/cmd-env.yaml`](../examples/cmd-env.yaml).
 
-`cwd`, `stdin`, `env` and `capture_stdout` only work on cmd tasks; on any other task they are an error. `timeout` also works on [HTTP](http-tasks.md) tasks.
+`cwd`, `stdin`, `env` and `capture_stdout` only work on cmd tasks; on any other task they are an error.
 
 ## Reading and writing files
 
@@ -119,7 +119,7 @@ There is no separate file task; use a command. Add `cwd: .` so the path is relat
 ```yaml
 save:
   cmd: [sh, -c, 'cat > "$1"', _, "out/${DATE}.json"]     # the path is $1, never inside the script
-  stdin: ${tasks.fetch.body}                             # written as compact JSON
+  stdin: ${tasks.fetch.stdout}                           # written as compact JSON
   cwd: .
 
 load:

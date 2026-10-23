@@ -7,28 +7,22 @@ use serde_json::{Map, Value, json};
 use crate::command::{self, CommandResult};
 use crate::error::Error;
 use crate::project::Project;
-use crate::request::RequestSpec;
-use crate::response::Response;
 use crate::task::Task;
-use crate::{condition, env_file, extract, http, progress, vars};
+use crate::{condition, env_file, extract, progress, vars};
 
-/// What one task produced: an HTTP response, a finished command, or (with `allow_failure`)
-/// the timeout or network error that stopped it.
+/// What one task produced: a finished command, or (with `allow_failure`) the timeout that
+/// stopped it.
 #[derive(Debug, Serialize)]
 #[serde(untagged)]
 pub enum TaskResult {
-    Http(Response),
     Cmd(CommandResult),
     Errored { error: String },
 }
 
 impl TaskResult {
-    /// Why the task counts as failed: HTTP 4xx/5xx, a non-zero exit, or an error.
+    /// Why the task counts as failed: a non-zero exit, or an error.
     pub fn failure(&self) -> Option<String> {
         match self {
-            TaskResult::Http(response) if response.status >= 400 => {
-                Some(format!("returned HTTP {}", response.status))
-            }
             TaskResult::Cmd(result) if result.exit_code != 0 => {
                 Some(format!("exited with code {}", result.exit_code))
             }
@@ -40,16 +34,6 @@ impl TaskResult {
 
 #[cfg(test)]
 impl TaskResult {
-    /// An HTTP result with `status`, no headers and no body.
-    pub(crate) fn http(status: u16) -> Self {
-        TaskResult::Http(Response {
-            status,
-            headers: BTreeMap::new(),
-            body: Value::Null,
-            body_encoding: None,
-        })
-    }
-
     /// A command result with `exit_code` and no output.
     pub(crate) fn cmd(exit_code: i32) -> Self {
         TaskResult::Cmd(CommandResult {
@@ -116,7 +100,6 @@ pub async fn exec(mut project: Project, job: &str, log: bool) -> Result<Outcome,
 
     let mut values: Map<String, Value> = tasks.values.into_iter().collect();
     let mut last = None;
-    let mut clients = http::Clients::default();
     // Next work last, so nested tasks are pushed in reverse to run in place.
     let mut stack: Vec<Work> = queued(tasks.tasks).rev().collect();
     while let Some(work) = stack.pop() {
@@ -198,7 +181,7 @@ pub async fn exec(mut project: Project, job: &str, log: bool) -> Result<Outcome,
 
         let allow_failure = task.allow_failure;
         let started = Instant::now();
-        let result = run_task(task, &mut values, &env, &mut clients)
+        let result = run_task(task, &mut values, &env)
             .await
             .map_err(to_task_error)?;
         if log {
@@ -223,21 +206,18 @@ pub async fn exec(mut project: Project, job: &str, log: bool) -> Result<Outcome,
 }
 
 /// Runs one task and records its result as `tasks.<name>` in `values`. With `allow_failure`, a
-/// timeout or network error becomes an [`TaskResult::Errored`] result instead of an error.
+/// timeout becomes an [`TaskResult::Errored`] result instead of an error.
 async fn run_task(
-    mut task: Task,
+    task: Task,
     values: &mut Map<String, Value>,
     env: &Map<String, Value>,
-    clients: &mut http::Clients,
 ) -> Result<TaskResult, Error> {
-    let request = task.http.take();
-    let result = match perform(&task, request, values, env, clients).await {
-        // A request that couldn't be built (a bad URL or header) is a mistake in the task,
-        // not a network error.
-        Err(err @ (Error::Timeout(_) | Error::CommandTimeout { .. }))
-        | Err(err @ Error::Http(_))
-            if task.allow_failure && !matches!(&err, Error::Http(e) if e.is_builder()) =>
-        {
+    let find = |var: &str| lookup(var, values, env);
+    let Some(argv) = &task.cmd else {
+        return Err(Error::InvalidTask("must have `cmd`".to_string()));
+    };
+    let result = match execute(argv, &task, &find).await {
+        Err(err @ Error::CommandTimeout { .. }) if task.allow_failure => {
             TaskResult::Errored { error: err.chain() }
         }
         result => result?,
@@ -246,29 +226,6 @@ async fn run_task(
         tasks.insert(task.name.clone(), json!(result));
     }
     Ok(result)
-}
-
-/// Performs an HTTP (`request`) or cmd task.
-async fn perform(
-    task: &Task,
-    request: Option<RequestSpec>,
-    values: &Map<String, Value>,
-    env: &Map<String, Value>,
-    clients: &mut http::Clients,
-) -> Result<TaskResult, Error> {
-    let find = |var: &str| lookup(var, values, env);
-    match (request, &task.cmd) {
-        (Some(spec), None) => {
-            let spec = vars::apply_with(spec, &find)?;
-            let capture_body = task.capture_body.unwrap_or(true);
-            let response = http::send(clients, &spec, task.timeout, capture_body).await?;
-            Ok(TaskResult::Http(response))
-        }
-        (None, Some(argv)) => execute(argv, task, &find).await,
-        _ => Err(Error::InvalidTask(
-            "must have exactly one of `http` or `cmd`".to_string(),
-        )),
-    }
 }
 
 /// Runs `argv`, piped into `task`'s `pipe` stages, with `task`'s `stdin`, `env`, `cwd`,
@@ -320,7 +277,7 @@ fn render(
 }
 
 /// Looks `var` up in `tasks`, loop items and `values` (dot paths such as
-/// `tasks.login.body.token` included), then the env_file in `env`, then the process environment.
+/// `tasks.login.stdout.token` included), then the env_file in `env`, then the process environment.
 fn lookup(var: &str, values: &Map<String, Value>, env: &Map<String, Value>) -> Option<Value> {
     extract::lookup(values, var)
         .or_else(|| env.get(var).cloned())
@@ -786,24 +743,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn binary_body_encoding_is_recorded() {
-        use wiremock::matchers::method;
-        use wiremock::{Mock, MockServer, ResponseTemplate};
-
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .respond_with(ResponseTemplate::new(200).set_body_bytes(vec![0xff, 0xfe]))
-            .mount(&server)
-            .await;
-        let project = project(&format!(
-            "tasks:\n  img:\n    http: {{method: GET, url: \"{}\"}}\n  print:\n    cmd: [echo, \"${{tasks.img.body_encoding}}\"]\n",
-            server.uri()
-        ));
-        let outcome = exec(project).await.unwrap();
-        assert_eq!(stdout(&outcome), &json!("base64"));
-    }
-
-    #[tokio::test]
     async fn condition_compares_loop_item_with_value() {
         let dir = tempfile::tempdir().unwrap();
         let yaml = format!(
@@ -820,15 +759,6 @@ mod tests {
         );
         let outcome = exec(project_in(dir.path(), &yaml)).await.unwrap();
         assert_eq!(stdout(&outcome), &json!("-1-2+3+4"));
-    }
-
-    #[tokio::test]
-    async fn allow_failure_does_not_hide_an_invalid_url() {
-        let (_, err) = task_error(project(
-            "tasks:\n  bad:\n    get: 'not a url'\n    allow_failure: true\n",
-        ))
-        .await;
-        assert!(matches!(err, Error::Http(_)), "{err}");
     }
 
     #[tokio::test]
@@ -910,16 +840,7 @@ mod tests {
     }
 
     #[test]
-    fn failure_is_http_400_or_more_a_non_zero_exit_or_an_error() {
-        assert_eq!(TaskResult::http(399).failure(), None);
-        assert_eq!(
-            TaskResult::http(400).failure().as_deref(),
-            Some("returned HTTP 400")
-        );
-        assert_eq!(
-            TaskResult::http(404).failure().as_deref(),
-            Some("returned HTTP 404")
-        );
+    fn failure_is_a_non_zero_exit_or_an_error() {
         assert_eq!(TaskResult::cmd(0).failure(), None);
         assert_eq!(
             TaskResult::cmd(3).failure().as_deref(),

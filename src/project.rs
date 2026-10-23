@@ -468,14 +468,8 @@ mod tests {
                 "jobs.w.values: duplicate key `A`",
             ),
             (
-                "jobs:\n  w: {tasks: {g: {http: {method: GET, url: x, headers: {A: '1', A: '2'}}}}}\n"
-                    .to_string(),
-                "jobs.w.tasks.g.http.headers: duplicate key `A`",
-            ),
-            (
-                "jobs:\n  w: {tasks: {g: {http: {method: GET, url: x, query: {A: '1', A: '2'}}}}}\n"
-                    .to_string(),
-                "jobs.w.tasks.g.http.query: duplicate key `A`",
+                "jobs:\n  w: {tasks: {g: {cmd: [echo], env: {A: '1', A: '2'}}}}\n".to_string(),
+                "jobs.w.tasks.g.env: duplicate key `A`",
             ),
         ] {
             let err = load_in(dir.path(), &yaml).unwrap_err();

@@ -11,10 +11,7 @@ tasks:
     stdin: ${USER}                     # the command's standard input
 
   report:
-    post:
-      url: ${BASE}/anything/report
-      headers:
-        Authorization: Bearer ${tasks.login.body.json.token}
-      json:
-        user: ${tasks.shout.stdout}
-        date: ${tasks.today.stdout}
+    cmd: [curl, -sS, --fail-with-body, -H, 'Authorization: Bearer ${tasks.login.stdout.json.token}', --json, '@-', '${BASE}/anything/report']
+    stdin:
+      user: ${tasks.shout.stdout}
+      date: ${tasks.today.stdout}

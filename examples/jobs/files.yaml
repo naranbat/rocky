@@ -4,8 +4,5 @@ tasks:
   login: ../tasks/login.yaml       # a task from its own file
 
   whoami:
-    get:
-      url: ${BASE}/headers
-      headers:
-        Authorization: Bearer ${tasks.login.body.json.token}
-    timeout: 10                      # seconds (default 30s for HTTP)
+    cmd: [curl, -sS, --fail-with-body, -H, 'Authorization: Bearer ${tasks.login.stdout.json.token}', '${BASE}/headers']
+    timeout: 10                      # seconds

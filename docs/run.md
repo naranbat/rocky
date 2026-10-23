@@ -9,8 +9,8 @@ jobs:
       every: 5m
       delay: 10s                     # optional: wait before the first run
     tasks:
-      get:
-        get: "https://httpbin.org/get"
+      fetch:
+        cmd: [curl, -sS, --fail-with-body, https://httpbin.org/get]
 
   morning-report:
     schedule:
@@ -49,17 +49,17 @@ The whole project is loaded and checked before anything runs. Any error stops `r
 Every log line is one JSON object on **stdout**, with `job`, `time` (local time with offset) and `event` fields. The same lines are appended to `logs/YYYY-MM-DD.log` in the current directory, one file per day by each line's date; the `logs` directory is created if missing, and a failed write is reported on stderr without stopping `run`. If stdout is closed (`run | head`), `run` keeps running and logging to the file. Each run writes a line per task, branch or switch decision and loop as it goes, then a `done` line:
 
 ```json
-{"job":"poll","time":"2026-10-09T09:30:00+09:00","event":"task","task":"get","status":200,"ms":412,"ok":true}
+{"job":"poll","time":"2026-10-09T09:30:00+09:00","event":"task","task":"fetch","exit_code":0,"ms":412,"ok":true}
 {"job":"poll","time":"2026-10-09T09:30:00+09:00","event":"done","failed_task":null,"reason":null}
 ```
 
 | `event` | Other fields |
 |---|---|
-| `task` | `task` (the task's key), then `status` (HTTP), `exit_code` (cmd) or `error` (a timeout or network error with `allow_failure`), `ms`, `ok`, and `allowed: true` when it failed with `allow_failure` |
+| `task` | `task` (the task's key), then `exit_code` or `error` (a timeout with `allow_failure`), `ms`, `ok`, and `allowed: true` when it failed with `allow_failure` |
 | `branch` | `task`, `arm` (`then` or `else`), `tasks` (how many entries the chosen arm has; nested tasks and loop iterations aren't counted) |
 | `switch` | `task`, `case` (the matching case's number, from 1, or `"default"`), `tasks` (how many entries the chosen case has) |
 | `for_each` | `task`, `var`, `items` (the list length) |
-| `done` | `failed_task`: the task that failed without `allow_failure`, or `null`; `reason`: why it failed (`returned HTTP 500`, `exited with code 3`), or `null` |
+| `done` | `failed_task`: the task that failed without `allow_failure`, or `null`; `reason`: why it failed (`exited with code 3`), or `null` |
 | `error` | `error`: why the run stopped, e.g. an undefined variable, a project that became invalid, or a crash |
 | `stopped` | `error`: why the job's schedule stopped |
 | `skipped` | `reason`: why the job won't run, e.g. its `at` time has passed |

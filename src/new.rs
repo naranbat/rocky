@@ -1,4 +1,4 @@
-use std::io::{BufRead, Write};
+use std::io::Write;
 use std::path::Path;
 
 use crate::error::Error;
@@ -7,7 +7,7 @@ use crate::error::Error;
 pub enum Kind {
     Project,
     Job,
-    Task { http: bool },
+    Task,
 }
 
 const PROJECT: &str = "\
@@ -33,10 +33,6 @@ const TASK_HEADER: &str = "\
 
 const CMD_TASK: &str = "\
 cmd: [echo, hello]
-";
-
-const HTTP_TASK: &str = "\
-get: https://httpbin.org/get
 ";
 
 const FULL_PROJECT_HEADER: &str = "\
@@ -79,22 +75,13 @@ const FULL_TASK_HEADER: &str = "\
 # Every field is shown; delete what you don't need. ${USER} comes from the env_file or the environment.
 ";
 
-const FULL_HTTP_TASK: &str = "\
-post:                               # or get, put, patch, delete; others: `http:` with `method:`
-  url: https://httpbin.org/anything/login   # must include the scheme
-  headers:
-    Accept: application/json
-  query:                            # appended to the url, percent-encoded
-    source: rocky
-  json:                             # sent as the JSON body; ${...} works in any string
-    user: ${USER}
-    token: demo-token
-    tags: [admin, beta]
-  insecure: false                   # true skips TLS certificate checks
-  follow_redirects: true            # false returns a 3xx response itself
-timeout: 10                         # seconds (default 30)
-capture_body: true                  # false reads the body without keeping it in memory
-allow_failure: false                # true continues after a 4xx/5xx, a timeout or a network error
+const CURL_TASK: &str = "\
+cmd: [curl, -sS, --fail-with-body, --json, '@-', https://httpbin.org/anything/login]   # --json sends stdin as the body
+stdin:                              # written as JSON
+  user: ${USER}
+  token: demo-token
+  tags: [admin, beta]
+timeout: 10
 ";
 
 const FULL_CMD_TASK: &str = "\
@@ -114,30 +101,30 @@ const FULL_CONTROL: &str = "
   # A branch: `then` runs when the condition holds, `else` otherwise. Either may be left out.
   check:
     if:                                 # a list: all must hold (also `all`, `any`, `not`)
-      - {this: tasks.login.status, eq: 200}   # a name or dot path, without ${}
+      - {this: tasks.login.exit_code, eq: 0}   # a name or dot path, without ${}
       - {this: tasks.shout.stdout, contains: ALICE}   # also ne, gt, gte, lt, lte, matches
-      - {this: tasks.login.body.json.token, exists: true}   # defined at all; never fails
+      - {this: tasks.login.stdout.json.token, exists: true}   # defined at all; never fails
     then:
       greet:
-        cmd: [echo, \"logged in with ${tasks.login.body.json.token}\"]
+        cmd: [echo, \"logged in with ${tasks.login.stdout.json.token}\"]
     else:
       complain:
         cmd: [echo, login failed]
 
   # A switch: runs the tasks of the first case whose value equals the variable.
   route:
-    switch: tasks.login.status
+    switch: tasks.login.exit_code
     cases:
-      200:
+      0:
         ok:
           cmd: [echo, ok]
     default:                            # when no case matches
       unexpected:
-        cmd: [echo, \"unexpected status ${tasks.login.status}\"]
+        cmd: [echo, \"unexpected exit code ${tasks.login.exit_code}\"]
 
   # A loop: runs `do` once for each element of a list.
   each_tag:
-    for_each: tasks.login.body.json.tags   # a list, without ${}
+    for_each: tasks.login.stdout.json.tags   # a list, without ${}
     as: TAG                             # default ITEM
     do:
       tag:
@@ -183,18 +170,13 @@ pub fn create(kind: Kind, level: Level, path: &Path) -> Result<String, Error> {
                 ),
             )
         }
-        Kind::Task { http } => {
+        Kind::Task => {
             let name = path.file_stem().unwrap_or_default().to_string_lossy();
             (
-                match (full, http) {
-                    (false, true) => format!("{TASK_HEADER}{HTTP_TASK}"),
-                    (false, false) => format!("{TASK_HEADER}{CMD_TASK}"),
-                    (true, true) => {
-                        format!("{TASK_HEADER}{FULL_TASK_HEADER}{FULL_HTTP_TASK}")
-                    }
-                    (true, false) => {
-                        format!("{TASK_HEADER}{FULL_TASK_HEADER}{FULL_CMD_TASK}")
-                    }
+                if full {
+                    format!("{TASK_HEADER}{FULL_TASK_HEADER}{FULL_CMD_TASK}")
+                } else {
+                    format!("{TASK_HEADER}{CMD_TASK}")
                 },
                 format!("add it to a job:\n  tasks:\n    {name}: {}", path.display()),
             )
@@ -204,22 +186,6 @@ pub fn create(kind: Kind, level: Level, path: &Path) -> Result<String, Error> {
     Ok(format!("created {}\n{hint}", path.display()))
 }
 
-/// Asks on `out` whether a task is HTTP or cmd, reading answers from `input` until one is
-/// `http`, `cmd` or empty (cmd). End of input counts as empty.
-pub fn ask_http(mut input: impl BufRead, mut out: impl Write) -> Result<bool, Error> {
-    write!(out, "task type [cmd/http] (default cmd): ").map_err(Error::Prompt)?;
-    loop {
-        out.flush().map_err(Error::Prompt)?;
-        let mut answer = String::new();
-        input.read_line(&mut answer).map_err(Error::Prompt)?;
-        match answer.trim().to_lowercase().as_str() {
-            "" | "cmd" => return Ok(false),
-            "http" => return Ok(true),
-            _ => write!(out, "answer cmd or http: ").map_err(Error::Prompt)?,
-        }
-    }
-}
-
 /// A job's `schedule`, and its `tasks` with one task of every kind, using every field.
 fn full_tasks() -> String {
     format!(
@@ -227,14 +193,15 @@ fn full_tasks() -> String {
          REGION: eu-west-1\n  \
          LIMITS: {{retries: 3}}             # an object: read inside it with ${{LIMITS.retries}}\n\
          tasks:\n  \
-         # An HTTP request. Later tasks read its result by name: ${{tasks.login.status}}.\n  \
+         # An HTTP request with curl. Later tasks read its result by name; JSON output is parsed:\n  \
+         # ${{tasks.login.stdout.json.token}}.\n  \
          login:\n{}\n  \
          # A command.\n  \
          shout:\n{}\n  \
          # A command reading `values`.\n  \
          region:\n    \
          cmd: [echo, \"${{REGION}}, ${{LIMITS.retries}} retries\"]\n{FULL_CONTROL}",
-        indent(FULL_HTTP_TASK, 4),
+        indent(CURL_TASK, 4),
         indent(FULL_CMD_TASK, 4),
     )
 }
@@ -291,14 +258,12 @@ mod tests {
         }
 
         create(Kind::Job, level, &dir.path().join("jobs/w.yaml")).unwrap();
-        let task = |http| Kind::Task { http };
-        create(task(false), level, &dir.path().join("a/cmd.yaml")).unwrap();
-        create(task(true), level, &dir.path().join("a/http.yaml")).unwrap();
+        create(Kind::Task, level, &dir.path().join("a/cmd.yaml")).unwrap();
         let project_file = dir.path().join("files.yaml");
         std::fs::write(
             &project_file,
             "jobs:\n  w: jobs/w.yaml\n  \
-             a: {tasks: {sh: a/cmd.yaml, web: a/http.yaml}}\n",
+             a: {tasks: {sh: a/cmd.yaml}}\n",
         )
         .unwrap();
         let mut project = project::load(&project_file).unwrap();
@@ -308,10 +273,9 @@ mod tests {
             assert_eq!(w.values["REGION"], "eu-west-1");
         }
         let a = project.take("a").unwrap();
-        assert!(a.tasks[0].cmd.is_some() && a.tasks[1].http.is_some());
+        assert!(a.tasks[0].cmd.is_some());
         assert_eq!(a.tasks[0].pipe.is_empty(), matches!(level, Level::Basic));
         assert_eq!(a.tasks[0].name, "sh");
-        assert_eq!(a.tasks[1].name, "web");
     }
 
     #[test]
@@ -322,15 +286,5 @@ mod tests {
         let err = create(Kind::Job, Level::Basic, &path).unwrap_err();
         assert!(matches!(err, Error::Exists(_)), "{err}");
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "keep");
-    }
-
-    #[test]
-    fn asks_until_cmd_or_http() {
-        let ask = |input: &str| ask_http(input.as_bytes(), std::io::sink()).unwrap();
-        assert!(ask("http\n"));
-        assert!(!ask("cmd\n"));
-        assert!(!ask("\n"));
-        assert!(!ask(""));
-        assert!(ask("ftp\n HTTP \n"));
     }
 }

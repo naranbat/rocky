@@ -14,8 +14,6 @@ pub enum Error {
     },
     #[error("{0} already exists")]
     Exists(PathBuf),
-    #[error("failed to read the answer")]
-    Prompt(#[source] std::io::Error),
     #[error("invalid YAML in {path}")]
     Yaml {
         path: PathBuf,
@@ -32,10 +30,6 @@ pub enum Error {
     UndefinedVar(String),
     #[error("unclosed `${{` in `{0}`")]
     UnclosedVar(String),
-    #[error("invalid HTTP method `{0}`")]
-    InvalidMethod(String),
-    #[error("invalid header `{0}`")]
-    InvalidHeader(String),
     #[error("invalid task: {0}")]
     InvalidTask(String),
     #[error("invalid condition: {0}")]
@@ -75,10 +69,6 @@ pub enum Error {
     Cwd(PathBuf),
     #[error("command `{command}` timed out after {secs}s")]
     CommandTimeout { command: String, secs: u64 },
-    #[error("request timed out after {0}s")]
-    Timeout(u64),
-    #[error("request failed")]
-    Http(#[from] reqwest::Error),
     #[error("socket {}", .path.display())]
     Socket {
         path: PathBuf,

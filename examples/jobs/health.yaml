@@ -5,11 +5,8 @@ schedule:
 
 tasks:
   status:
-    get: ${BASE}/status/200
+    cmd: [curl, -sS, --fail-with-body, '${BASE}/status/200']   # --fail-with-body: a 4xx/5xx exits non-zero
     timeout: 5
 
   check:
-    get:
-      url: ${BASE}/get
-      query:
-        status: ${tasks.status.status}
+    cmd: [curl, -sS, --fail-with-body, -G, '${BASE}/get', -d, 'exit_code=${tasks.status.exit_code}']   # -G -d: a query

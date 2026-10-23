@@ -5,15 +5,15 @@ A task with `for_each` is a loop. Its `do` tasks run once for each element of a 
 ```yaml
 tasks:
   users:
-    get: "${BASE}/users"
+    cmd: [curl, -sS, --fail-with-body, '${BASE}/users']
   notify_all:
-    for_each: tasks.users.body.items          # a list
+    for_each: tasks.users.stdout.items        # a list
     as: USER                                  # optional, default ITEM
     do:
       notify:
-        post: "${BASE}/notify/${USER.id}"
+        cmd: [curl, -sS, --fail-with-body, -X, POST, '${BASE}/notify/${USER.id}']
   done:                                       # runs once, after every element
-    get: "${BASE}/done"
+    cmd: [curl, -sS, --fail-with-body, '${BASE}/done']
 ```
 
 Example: the `loop` job in [`examples/httpbin.yaml`](../examples/httpbin.yaml).
@@ -28,7 +28,7 @@ Example: the `loop` job in [`examples/httpbin.yaml`](../examples/httpbin.yaml).
 
 Like every task, a loop is named by its key, which labels it in errors and `run`'s log lines.
 
-A loop can't also have `http`, `cmd`, `timeout`, `allow_failure`, `if`, `then`, `else`, `switch`, `cases` or `default`.
+A loop can't also have `cmd`, `timeout`, `allow_failure`, `if`, `then`, `else`, `switch`, `cases` or `default`.
 
 ## The list
 

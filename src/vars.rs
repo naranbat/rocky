@@ -2,26 +2,6 @@ use serde_json::Value;
 
 use crate::error::Error;
 use crate::extract;
-use crate::request::RequestSpec;
-
-/// Replaces every `${VAR}` in the spec's url, header values, query values,
-/// and `json` string leaves, looking `VAR` up with `lookup`.
-pub(crate) fn apply_with(
-    mut spec: RequestSpec,
-    lookup: &dyn Fn(&str) -> Option<Value>,
-) -> Result<RequestSpec, Error> {
-    spec.url = substitute(&spec.url, lookup)?;
-    for value in spec.headers.values_mut() {
-        *value = substitute(value, lookup)?;
-    }
-    for value in spec.query.values_mut() {
-        *value = substitute(value, lookup)?;
-    }
-    if let Some(json) = spec.json.as_mut() {
-        substitute_value(json, lookup)?;
-    }
-    Ok(spec)
-}
 
 pub(crate) fn substitute_value(
     value: &mut Value,
@@ -109,11 +89,10 @@ mod tests {
     }
 
     #[test]
-    fn escaped_whole_body_string_stays_literal() {
-        let mut spec = RequestSpec::new("GET", "x");
-        spec.json = Some(json!({"tpl": "$${COUNT}"}));
-        let spec = apply_with(spec, &lookup).unwrap();
-        assert_eq!(spec.json, Some(json!({"tpl": "${COUNT}"})));
+    fn escaped_whole_value_string_stays_literal() {
+        let mut value = json!({"tpl": "$${COUNT}"});
+        substitute_value(&mut value, &lookup).unwrap();
+        assert_eq!(value, json!({"tpl": "${COUNT}"}));
     }
 
     #[test]
@@ -153,42 +132,34 @@ mod tests {
     }
 
     #[test]
-    fn applies_to_all_spec_fields() {
-        let mut spec = RequestSpec::new("GET", "https://example.com/u/${ID}");
-        spec.headers = [("Authorization".to_string(), "Bearer ${TOKEN}".to_string())].into();
-        spec.query = [("id".to_string(), "${ID}".to_string())].into();
-        spec.json = Some(json!({"user": {"id": "${ID}", "tags": ["${TOKEN}", 1, true]}}));
-        let spec = apply_with(spec, &lookup).unwrap();
-        assert_eq!(spec.url, "https://example.com/u/42");
-        assert_eq!(spec.headers["Authorization"], "Bearer abc");
-        assert_eq!(spec.query["id"], "42");
+    fn substitutes_nested_string_leaves() {
+        let mut value = json!({"user": {"id": "${ID}", "tags": ["${TOKEN}", 1, true]}});
+        substitute_value(&mut value, &lookup).unwrap();
         assert_eq!(
-            spec.json,
-            Some(json!({"user": {"id": "42", "tags": ["abc", 1, true]}}))
+            value,
+            json!({"user": {"id": "42", "tags": ["abc", 1, true]}})
         );
     }
 
     #[test]
-    fn whole_body_var_keeps_json_type() {
-        let mut spec = RequestSpec::new("GET", "x");
-        spec.json = Some(json!({
+    fn whole_value_var_keeps_json_type() {
+        let mut value = json!({
             "count": "${COUNT}",
             "tags": "${TAGS}",
             "label": "n=${COUNT}",
             "two": "${COUNT}${COUNT}",
-        }));
-        let spec = apply_with(spec, &lookup).unwrap();
+        });
+        substitute_value(&mut value, &lookup).unwrap();
         assert_eq!(
-            spec.json,
-            Some(json!({"count": 5, "tags": ["a"], "label": "n=5", "two": "55"}))
+            value,
+            json!({"count": 5, "tags": ["a"], "label": "n=5", "two": "55"})
         );
     }
 
     #[test]
-    fn whole_body_var_undefined_errors() {
-        let mut spec = RequestSpec::new("GET", "x");
-        spec.json = Some(json!({"a": "${NOPE}"}));
-        let err = apply_with(spec, &lookup).unwrap_err();
+    fn whole_value_var_undefined_errors() {
+        let mut value = json!({"a": "${NOPE}"});
+        let err = substitute_value(&mut value, &lookup).unwrap_err();
         assert!(matches!(err, Error::UndefinedVar(name) if name == "NOPE"));
     }
 }

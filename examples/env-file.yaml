@@ -5,7 +5,4 @@ jobs:
   user:
     tasks:
       user:
-        get:
-          url: https://httpbin.org/anything/users/42
-          headers:
-            Authorization: Bearer ${API_TOKEN}
+        cmd: [curl, -sS, --fail-with-body, -H, 'Authorization: Bearer ${API_TOKEN}', https://httpbin.org/anything/users/42]

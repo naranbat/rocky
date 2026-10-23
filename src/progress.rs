@@ -50,7 +50,6 @@ fn append(dir: &Path, date: &str, line: &str) -> std::io::Result<()> {
 pub fn task(name: &str, result: &TaskResult, elapsed: Duration, allowed: bool) -> Value {
     let mut event = json!({"event": "task", "task": name});
     match result {
-        TaskResult::Http(response) => event["status"] = json!(response.status),
         TaskResult::Cmd(result) => event["exit_code"] = json!(result.exit_code),
         TaskResult::Errored { error } => event["error"] = json!(error),
     }
@@ -83,32 +82,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn formats_http_and_cmd_tasks() {
-        let http = TaskResult::http;
+    fn formats_cmd_and_errored_tasks() {
         let ms = Duration::from_millis(412);
         assert_eq!(
-            task("login", &http(200), ms, false),
-            json!({"event": "task", "task": "login", "status": 200, "ms": 412, "ok": true})
+            task("check", &TaskResult::cmd(0), ms, false),
+            json!({"event": "task", "task": "check", "exit_code": 0, "ms": 412, "ok": true})
         );
         assert_eq!(
-            task("login", &http(404), ms, false),
-            json!({"event": "task", "task": "login", "status": 404, "ms": 412, "ok": false})
+            task("check", &TaskResult::cmd(3), ms, false),
+            json!({"event": "task", "task": "check", "exit_code": 3, "ms": 412, "ok": false})
         );
         assert_eq!(
-            task("login", &http(404), ms, true),
-            json!({"event": "task", "task": "login", "status": 404, "ms": 412, "ok": false, "allowed": true})
-        );
-        let cmd = TaskResult::cmd(3);
-        assert_eq!(
-            task("check", &cmd, Duration::from_millis(5), false),
-            json!({"event": "task", "task": "check", "exit_code": 3, "ms": 5, "ok": false})
+            task("check", &TaskResult::cmd(3), ms, true),
+            json!({"event": "task", "task": "check", "exit_code": 3, "ms": 412, "ok": false, "allowed": true})
         );
         let errored = TaskResult::Errored {
-            error: "request timed out after 5s".to_string(),
+            error: "command `sleep 9` timed out after 5s".to_string(),
         };
         assert_eq!(
             task("ping", &errored, Duration::from_millis(5003), true),
-            json!({"event": "task", "task": "ping", "error": "request timed out after 5s", "ms": 5003, "ok": false, "allowed": true})
+            json!({"event": "task", "task": "ping", "error": "command `sleep 9` timed out after 5s", "ms": 5003, "ok": false, "allowed": true})
         );
     }
 

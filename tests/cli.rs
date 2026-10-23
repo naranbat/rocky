@@ -10,8 +10,6 @@ use std::time::{Duration, Instant};
 use nix::sys::signal::{Signal, kill};
 use nix::unistd::Pid;
 use serde_json::{Value, json};
-use wiremock::matchers::{body_json, header, method, path};
-use wiremock::{Mock, MockServer, ResponseTemplate};
 
 fn write(dir: &Path, name: &str, text: &str) -> PathBuf {
     let path = dir.join(name);
@@ -232,26 +230,6 @@ fn missing_env_file_fails() {
     assert_eq!(err.matches("No such file or directory").count(), 1, "{err}");
 }
 
-#[tokio::test]
-async fn task_timeout_limits_request() {
-    let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .respond_with(ResponseTemplate::new(200).set_delay(std::time::Duration::from_secs(3)))
-        .mount(&server)
-        .await;
-    let dir = tempfile::tempdir().unwrap();
-    let out = exec_yaml(
-        dir.path(),
-        &format!(
-            "jobs:\n  w:\n    tasks:\n      slow:\n        http: {{method: GET, url: \"{}\"}}\n        timeout: 1\n",
-            server.uri()
-        ),
-    );
-    assert_eq!(out.status.code(), Some(1));
-    assert_eq!(out.stdout, b"");
-    assert_stderr_contains(&out, "request timed out after 1s");
-}
-
 #[test]
 fn invalid_condition_fails_at_load_before_any_task() {
     let dir = tempfile::tempdir().unwrap();
@@ -271,32 +249,19 @@ fn invalid_condition_fails_at_load_before_any_task() {
     assert!(!dir.path().join("ran").exists());
 }
 
-#[tokio::test]
-async fn job_prints_failing_task_result() {
-    let server = MockServer::start().await;
-    Mock::given(path("/stats"))
-        .respond_with(
-            ResponseTemplate::new(404)
-                .insert_header("x-request-id", "r1")
-                .set_body_string("gone"),
-        )
-        .mount(&server)
-        .await;
+#[test]
+fn job_prints_failing_task_result() {
     let dir = tempfile::tempdir().unwrap();
     let out = exec_yaml(
         dir.path(),
-        &format!(
-            "jobs:\n  w:\n    tasks:\n      stats:\n        http: {{method: GET, url: \"{}/stats\"}}\n",
-            server.uri()
-        ),
+        "jobs:\n  w:\n    tasks:\n      stats:\n        cmd: [sh, -c, 'echo gone; exit 3']\n",
     );
     assert_eq!(out.status.code(), Some(1));
-    let envelope: Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(envelope["status"], 404);
-    assert_eq!(envelope["headers"]["x-request-id"], "r1");
-    assert_eq!(envelope["body"], "gone");
+    let result: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(result["exit_code"], 3);
+    assert_eq!(result["stdout"], "gone");
     let err = stderr(&out);
-    assert!(err.contains("task `stats` returned HTTP 404"), "{err}");
+    assert!(err.contains("task `stats` exited with code 3"), "{err}");
     assert!(!err.contains("task `stats`:"), "{err}");
 }
 
@@ -338,44 +303,21 @@ fn cmd_missing_program_fails_with_task_name() {
     );
 }
 
-#[tokio::test]
-async fn job_tasks_read_earlier_results_via_args_and_stdin() {
-    let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/users"))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .insert_header("x-token", "t1")
-                .set_body_json(json!({"users": ["a", "b", "c"]})),
-        )
-        .expect(1)
-        .mount(&server)
-        .await;
-    Mock::given(method("POST"))
-        .and(path("/report"))
-        .and(header("authorization", "Bearer t1"))
-        .and(body_json(json!({
-            "users": {"users": ["a", "b", "c"]},
-            "bytes": 13,
-            "prev_status": 200,
-        })))
-        .respond_with(ResponseTemplate::new(201))
-        .expect(1)
-        .mount(&server)
-        .await;
+#[test]
+fn job_tasks_read_earlier_results_via_args_and_stdin() {
     let dir = tempfile::tempdir().unwrap();
     let out = exec_yaml(
         dir.path(),
-        &format!(
-            "jobs:\n  w:\n    tasks:\n\
-             \x20     fetch:\n        http: {{method: GET, url: \"{base}/users\"}}\n\
-             \x20     count:\n        cmd: [wc, -c]\n        stdin: ${{tasks.fetch.body.users}}\n\
-             \x20     report:\n        http:\n          method: POST\n          url: {base}/report\n          headers:\n            Authorization: Bearer ${{tasks.fetch.headers.x-token}}\n          json:\n            users: ${{tasks.fetch.body}}\n            bytes: ${{tasks.count.stdout}}\n            prev_status: ${{tasks.fetch.status}}\n\
-             \x20     check:\n        if: {{this: tasks.report.status, eq: 201}}\n        then:\n          print:\n            cmd: [echo, 'reported ${{tasks.count.stdout}}']\n",
-            base = server.uri()
-        ),
+        "jobs:\n  w:\n    tasks:\n\
+         \x20     fetch:\n        cmd: [echo, '{\"token\": \"t1\", \"users\": [\"a\", \"b\", \"c\"]}']\n\
+         \x20     count:\n        cmd: [wc, -c]\n        stdin: ${tasks.fetch.stdout.users}\n\
+         \x20     report:\n        cmd: [cat]\n        stdin:\n          token: Bearer ${tasks.fetch.stdout.token}\n          users: ${tasks.fetch.stdout.users}\n          bytes: ${tasks.count.stdout}\n          prev_exit: ${tasks.fetch.exit_code}\n\
+         \x20     check:\n        if: {this: tasks.report.stdout.bytes, eq: 13}\n        then:\n          print:\n            cmd: [echo, 'reported ${tasks.report.stdout}']\n",
     );
-    assert_eq!(stdout_json(&out)["stdout"], "reported 13");
+    assert_eq!(
+        stdout_json(&out)["stdout"],
+        r#"reported {"token":"Bearer t1","users":["a","b","c"],"bytes":13,"prev_exit":0}"#
+    );
 }
 
 #[test]
@@ -551,37 +493,6 @@ fn run_rejects_a_project_without_a_schedule() {
 }
 
 #[test]
-fn network_error_cause_is_printed_once() {
-    let dir = tempfile::tempdir().unwrap();
-    let out = exec_yaml(
-        dir.path(),
-        "jobs:\n  w:\n    tasks:\n      down:\n        http: {method: GET, url: \"http://127.0.0.1:1/\"}\n",
-    );
-    assert_eq!(out.status.code(), Some(1));
-    assert_eq!(out.stdout, b"");
-    let log = stderr(&out);
-    assert!(log.contains("request failed"), "{log}");
-    assert_eq!(log.matches("error sending request").count(), 1, "{log}");
-}
-
-#[test]
-fn allow_failure_continues_after_network_error() {
-    let dir = tempfile::tempdir().unwrap();
-    let out = exec_yaml(
-        dir.path(),
-        "jobs:\n  w:\n    tasks:\n\
-         \x20     down:\n        http: {method: GET, url: \"http://127.0.0.1:1/\"}\n        allow_failure: true\n\
-         \x20     print:\n        cmd: [echo, '${tasks.down.error}']\n",
-    );
-    assert!(out.status.success(), "{}", stderr(&out));
-    let error = stdout_json(&out)["stdout"].as_str().unwrap().to_string();
-    assert!(
-        error.starts_with("request failed: error sending request"),
-        "{error}"
-    );
-}
-
-#[test]
 fn run_reports_errored_run_on_stdout() {
     let dir = tempfile::tempdir().unwrap();
     let at = at_in(500);
@@ -696,21 +607,17 @@ fn new_creates_dirs_and_never_overwrites() {
 }
 
 #[test]
-fn new_task_asks_for_its_type() {
+fn new_task_writes_a_cmd_task() {
     let dir = tempfile::tempdir().unwrap();
-    let mut child = rocky_command(&["new", "task", "tasks/login.yaml"], dir.path())
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
+    let out = rocky_command(&["new", "task", "tasks/login.yaml"], dir.path())
+        .stdin(Stdio::null())
+        .output()
         .unwrap();
-    child.stdin.take().unwrap().write_all(b"http\n").unwrap();
-    let out = child.wait_with_output().unwrap();
     assert!(out.status.success(), "{}", stderr(&out));
-    assert_stderr_contains(&out, "[cmd/http]");
+    assert_eq!(stderr(&out), "");
     let text = std::fs::read_to_string(dir.path().join("tasks/login.yaml")).unwrap();
     assert!(
-        !text.contains("\nname:") && text.contains("\nget:"),
+        !text.contains("\nname:") && text.contains("\ncmd:"),
         "{text}"
     );
     assert!(
@@ -727,7 +634,7 @@ fn validate_accepts_a_valid_project_without_running_it() {
     let file = write(
         dir.path(),
         "project.yaml",
-        "jobs:\n  b:\n    schedule: {at: '2000-01-01T00:00:00'}\n    tasks:\n      t:\n        cmd: [touch, ran]\n  a:\n    tasks:\n      g:\n        http: {method: GET, url: 'http://127.0.0.1:1'}\n",
+        "jobs:\n  b:\n    schedule: {at: '2000-01-01T00:00:00'}\n    tasks:\n      t:\n        cmd: [touch, ran]\n  a:\n    tasks:\n      g:\n        cmd: [echo]\n",
     );
     let out = validate(&file, dir.path());
     assert!(out.status.success(), "{}", stderr(&out));

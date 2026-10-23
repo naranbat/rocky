@@ -18,7 +18,7 @@ struct Cli {
 enum Command {
     /// Run one job of a project.
     ///
-    /// Runs `http` and `cmd` tasks in order, where later tasks read earlier results as `${tasks.NAME...}`. Prints the last result.
+    /// Runs `cmd` tasks in order, where later tasks read earlier results as `${tasks.NAME...}`. Prints the last result.
     Exec {
         file: PathBuf,
         /// The job to run.
@@ -64,7 +64,7 @@ enum NewKind {
     Project { path: PathBuf },
     /// A job file, to list in a project's `jobs`.
     Job { path: PathBuf },
-    /// A task file, to list under a job's `tasks` (`name: path`). Asks whether it's an HTTP or cmd task.
+    /// A task file, to list under a job's `tasks` (`name: path`).
     Task { path: PathBuf },
 }
 
@@ -96,13 +96,7 @@ async fn main() -> anyhow::Result<()> {
             let (kind, path) = match kind {
                 NewKind::Project { path } => (new::Kind::Project, path),
                 NewKind::Job { path } => (new::Kind::Job, path),
-                NewKind::Task { path } => {
-                    if path.exists() {
-                        return Err(error::Error::Exists(path).into());
-                    }
-                    let http = new::ask_http(std::io::stdin().lock(), std::io::stderr())?;
-                    (new::Kind::Task { http }, path)
-                }
+                NewKind::Task { path } => (new::Kind::Task, path),
             };
             println!("{}", new::create(kind, level, &path)?);
         }

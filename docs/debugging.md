@@ -16,7 +16,7 @@ $ rocky run project.yaml | jq -c '{event, task, arm, ok}'
 
 | `event` | Meaning |
 |---|---|
-| `task` | an HTTP or cmd task finished. `ok: false` with `allowed: true` means it failed with `allow_failure` and the job continued |
+| `task` | a cmd task finished. `ok: false` with `allowed: true` means it failed with `allow_failure` and the job continued |
 | `branch` | a branch chose `then` or `else` |
 | `switch` | a switch chose a case or `default` |
 | `for_each` | a loop started |
@@ -28,4 +28,4 @@ A task that ends in an error (an undefined variable, a network error) gets no `t
 
 ## No dry run
 
-There is no mode that resolves requests without sending them. Every HTTP request and command really executes. To try a job safely, point it at a test server such as https://httpbin.org.
+There is no mode that resolves tasks without running them. Every command, including every `curl` request, really executes. To try a job safely, point it at a test server such as https://httpbin.org.

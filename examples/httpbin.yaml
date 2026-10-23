@@ -1,4 +1,5 @@
-# A project: jobs that share an env file. Every job sends requests to https://httpbin.org.
+# A project: jobs that share an env file. Every job sends requests to https://httpbin.org with curl;
+# its JSON output is parsed, so later tasks read fields with ${tasks.NAME.stdout.FIELD}.
 #   rocky exec examples/httpbin.yaml login       # run one job
 #   rocky run examples/httpbin.yaml              # run the jobs that have a `schedule`
 env_file: httpbin.env                 # BASE, USER and COUNT
@@ -11,28 +12,26 @@ jobs:
       every: 5m                       # every 30s, 5m, 2h...
       delay: 10s                      # optional: wait before the first run
     tasks:
-      list:
-        get:
-          url: ${BASE}/get
-          query:
-            page: "2"
-          headers:
-            Accept: application/json
+      list:                           # -G -d: a query; --fail-with-body: a 4xx/5xx exits non-zero
+        cmd: [curl, -sS, --fail-with-body, -G, '${BASE}/get', -d, page=2, -H, 'Accept: application/json']
 
       login:
-        post:
-          url: ${BASE}/anything/login
-          json:                       # sent as JSON
-            token: demo-token         # httpbin echoes the JSON body under `json`
+        cmd: [curl, -sS, --fail-with-body, --json, '@-', '${BASE}/anything/login']   # --json sends stdin as the body
+        stdin:                        # written as JSON
+          token: demo-token           # httpbin echoes the JSON body under `json`
 
       whoami:
-        get:
-          url: ${BASE}/headers
-          headers:
-            Authorization: Bearer ${tasks.login.body.json.token}
-            X-Page: ${tasks.list.body.args.page}
+        cmd:
+          - curl
+          - -sS
+          - --fail-with-body
+          - -H
+          - 'Authorization: Bearer ${tasks.login.stdout.json.token}'
+          - -H
+          - 'X-Page: ${tasks.list.stdout.args.page}'
+          - ${BASE}/headers
 
-  # HTTP and cmd tasks together, including writing and reading a file. Any task can read an earlier task's
+  # Requests and other commands together, including writing and reading a file. Any task can read an earlier task's
   # result with ${tasks.NAME.path}.
   mixed:
     schedule:
@@ -61,43 +60,38 @@ jobs:
         cwd: .
 
       report:
-        post:
-          url: ${BASE}/anything/report
-          json: ${tasks.load.stdout}
+        cmd: [curl, -sS, --fail-with-body, --json, '@-', '${BASE}/anything/report']
+        stdin: ${tasks.load.stdout}
 
   # Branching: if count > 10 call /big, else check the message.
   conditional:
     schedule:
       hourly: 15                      # at minute 15 of every hour
     tasks:
-      stats:
-        get:
-          url: ${BASE}/anything/stats
-          query:
-            count: ${COUNT}
-            message: "warning: disk low"
+      stats:                          # --data-urlencode encodes the query value
+        cmd: [curl, -sS, --fail-with-body, -G, '${BASE}/anything/stats', -d, 'count=${COUNT}', --data-urlencode, 'message=warning: disk low']
 
       # httpbin echoes query values as strings ("15"); numeric strings compare as numbers.
       route:
-        if: { this: tasks.stats.body.args.count, gt: 10 }
+        if: { this: tasks.stats.stdout.args.count, gt: 10 }
         then:
           big:
-            post: "${BASE}/anything/big"
+            cmd: [curl, -sS, --fail-with-body, -X, POST, '${BASE}/anything/big']
         else:
           check:
             if:
               all:
-                - { this: tasks.stats.body.args.message, contains: warning }
-                - not: { this: tasks.stats.body.args.message, matches: "^ignore" }
+                - { this: tasks.stats.stdout.args.message, contains: warning }
+                - not: { this: tasks.stats.stdout.args.message, matches: "^ignore" }
             then:
               warn:
-                post: "${BASE}/anything/warn"
+                cmd: [curl, -sS, --fail-with-body, -X, POST, '${BASE}/anything/warn']
 
   # Tolerating a timeout: `allow_failure` keeps going and the result is just `{error: ...}`; `exists` checks for it.
   health:
     tasks:
       ping:
-        get: "${BASE}/delay/3"        # httpbin waits 3s before answering
+        cmd: [curl, -sS, --fail-with-body, '${BASE}/delay/3']   # httpbin waits 3s before answering
         timeout: 1                    # set to 5 to take the `else` branch
         allow_failure: true
 
@@ -108,28 +102,26 @@ jobs:
             cmd: [echo, 'ping failed: ${tasks.ping.error}']
         else:
           ok:
-            cmd: [echo, 'ping returned ${tasks.ping.status}']
+            cmd: [echo, 'ping reached ${tasks.ping.stdout.url}']
 
   # Looping: fetch a list, then POST once per element.
   loop:
     tasks:
       users:
-        post:
-          url: ${BASE}/anything/users
-          json:
-            users:
-              - { id: 1, name: alice }
-              - { id: 2, name: bob }
+        cmd: [curl, -sS, --fail-with-body, --json, '@-', '${BASE}/anything/users']
+        stdin:
+          users:
+            - { id: 1, name: alice }
+            - { id: 2, name: bob }
 
       notify_all:
-        for_each: tasks.users.body.json.users   # must be a list
+        for_each: tasks.users.stdout.json.users   # must be a list
         as: USER                      # optional; defaults to ITEM
         do:
           notify:
-            post:
-              url: ${BASE}/anything/notify/${USER.id}
-              json:
-                name: ${USER.name}
+            cmd: [curl, -sS, --fail-with-body, --json, '@-', '${BASE}/anything/notify/${USER.id}']
+            stdin:
+              name: ${USER.name}
 
   # A job file that uses a task file, with `timeout`.
   files: jobs/files.yaml

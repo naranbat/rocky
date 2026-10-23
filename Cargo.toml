@@ -1,18 +1,16 @@
 [package]
 name = "rocky"
 version = "0.1.0"
-description = "Automate repeatable work: chain HTTP requests and commands into YAML projects, run on demand or on a schedule"
+description = "Automate repeatable work: chain commands into YAML projects, run on demand or on a schedule"
 edition = "2024"
 
 [dependencies]
 anyhow = "1.0.104"
-base64 = "0.23.1"
 clap = { version = "4.6.7", features = ["derive"] }
 dotenvy = "0.15.7"
 jiff = "0.2.38"
 nix = { version = "0.31.3", features = ["signal"] }
 regex = "1.13.1"
-reqwest = { version = "0.13.5", default-features = false, features = ["json", "rustls", "query"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.151", features = ["preserve_order", "arbitrary_precision"] }
 serde_yaml = "0.9.34"
@@ -21,4 +19,3 @@ tokio = { version = "1.53.2", features = ["fs", "io-util", "macros", "net", "pro
 
 [dev-dependencies]
 tempfile = "3.27.0"
-wiremock = "0.6.5"

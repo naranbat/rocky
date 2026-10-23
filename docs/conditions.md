@@ -5,22 +5,22 @@ A task with `if` is a branch. If the condition holds, its `then` tasks run; othe
 ```yaml
 tasks:
   A:
-    get: "${BASE}/stats"
+    cmd: [curl, -sS, --fail-with-body, '${BASE}/stats']
   route:
-    if: { this: tasks.A.body.count, gt: 10 }
+    if: { this: tasks.A.stdout.count, gt: 10 }
     then:
       B:
-        post: "${BASE}/big"
+        cmd: [curl, -sS, --fail-with-body, -X, POST, '${BASE}/big']
     else:
       warn:                                   # else-if: nest a branch
         if:                                   # a list: every condition must hold
-          - { this: tasks.A.body.message, contains: warning }
-          - not: { this: tasks.A.body.message, matches: "^ignore" }
+          - { this: tasks.A.stdout.message, contains: warning }
+          - not: { this: tasks.A.stdout.message, matches: "^ignore" }
         then:
           C:
-            post: "${BASE}/warn"
+            cmd: [curl, -sS, --fail-with-body, -X, POST, '${BASE}/warn']
   D:                                          # always runs after the branch
-    get: "${BASE}/done"
+    cmd: [curl, -sS, --fail-with-body, '${BASE}/done']
 ```
 
 Example: the `conditional` job in [`examples/httpbin.yaml`](../examples/httpbin.yaml). Run it as is for the `then` branch, or set `COUNT` to `5` in [`examples/httpbin.env`](../examples/httpbin.env) for the `else` branch.
@@ -35,7 +35,7 @@ Example: the `conditional` job in [`examples/httpbin.yaml`](../examples/httpbin.
 
 Like every task, a branch is named by its key, which labels it in errors and `run`'s log lines; a branch has no result to save.
 
-A branch can't also have `http`, `cmd`, `timeout` or `allow_failure`.
+A branch can't also have `cmd`, `timeout` or `allow_failure`.
 
 ## Condition shape
 
@@ -44,7 +44,7 @@ A condition is either `this` with **one or more** operators, or exactly one of `
 - **Several operators** must all hold, checked in the table's order and stopping at the first false: `{this: X, gt: 1, lt: 10}` is a range. `exists` can't be combined with other operators.
 - **A list** is shorthand for `all`: `if: [{this: A, eq: 1}, {this: B, eq: 2}]` is `if: {all: [...]}`. It works anywhere a condition does, including inside `all`, `any` and `not`.
 
-`this` names the variable or dot path to test, **without** `${}`: `this: tasks.login.status`.
+`this` names the variable or dot path to test, **without** `${}`: `this: tasks.login.exit_code`.
 
 | Operator | True when |
 |---|---|
@@ -76,10 +76,9 @@ A task with `switch` compares one variable against each key of `cases`, in order
 ```yaml
 tasks:
   check:
-    get: "${BASE}/health"
-    allow_failure: true
+    cmd: [curl, -sS, -o, /dev/null, -w, '%{http_code}', '${BASE}/health']   # prints the status code
   route:
-    switch: tasks.check.status                # a variable or dot path, without ${}
+    switch: tasks.check.stdout                # a variable or dot path, without ${}
     cases:                                    # value: tasks to run
       200:
         healthy:
@@ -98,7 +97,7 @@ tasks:
 | `cases` | Required, non-empty. A map of value → tasks, tried in order. Each value is compared with the [`eq`](#condition-shape) rules, so `200` matches `"200"`; it's fixed (`${...}` isn't expanded). The exact same key can't appear twice; keys that are only equal by these rules (`200` and `"200"`) both load, and only the first can match. Each case needs at least one task. |
 | `default` | Optional. The tasks to run when no case matches. Without it, nothing runs. |
 
-A switch can't also have `http`, `cmd`, `timeout`, `allow_failure`, `if`, `then` or `else`. Tasks inside a case or `default` behave like those inside `then`/`else`.
+A switch can't also have `cmd`, `timeout`, `allow_failure`, `if`, `then` or `else`. Tasks inside a case or `default` behave like those inside `then`/`else`.
 
 ## Errors
 

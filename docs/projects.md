@@ -1,18 +1,17 @@
 # Projects
 
-A project is a YAML file of named **jobs**. A job is a map of named **tasks** that `rocky exec` executes in order, or that `rocky run` runs on its [schedule](schedules.md). Jobs and tasks are both named by their key, and can be written inline or kept in their own YAML files (see [Job and task files](#job-and-task-files)). A task sends an **HTTP request** or runs a **command**, and every task can use the result of any earlier task. `exec` prints the result of the last task that ran as JSON.
+A project is a YAML file of named **jobs**. A job is a map of named **tasks** that `rocky exec` executes in order, or that `rocky run` runs on its [schedule](schedules.md). Jobs and tasks are both named by their key, and can be written inline or kept in their own YAML files (see [Job and task files](#job-and-task-files)). A task runs a **command** (an HTTP request is a `curl` command), and every task can use the result of any earlier task. `exec` prints the result of the last task that ran as JSON.
 
 ```yaml
 jobs:
   report:
     tasks:
       login:                       # the task's name
-        post:                      # an HTTP request
-          url: https://httpbin.org/anything/login
-          json:                    # sent as the JSON body
-            token: demo-token
-        # httpbin echoes the request body back under `json`,
-        # so the token is at body.json.token
+        cmd: [curl, -sS, --fail-with-body, --json, '@-', https://httpbin.org/anything/login]
+        stdin:                     # sent as the JSON body
+          token: demo-token
+        # curl's JSON output is parsed; httpbin echoes the request body back
+        # under `json`, so the token is at stdout.json.token
 
       today:
         cmd: [date, +%Y-%m-%d]     # a command: program + arguments, no shell involved
@@ -31,16 +30,13 @@ jobs:
           loud: ${tasks.shout.stdout}
 
       send:
-        post:
-          url: https://httpbin.org/anything/report
-          headers:
-            Authorization: Bearer ${tasks.login.body.json.token}
-          json:
-            date: ${tasks.today.stdout}
+        cmd: [curl, -sS, --fail-with-body, -H, 'Authorization: Bearer ${tasks.login.stdout.json.token}', --json, '@-', https://httpbin.org/anything/report]
+        stdin:
+          date: ${tasks.today.stdout}
 ```
 
 ```sh
-rocky exec project.yaml report | jq .body.json   # {"date": "2026-10-09"}
+rocky exec project.yaml report | jq .stdout.json   # {"date": "2026-10-09"}
 ```
 
 Examples: [`httpbin.yaml`](../examples/httpbin.yaml) (jobs `login`, `mixed`, `conditional`, `health`, `loop`, and `files` from [`jobs/files.yaml`](../examples/jobs/files.yaml)), [`imports.yaml`](../examples/imports.yaml) (jobs `health`, `report` and `files`, each from its own file), [`env-file.yaml`](../examples/env-file.yaml) (job `user`), [`cmd-env.yaml`](../examples/cmd-env.yaml) (job `greet`).
@@ -67,7 +63,6 @@ Each entry in `tasks` (and in `then`, `else`, `do`, each switch case and `defaul
 
 | Kind | Keys | Page |
 |---|---|---|
-| HTTP request | `http:`, or `get:` / `post:` / `put:` / `patch:` / `delete:` | [HTTP tasks](http-tasks.md) |
 | Command | `cmd:` | [Cmd tasks](cmd-tasks.md) |
 | Branch | `if`, `then`, `else` | [Conditions](conditions.md) |
 | Switch | `switch`, `cases`, `default` | [Conditions](conditions.md#switch) |
@@ -78,63 +73,55 @@ Each entry in `tasks` (and in `then`, `else`, `do`, each switch case and `defaul
 
 | Field | Applies to | Notes |
 |---|---|---|
-| `http` / `cmd` | HTTP and cmd tasks | Exactly one of them. `cmd` must not be empty. `get`, `post`, `put`, `patch` and `delete` [count as `http`](http-tasks.md#method-keys). |
-| `timeout` | HTTP and cmd tasks | Seconds before the task is stopped and fails. On an HTTP task the default is 30s; cmd tasks have no default. |
+| `cmd` | cmd tasks | Required, and must not be empty. |
+| `timeout` | cmd tasks | Seconds before the command is killed and the task fails. No default. |
 | `cwd`, `stdin`, `env`, `capture_stdout` | cmd tasks | Working directory, standard input, environment variables, and whether stdout is kept. See [Cmd tasks](cmd-tasks.md#options). |
-| `capture_body` | HTTP tasks | `false` reads the response body without keeping it; `body` is `null`. See [HTTP tasks](http-tasks.md#behaviour). |
-| `allow_failure` | HTTP and cmd tasks | `true` to continue when the task fails. |
-| `if`, `then`, `else` | branches | A branch has no `http`, `cmd`, `timeout` or `allow_failure`. |
-| `switch`, `cases`, `default` | switches | Like a branch: no `http`, `cmd`, `timeout` or `allow_failure`, and no `if`, `then` or `else`. |
+| `allow_failure` | cmd tasks | `true` to continue when the task fails. |
+| `if`, `then`, `else` | branches | A branch has no `cmd`, `timeout` or `allow_failure`. |
+| `switch`, `cases`, `default` | switches | Like a branch: no `cmd`, `timeout` or `allow_failure`, and no `if`, `then` or `else`. |
 | `for_each`, `as`, `do` | loops | A loop has none of those keys and no `if`, `then`, `else`, `switch`, `cases` or `default`. |
 
-The task's name is its key. It saves an HTTP or cmd task's result as `tasks.<name>`, and labels the task in errors and log lines (see [labels](cli.md#errors-and-exit-codes)). It must be a [variable name](env.md#names) other than `tasks`, and two tasks in the same map can't share it. There is no `name` field.
+The task's name is its key. It saves a cmd task's result as `tasks.<name>`, and labels the task in errors and log lines (see [labels](cli.md#errors-and-exit-codes)). It must be a [variable name](env.md#names) other than `tasks`, and two tasks in the same map can't share it. There is no `name` field.
 
 Unknown keys are an error.
 
 ## Results
 
-What goes into a task is part of its kind: an HTTP request's `json` or a cmd task's `stdin`. What comes out is its result, saved as `tasks.<name>`.
+What goes into a task is its `cmd`, `stdin` and `env`. What comes out is its result, `{exit_code, stdout, stderr}`, saved as `tasks.<name>`.
 
-| Kind | Result |
-|---|---|
-| `http` | `{status, headers, body}` ([Responses](responses.md)) |
-| `cmd` | `{exit_code, stdout, stderr}` |
-
-`${...}` is substituted in `json` and `stdin`, and a field that is exactly `${NAME}` keeps its JSON type (see [typed values](env.md#typed-values)). For stdin, a string is used as-is and any other value is written as compact JSON, so `stdin: ${tasks.fetch.body}` is ready for `jq`.
+`${...}` is substituted in `stdin`, and a field that is exactly `${NAME}` keeps its JSON type (see [typed values](env.md#typed-values)). For stdin, a string is used as-is and any other value is written as compact JSON, so `stdin: ${tasks.fetch.stdout}` is ready for `jq`.
 
 ## Using earlier tasks' output
 
-Each HTTP or cmd task's result is saved as `tasks.<key>`, and later tasks read it with a dot path:
+Each cmd task's result is saved as `tasks.<key>`, and later tasks read it with a dot path:
 
 | Reference | Value |
 |---|---|
-| `${tasks.login.status}` | an HTTP task's status code |
-| `${tasks.login.headers.x-token}` | a response header (lowercase name) |
-| `${tasks.login.body.user.id}` | a field of the response body (`null` with `capture_body: false`) |
+| `${tasks.login.stdout.user.id}` | a field of a command's JSON output, such as a `curl` response body |
 | `${tasks.today.stdout}` | a command's output (parsed JSON if it is valid JSON, otherwise text; `null` with `capture_stdout: false`) |
 | `${tasks.check.exit_code}`, `${tasks.check.stderr}` | a command's exit code and error output |
 
-- **Where it works:** anywhere `${...}` works. In an `if` condition or `for_each`, write the path without `${}`: `if: { this: tasks.login.status, eq: 200 }`.
-- **Typed values:** a `json` or `stdin` field that is exactly `${tasks...}` keeps its JSON type, so `json: ${tasks.fetch.body}` sends the whole object.
-- **Every task:** each HTTP or cmd task is saved under its key. Keys only need to be unique within one map, so a task nested in a branch or loop can share a name with another; the later result replaces the earlier one.
+- **Where it works:** anywhere `${...}` works. In an `if` condition or `for_each`, write the path without `${}`: `if: { this: tasks.login.exit_code, eq: 0 }`.
+- **Typed values:** a `stdin` field that is exactly `${tasks...}` keeps its JSON type, so `stdin: ${tasks.fetch.stdout}` writes the whole object.
+- **Every task:** each cmd task is saved under its key. Keys only need to be unique within one map, so a task nested in a branch or loop can share a name with another; the later result replaces the earlier one.
 - **`tasks` is reserved:** a variable named `tasks` fails when the project loads (see [names](env.md#names)).
 
 ## Failures and `allow_failure`
 
-An HTTP task **fails** when the status is 4xx or 5xx. A cmd task fails when its exit code isn't `0`.
+A cmd task **fails** when its exit code isn't `0`. `curl` exits `0` for any HTTP status unless told otherwise: pass `--fail-with-body` to make a 4xx or 5xx fail the task (exit code 22) while keeping the body.
 
-- **Without `allow_failure`:** the job stops. `rocky exec` prints the failed task's result, then reports ``task `name` returned HTTP 404`` or ``task `name` exited with code 3`` and exits `1`.
-- **With `allow_failure: true`:** the job continues. The result is still saved as `tasks.<name>`, so you can branch on `${tasks.x.status}` or `${tasks.x.exit_code}`.
+- **Without `allow_failure`:** the job stops. `rocky exec` prints the failed task's result, then reports ``task `name` exited with code 3`` and exits `1`.
+- **With `allow_failure: true`:** the job continues. The result is still saved as `tasks.<name>`, so you can branch on `${tasks.x.exit_code}`.
 
-`allow_failure: true` also lets the job continue after a **timeout or network error** (a request that can't connect, a request or command that runs past its `timeout`). The task has no status, body or exit code, so its result is just the error, e.g. `tasks.<name>` is `{"error": "request timed out after 5s"}`. Branch on it with `if: {this: tasks.<name>.error, exists: true}` (see [Conditions](conditions.md#condition-shape)).
+`allow_failure: true` also lets the job continue after a **timeout** (a command that runs past its `timeout`). The task has no exit code, so its result is just the error, e.g. `tasks.<name>` is ``{"error": "command `curl` timed out after 5s"}``. Branch on it with `if: {this: tasks.<name>.error, exists: true}` (see [Conditions](conditions.md#condition-shape)).
 
-Other errors stop the job no matter what `allow_failure` says: an undefined variable, a missing program. Without `allow_failure`, so do timeouts and network errors. See [Command line](cli.md#errors-and-exit-codes).
+Other errors stop the job no matter what `allow_failure` says: an undefined variable, a missing program. Without `allow_failure`, so do timeouts. See [Command line](cli.md#errors-and-exit-codes).
 
 ## Execution
 
 - Tasks run one at a time, in order. There is no parallelism.
 - Branches, switches and loops run their nested tasks in place, then continue with the next task.
-- The printed result is the last HTTP or cmd task that ran, including one inside a branch or loop. If no HTTP or cmd task ran at all (every branch skipped), the printed result is `null`.
+- The printed result is the last cmd task that ran, including one inside a branch or loop. If no cmd task ran at all (every branch skipped), the printed result is `null`.
 
 ## Validation
 
@@ -142,11 +129,11 @@ The whole project, every job including nested branches and loops, is checked whe
 
 - no `jobs`, an empty `tasks`, an empty `cmd`, `do`, `cases`, or `then` *and* `else`
 - `tasks`, `then`, `else`, `do` or `default` written as a list instead of a map, or two tasks with the same key in one map
-- a task with none, or both, of `http` and `cmd`
+- a task without `cmd` that isn't a branch, switch, loop or task file
 - a job entry with both `file` and `tasks`, or with neither
-- `cwd`, `stdin`, `env` or `capture_stdout` without `cmd`; `capture_body` without `http`; `timeout` on a branch, switch or loop; `then`/`else` without `if`; `cases`/`default` without `switch`; `do`/`as` without `for_each`
+- `cwd`, `stdin`, `env` or `capture_stdout` without `cmd`; `timeout` on a branch, switch or loop; `then`/`else` without `if`; `cases`/`default` without `switch`; `do`/`as` without `for_each`
 - a missing task or job file, a task file with a `name` field, or a task file that uses itself, directly or through other files
-- a name that appears twice in `jobs`, a request's `headers` or `query`, a cmd task's `env`, or a switch's `cases`
+- a name that appears twice in `jobs`, a cmd task's `env`, or a switch's `cases`
 - a [variable name](env.md#names) in `as` that isn't uppercase (`A-Z`, `0-9`, `_`), or a task key that isn't an identifier or is `tasks`
 - an invalid [condition](conditions.md) or [schedule](schedules.md)
 - unknown keys anywhere, including `schedules` in the project and `vars` anywhere
@@ -181,7 +168,7 @@ tasks:
     cmd: [date]
 
 # tasks/login.yaml: one task of any kind, including a branch or loop; no `name`
-post: { url: "https://httpbin.org/anything/login", json: { token: demo-token } }
+cmd: [curl, -sS, --fail-with-body, https://httpbin.org/anything/login]
 ```
 
 - A task file holds one task, without a `name`: the key that points at it names it, so one file can be used under several names. It can use other task files, inside a branch or loop too, but not itself, directly or through other files.
@@ -209,7 +196,7 @@ jobs:
 # jobs/fetch.yaml: an ordinary job file
 tasks:
   show:
-    get: ${TARGET}
+    cmd: [curl, -sS, --fail-with-body, '${TARGET}']
 ```
 
 - Only `file`, `schedule` and `values` are allowed; the tasks come from the file.

@@ -1,6 +1,6 @@
 # Env
 
-Write `${NAME}` to insert a value. `NAME` can be a plain name (`${API_TOKEN}`) or a dot path into a JSON value (`${tasks.login.body.user.id}`, `${USER.id}`). Plain names come from `values`, the project's env file or the process environment; `tasks` and loop items come from the run itself.
+Write `${NAME}` to insert a value. `NAME` can be a plain name (`${API_TOKEN}`) or a dot path into a JSON value (`${tasks.login.stdout.user.id}`, `${USER.id}`). Plain names come from `values`, the project's env file or the process environment; `tasks` and loop items come from the run itself.
 
 ```sh
 # example.env
@@ -14,10 +14,7 @@ jobs:
   user:
     tasks:
       fetch:
-        get:
-          url: https://httpbin.org/anything
-          headers:
-            Authorization: Bearer ${API_TOKEN}
+        cmd: [curl, -sS, --fail-with-body, -H, 'Authorization: Bearer ${API_TOKEN}', https://httpbin.org/anything]
       region:
         cmd: [sh, -c, 'echo "deploying to $REGION"']
         env:                 # a command sees env file values only when listed here
@@ -60,7 +57,7 @@ Use an `env_file` to keep secrets such as API tokens out of the YAML that you co
 
 ### Where it can go
 
-Only at the top level of a project, with a path relative to the project file. It applies to every task of every job. Job files, task files and HTTP requests can't have one: `env_file` there is an unknown field.
+Only at the top level of a project, with a path relative to the project file. It applies to every task of every job. Job files and task files can't have one: `env_file` there is an unknown field.
 
 ### Format
 
@@ -75,19 +72,16 @@ Only at the top level of a project, with a path relative to the project file. It
 - The file only provides values for `${...}`. It never changes the environment of the `rocky` process or of the commands that [cmd tasks](cmd-tasks.md) run; pass a value to a command with the task's `env`.
 - The file is read when each run starts.
 - A missing or malformed file fails the run with `failed to load env file <path>`. This is checked at run time, not when the project loads.
-- Values are never masked. A cmd task that echoes a token, or a response that returns one, shows it in full when `exec` prints it as the result.
+- Values are never masked. A cmd task that prints a token, such as a `curl` response that returns one, shows it in full when `exec` prints it as the result.
 
 ## Where `${...}` is expanded
 
 | Expanded | Not expanded |
 |---|---|
-| HTTP `url` | header names, `query` keys, `json` keys |
-| HTTP header values | `env` names, a [condition](conditions.md)'s `this` and a `switch` (they name a variable, not `${...}`) |
-| HTTP `query` values | [`for_each`](loops.md) (it names a variable directly) |
-| any string inside HTTP `json` | |
-| each [`cmd`](cmd-tasks.md) argument | schedules, `matches` patterns, switch `cases` keys |
-| a cmd task's `cwd` | |
-| any string inside a cmd task's `stdin` | |
+| each [`cmd`](cmd-tasks.md) argument | `stdin` keys, `env` names |
+| a cmd task's `cwd` | a [condition](conditions.md)'s `this` and a `switch` (they name a variable, not `${...}`) |
+| any string inside a cmd task's `stdin` | [`for_each`](loops.md) (it names a variable directly) |
+| | schedules, `matches` patterns, switch `cases` keys |
 | any string inside a cmd task's [`env`](cmd-tasks.md#options) values | |
 | condition operator values other than `matches` | |
 
@@ -122,23 +116,26 @@ A `values` name and a loop's `as` name must be uppercase: an uppercase letter or
 
 ## Typed values
 
-Values from env files and the environment are strings. Values from `values`, loops and `tasks` keep their JSON type when a **`json`** or **`stdin`** field or a condition operator value is **exactly** `${NAME}`. Anywhere else, they're rendered as text, with objects and arrays as compact JSON.
+Values from env files and the environment are strings. Values from `values`, loops and `tasks` keep their JSON type when a **`stdin`** field or a condition operator value is **exactly** `${NAME}`. Anywhere else, they're rendered as text, with objects and arrays as compact JSON.
 
 ```yaml
 # after a task `stats` that printed {"count": 5, "tags": ["a", "b"]}
-json:
+stdin:
   count: ${tasks.stats.stdout.count}       # → 5          (number)
   tags: ${tasks.stats.stdout.tags}         # → ["a","b"]  (array)
   label: n=${tasks.stats.stdout.count}     # → "n=5"      (text)
   both: ${tasks.stats.stdout.count}${tasks.stats.stdout.count} # → "55" (text: not a single variable)
-url: https://x/items/${tasks.stats.stdout.count}   # → https://x/items/5
 ```
 
-So `users: ${tasks.fetch.body}` sends the whole fetched object, not a string. For a cmd task's stdin, the typed value is then written as compact JSON. Values in a cmd task's `env` are always text, so an object or array there becomes compact JSON either way.
+```yaml
+cmd: [curl, 'https://x/items/${tasks.stats.stdout.count}']   # → https://x/items/5
+```
+
+So `users: ${tasks.fetch.stdout}` writes the whole fetched object, not a string: stdin is then written as compact JSON. Values in a cmd task's `env` are always text, so an object or array there becomes compact JSON either way.
 
 ## Dot paths
 
-- Each `.` steps into an object key. A numeric segment indexes an array: `${tasks.list.body.items.0.id}`.
+- Each `.` steps into an object key. A numeric segment indexes an array: `${tasks.list.stdout.items.0.id}`.
 - A name that exists exactly as written is used before it is split at `.`.
 - Keys that themselves contain `.` can't be addressed.
 

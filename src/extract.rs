@@ -1,7 +1,7 @@
 use serde_json::{Map, Value};
 
 /// Looks up a variable by exact name, or by dot path when the name contains `.`:
-/// `tasks.login.body.token` selects `login.body.token` from the `tasks` variable.
+/// `tasks.login.stdout.token` selects `login.stdout.token` from the `tasks` variable.
 pub fn lookup(values: &Map<String, Value>, name: &str) -> Option<Value> {
     if let Some(value) = values.get(name) {
         return Some(value.clone());

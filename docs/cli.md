@@ -48,7 +48,7 @@ If nothing listens on `SOCKET`, it fails with ``Error: socket <SOCKET>`` and the
 
 ## `rocky validate <PROJECT>`
 
-Loads the project and its job and task files and runs every [load-time check](projects.md#validation), without sending requests or running commands. A valid project prints one line and exits `0`; an invalid one prints the load error on stderr and exits `1`.
+Loads the project and its job and task files and runs every [load-time check](projects.md#validation), without running commands. A valid project prints one line and exits `0`; an invalid one prints the load error on stderr and exits `1`.
 
 ```
 $ rocky validate project.yaml
@@ -63,14 +63,14 @@ Writes a starter file that loads as-is, creating missing parent directories, and
 |---|---|
 | `project` | A project with one job, `example`, that runs `echo hello`: `rocky exec <PATH> example` |
 | `job` | A [job file](projects.md#job-and-task-files) with one `echo hello` task, to list under a project's `jobs` |
-| `task` | A [task file](projects.md#job-and-task-files) to list under a job's `tasks`, e.g. `login: tasks/login.yaml`. It asks `cmd` or `http` (default `cmd`): a cmd task, or an HTTP GET. Scripts can pipe the answer: `echo http \| rocky new task tasks/login.yaml` |
+| `task` | A [task file](projects.md#job-and-task-files) with one `echo hello` cmd task, to list under a job's `tasks`, e.g. `login: tasks/login.yaml` |
 
 `--level` sets how much the file shows, for every kind:
 
 | Level | Writes |
 |---|---|
 | `basic` (default) | The smallest file that runs, as in the table above |
-| `full` | Every field, each with a comment. A full project or job has a `schedule`, `values`, an HTTP task, a cmd task, a branch, a switch and a loop. A full task is an HTTP or cmd task with all of its fields. Fields that need another file (`env_file`, a task file) are commented out, so the file still loads and runs as-is. Its tasks use `${USER}` from the environment |
+| `full` | Every field, each with a comment. A full project or job has a `schedule`, `values`, a `curl` request, a cmd task, a branch, a switch and a loop. A full task is a cmd task with all of its fields. Fields that need another file (`env_file`, a task file) are commented out, so the file still loads and runs as-is. Its tasks use `${USER}` from the environment |
 
 ```
 $ rocky new job jobs/deploy.yaml
@@ -83,14 +83,14 @@ add it to a project:
 ## Output streams
 
 - **stdout** holds only results: one JSON document for `exec`, one JSON log line per task, branch, switch, loop, finished run, error and stopped schedule for `run`. It is safe to pipe into `jq`.
-- **stderr** holds errors, the `new task` prompt, and `run`'s ``cannot write log file`` messages.
+- **stderr** holds errors and `run`'s ``cannot write log file`` messages.
 
 ## Errors and exit codes
 
 | Situation | stdout | stderr | Exit code |
 |---|---|---|---|
-| Success | last task's result, or `null` if no HTTP or cmd task ran (`validate`: ``<PROJECT> is valid (jobs: …)``) | — | `0` |
-| A task fails (HTTP 4xx/5xx or non-zero exit) without `allow_failure` | that task's result | ``Error: task `name` returned HTTP 404`` or ``Error: task `name` exited with code 3`` | `1` |
+| Success | last task's result, or `null` if no cmd task ran (`validate`: ``<PROJECT> is valid (jobs: …)``) | — | `0` |
+| A task fails (non-zero exit) without `allow_failure` | that task's result | ``Error: task `name` exited with code 3`` | `1` |
 | Any other task error | — | ``Error: task `name` failed`` plus `Caused by:` lines, e.g. ``variable `NAME` is not defined (checked tasks, loop items, values, env_file, environment)``, ``failed to start command `x` `` or ``command `x` timed out after 5s`` | `1` |
 | Invalid file (bad YAML, unknown field, invalid task, condition or schedule) | — | the load error; nothing runs | `1` |
 | `exec` or `run` stopped with Ctrl-C (SIGINT), SIGTERM, SIGHUP or SIGQUIT | — | — | 128 + the signal number (`130`, `143`, `129`, `131`); running commands, and the processes they started, are killed |

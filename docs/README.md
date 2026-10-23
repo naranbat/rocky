@@ -13,9 +13,7 @@ One page per feature. For installing and a first run, see the [project README](.
 
 | Page | What it covers |
 |---|---|
-| [HTTP tasks](http-tasks.md) | HTTP requests (`get:`, `post:`, … or `http:`): their fields and behaviour |
-| [Responses](responses.md) | The `{status, headers, body}` result of an HTTP task |
-| [Cmd tasks](cmd-tasks.md) | Running programs with `cmd:`, `stdin`, reading and writing files |
+| [Cmd tasks](cmd-tasks.md) | Running programs with `cmd:`, `stdin`, reading and writing files, HTTP requests with `curl` |
 
 ## Data between tasks
 

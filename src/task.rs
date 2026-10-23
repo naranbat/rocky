@@ -8,10 +8,9 @@ use serde_json::Value;
 
 use crate::condition::Condition;
 use crate::error::Error;
-use crate::request::{RequestSpec, Shorthand};
 use crate::{project, var_name};
 
-/// One entry of a job's `tasks`: an HTTP or cmd task, a branch, or a loop.
+/// One entry of a job's `tasks`: a cmd task, a branch, or a loop.
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Task {
@@ -22,22 +21,13 @@ pub struct Task {
     /// the entry's value when it is a string.
     #[serde(skip)]
     pub r#use: Option<PathBuf>,
-    /// An HTTP request.
-    pub http: Option<RequestSpec>,
-    /// An HTTP request with its method as the key: folded into `http` when resolved.
-    pub get: Option<Shorthand>,
-    pub post: Option<Shorthand>,
-    pub put: Option<Shorthand>,
-    pub patch: Option<Shorthand>,
-    pub delete: Option<Shorthand>,
     /// Program and arguments, run directly without a shell; `${VAR}` is substituted per element.
     pub cmd: Option<Vec<String>>,
     /// Further programs, each with its arguments, run like `cmd`: `cmd`'s stdout is piped
     /// into the first one's stdin, and so on.
     #[serde(default)]
     pub pipe: Vec<Vec<String>>,
-    /// Seconds before the task is stopped and fails: a `cmd` command is killed, an `http`
-    /// request (default 30) is abandoned.
+    /// Seconds before the task's command is killed and the task fails.
     pub timeout: Option<u64>,
     /// Directory a `cmd` task runs in, relative to the file that declares this task;
     /// default: the current directory. `${VAR}` is substituted.
@@ -55,9 +45,6 @@ pub struct Task {
     /// `false` sends a `cmd` command's stdout to /dev/null instead of keeping it in memory;
     /// the result's `stdout` is then `null`. Default `true`.
     pub capture_stdout: Option<bool>,
-    /// `false` reads an `http` response's body without keeping it in memory; the result's
-    /// `body` is then `null`. Default `true`.
-    pub capture_body: Option<bool>,
     #[serde(default)]
     pub allow_failure: bool,
     /// Makes this a branch: runs `then` if the condition holds, else `else`.
@@ -197,7 +184,7 @@ impl Task {
     }
 
     fn has_task_fields(&self) -> bool {
-        self.http.is_some() || self.cmd.is_some() || self.timeout.is_some() || self.allow_failure
+        self.cmd.is_some() || self.timeout.is_some() || self.allow_failure
     }
 }
 
@@ -222,7 +209,6 @@ fn resolve_one(task: &mut Task, dir: &Path, stack: &mut Vec<PathBuf>) -> Result<
             var_name::RULE
         )));
     }
-    resolve_method(task, &name)?;
     if let Some(path) = task.r#use.take() {
         return resolve_use(task, path, dir, stack);
     }
@@ -238,11 +224,6 @@ fn resolve_one(task: &mut Task, dir: &Path, stack: &mut Vec<PathBuf>) -> Result<
                 "`{name}` has `{field}`, which only works with `cmd`"
             )));
         }
-    }
-    if task.capture_body.is_some() && task.http.is_none() {
-        return Err(Error::InvalidTask(format!(
-            "`{name}` has `capture_body`, which only works with `http`"
-        )));
     }
     task.dir = dir.to_path_buf();
     if task.for_each.is_some() {
@@ -270,45 +251,6 @@ fn resolve_one(task: &mut Task, dir: &Path, stack: &mut Vec<PathBuf>) -> Result<
         )));
     }
     resolve_leaf(task, &name)
-}
-
-/// Moves a `get`/`post`/`put`/`patch`/`delete` request into `http`, with its method set, and
-/// checks that an `http` request has a `method`.
-fn resolve_method(task: &mut Task, name: &str) -> Result<(), Error> {
-    let shorthands = [
-        ("get", task.get.take()),
-        ("post", task.post.take()),
-        ("put", task.put.take()),
-        ("patch", task.patch.take()),
-        ("delete", task.delete.take()),
-    ];
-    for (key, shorthand) in shorthands {
-        let Some(Shorthand(mut spec)) = shorthand else {
-            continue;
-        };
-        if task.http.is_some() {
-            return Err(Error::InvalidTask(format!(
-                "`{name}` must have only one of `http`, `get`, `post`, `put`, `patch`, `delete`"
-            )));
-        }
-        if !spec.method.is_empty() {
-            return Err(Error::InvalidTask(format!(
-                "`{name}`: `{key}` sets the method, so it can't have `method`"
-            )));
-        }
-        spec.method = key.to_uppercase();
-        task.http = Some(spec);
-    }
-    if task
-        .http
-        .as_ref()
-        .is_some_and(|spec| spec.method.is_empty())
-    {
-        return Err(Error::InvalidTask(format!(
-            "`{name}`: `http` needs a `method`"
-        )));
-    }
-    Ok(())
 }
 
 /// Replaces `task` with the task file at `path`, named by `task`'s key.
@@ -353,7 +295,7 @@ fn resolve_loop(
         || task.has_switch_fields()
     {
         return Err(Error::InvalidTask(format!(
-            "`{name}` is a loop (`for_each`) and cannot have `http`, `cmd`, `timeout`, `allow_failure`, `if`, `then`, `else`, `switch`, `cases` or `default`"
+            "`{name}` is a loop (`for_each`) and cannot have `cmd`, `timeout`, `allow_failure`, `if`, `then`, `else`, `switch`, `cases` or `default`"
         )));
     }
     if task.body.is_empty() {
@@ -380,7 +322,7 @@ fn resolve_branch(
 ) -> Result<(), Error> {
     if task.has_task_fields() {
         return Err(Error::InvalidTask(format!(
-            "`{name}` is a branch (`if`) and cannot have `http`, `cmd`, `timeout` or `allow_failure`"
+            "`{name}` is a branch (`if`) and cannot have `cmd`, `timeout` or `allow_failure`"
         )));
     }
     if task.then.is_empty() && task.otherwise.is_empty() {
@@ -409,7 +351,7 @@ fn resolve_switch(
         || !task.otherwise.is_empty()
     {
         return Err(Error::InvalidTask(format!(
-            "`{name}` is a switch (`switch`) and cannot have `http`, `cmd`, `timeout`, `allow_failure`, `if`, `then` or `else`"
+            "`{name}` is a switch (`switch`) and cannot have `cmd`, `timeout`, `allow_failure`, `if`, `then` or `else`"
         )));
     }
     if task.cases.is_empty() {
@@ -429,23 +371,20 @@ fn resolve_switch(
     resolve_all(&mut task.default, dir, stack)
 }
 
-/// Checks an `http` or `cmd` task.
+/// Checks a `cmd` task.
 fn resolve_leaf(task: &Task, name: &str) -> Result<(), Error> {
-    match (&task.http, &task.cmd) {
-        (Some(_), None) => {}
-        (None, Some(argv)) if argv.is_empty() => {
+    match &task.cmd {
+        Some(argv) if argv.is_empty() => {
             return Err(Error::InvalidTask(format!("`{name}` has an empty `cmd`")));
         }
-        (None, Some(_)) if task.pipe.iter().any(Vec::is_empty) => {
+        Some(_) if task.pipe.iter().any(Vec::is_empty) => {
             return Err(Error::InvalidTask(format!(
                 "`{name}` has an empty stage in `pipe`"
             )));
         }
-        (None, Some(_)) => {}
-        _ => {
-            return Err(Error::InvalidTask(format!(
-                "`{name}` must have exactly one of `http` (or `get`, `post`, `put`, `patch`, `delete`) or `cmd`"
-            )));
+        Some(_) => {}
+        None => {
+            return Err(Error::InvalidTask(format!("`{name}` must have `cmd`")));
         }
     }
     Ok(())
@@ -480,14 +419,14 @@ mod tests {
         let dir = Path::new("/project");
         let tasks = resolve_in(
             dir,
-            "login:\n  http: {method: GET, url: x}\n\
-             get:\n  http:\n    method: GET\n    url: ${BASE}\n  allow_failure: true\n\
+            "login:\n  cmd: [echo]\n\
+             base:\n  cmd: [echo, '${BASE}']\n  allow_failure: true\n\
              echo:\n  cmd: [echo, '${BASE}']\n  cwd: work\n",
         )
         .unwrap();
         let login = &tasks[0];
         assert!(!login.allow_failure);
-        assert_eq!(tasks[1].name, "get");
+        assert_eq!(tasks[1].name, "base");
         assert!(tasks[1].allow_failure);
         assert_eq!(tasks[2].cwd, Some("work".into()));
         assert_eq!(tasks[2].dir, dir);
@@ -507,14 +446,9 @@ mod tests {
     }
 
     #[test]
-    fn task_needs_exactly_one_kind() {
-        let neither = "`a` must have exactly one of `http`";
+    fn task_needs_a_non_empty_cmd() {
         for (yaml, expected) in [
-            ("a: {}\n", neither),
-            (
-                "a:\n  http: {method: GET, url: x}\n  cmd: [echo]\n",
-                neither,
-            ),
+            ("a: {}\n", "`a` must have `cmd`"),
             ("a:\n  cmd: []\n", "`a` has an empty `cmd`"),
             (
                 "a:\n  cmd: [echo]\n  pipe: [[cat], []]\n",
@@ -527,71 +461,13 @@ mod tests {
     }
 
     #[test]
-    fn method_keys_become_http() {
-        let tasks =
-            resolve_here("a:\n  get: x\nb:\n  post: {url: y, json: {k: 1}}\nc:\n  delete: z\n")
-                .unwrap();
-        let specs: Vec<_> = tasks.iter().filter_map(|task| task.http.as_ref()).collect();
-        assert_eq!(specs.len(), 3);
-        assert_eq!(
-            (specs[0].method.as_str(), specs[0].url.as_str()),
-            ("GET", "x")
-        );
-        assert_eq!(
-            (specs[1].method.as_str(), specs[1].url.as_str()),
-            ("POST", "y")
-        );
-        assert_eq!(specs[1].json, Some(serde_json::json!({"k": 1})));
-        assert_eq!(
-            (specs[2].method.as_str(), specs[2].url.as_str()),
-            ("DELETE", "z")
-        );
-    }
-
-    #[test]
-    fn rejects_conflicting_or_missing_methods() {
-        let several = "`a` must have only one of `http`, `get`";
-        for (yaml, expected) in [
-            ("a:\n  get: x\n  post: y\n", several),
-            ("a:\n  get: x\n  http: {method: GET, url: x}\n", several),
-            (
-                "a:\n  post: {method: GET, url: x}\n",
-                "`a`: `post` sets the method, so it can't have `method`",
-            ),
-            ("a:\n  http: {url: x}\n", "`a`: `http` needs a `method`"),
-            (
-                "a:\n  put: x\n  cmd: [echo]\n",
-                "`a` must have exactly one of `http`",
-            ),
-            (
-                "a:\n  if: {this: X, eq: 1}\n  then: {b: {cmd: [echo]}}\n  patch: x\n",
-                "`a` is a branch (`if`) and cannot have `http`",
-            ),
-        ] {
-            let msg = invalid_task(yaml);
-            assert!(msg.contains(expected), "{yaml}: {msg}");
-        }
-    }
-
-    #[test]
-    fn http_must_be_inline() {
-        assert!(parse_named("a:\n  http: req.yaml\n").is_err());
-    }
-
-    #[test]
     fn cmd_options_need_cmd() {
         for (yaml, field) in [
-            ("a:\n  http: {method: GET, url: x}\n  cwd: w\n", "cwd"),
-            ("a:\n  http: {method: GET, url: x}\n  stdin: y\n", "stdin"),
-            ("a:\n  http: {method: GET, url: x}\n  env: {A: y}\n", "env"),
-            (
-                "a:\n  http: {method: GET, url: x}\n  capture_stdout: false\n",
-                "capture_stdout",
-            ),
-            (
-                "a:\n  http: {method: GET, url: x}\n  pipe: [[cat]]\n",
-                "pipe",
-            ),
+            ("a:\n  cwd: w\n", "cwd"),
+            ("a:\n  stdin: y\n", "stdin"),
+            ("a:\n  env: {A: y}\n", "env"),
+            ("a:\n  capture_stdout: false\n", "capture_stdout"),
+            ("a:\n  pipe: [[cat]]\n", "pipe"),
         ] {
             let msg = invalid_task(yaml);
             assert!(
@@ -602,21 +478,8 @@ mod tests {
     }
 
     #[test]
-    fn http_options_need_http() {
-        let msg = invalid_task("a:\n  cmd: [echo]\n  capture_body: false\n");
-        assert!(
-            msg.contains("`a` has `capture_body`, which only works with `http`"),
-            "{msg}"
-        );
-        resolve_here("a:\n  get: x\n  capture_body: false\n").unwrap();
-    }
-
-    #[test]
-    fn timeout_works_on_every_task_kind_but_not_branches_or_loops() {
-        resolve_here(
-            "h:\n  http: {method: GET, url: x}\n  timeout: 5\ns:\n  cmd: [echo]\n  timeout: 5\n",
-        )
-        .unwrap();
+    fn timeout_works_on_cmd_tasks_but_not_branches_or_loops() {
+        resolve_here("s:\n  cmd: [echo]\n  timeout: 5\n").unwrap();
         for yaml in [
             "a:\n  if: {this: X, eq: 1}\n  then: {b: {cmd: [echo]}}\n  timeout: 1\n",
             "a:\n  for_each: X\n  do: {b: {cmd: [echo]}}\n  timeout: 1\n",
@@ -690,11 +553,7 @@ mod tests {
         let branch = "`r` is a branch (`if`) and cannot have";
         for (yaml, expected) in [
             (
-                "r:\n  if: {this: X, gt: 1}\n  then: {a: {http: {method: GET, url: x}}}\n  http: {method: GET, url: x}\n",
-                branch,
-            ),
-            (
-                "r:\n  if: {this: X, gt: 1}\n  then: {a: {http: {method: GET, url: x}}}\n  cmd: [echo]\n",
+                "r:\n  if: {this: X, gt: 1}\n  then: {a: {cmd: [echo]}}\n  cmd: [echo]\n",
                 branch,
             ),
             (
@@ -702,7 +561,7 @@ mod tests {
                 "`r` needs a non-empty `then` or `else`",
             ),
             (
-                "r:\n  http: {method: GET, url: x}\n  then: {b: {http: {method: GET, url: x}}}\n",
+                "r:\n  cmd: [echo]\n  then: {b: {cmd: [echo]}}\n",
                 "`r` has `then`/`else` but no `if`",
             ),
         ] {
@@ -713,7 +572,7 @@ mod tests {
 
     #[test]
     fn rejects_invalid_loops() {
-        let body = "  do: {a: {http: {method: GET, url: x}}}\n";
+        let body = "  do: {a: {cmd: [echo]}}\n";
         let a_loop = "`l` is a loop (`for_each`) and cannot have";
         let no_loop = "`l` has `do`/`as` but no `for_each`";
         for (yaml, expected) in [
@@ -730,14 +589,8 @@ mod tests {
                 "l:\n  for_each: X\n  do: {}\n".to_string(),
                 "`l` needs a non-empty `do`",
             ),
-            (
-                format!("l:\n  http: {{method: GET, url: x}}\n{body}"),
-                no_loop,
-            ),
-            (
-                "l:\n  http: {method: GET, url: x}\n  as: X\n".to_string(),
-                no_loop,
-            ),
+            (format!("l:\n  cmd: [echo]\n{body}"), no_loop),
+            ("l:\n  cmd: [echo]\n  as: X\n".to_string(), no_loop),
             (
                 "each:\n  for_each: X\n  do:\n    l:\n      cmd: []\n".to_string(),
                 "`l` has an empty `cmd`",
@@ -763,17 +616,23 @@ mod tests {
 
     #[test]
     fn rejects_invalid_switches() {
-        let case = "  cases: {1: {a: {http: {method: GET, url: x}}}}\n";
+        let case = "  cases: {1: {a: {cmd: [echo]}}}\n";
         let switch = "`s` is a switch (`switch`) and cannot have";
         let no_cases = "`s` needs a non-empty `cases`";
         let no_switch = "`s` has `cases`/`default` but no `switch`";
         for (yaml, expected) in [
             (format!("s:\n  switch: X\n{case}  cmd: [echo]\n"), switch),
-            (format!("s:\n  switch: X\n{case}  allow_failure: true\n"), switch),
-            (format!("s:\n  switch: X\n{case}  if: {{this: X, eq: 1}}\n"), switch),
+            (
+                format!("s:\n  switch: X\n{case}  allow_failure: true\n"),
+                switch,
+            ),
+            (
+                format!("s:\n  switch: X\n{case}  if: {{this: X, eq: 1}}\n"),
+                switch,
+            ),
             ("s:\n  switch: X\n".to_string(), no_cases),
             (
-                "s:\n  switch: X\n  default: {a: {http: {method: GET, url: x}}}\n".to_string(),
+                "s:\n  switch: X\n  default: {a: {cmd: [echo]}}\n".to_string(),
                 no_cases,
             ),
             (
@@ -782,14 +641,11 @@ mod tests {
             ),
             (format!("s:\n{case}"), no_switch),
             (
-                "s:\n  http: {method: GET, url: x}\n  default: {b: {http: {method: GET, url: x}}}\n"
-                    .to_string(),
+                "s:\n  cmd: [echo]\n  default: {b: {cmd: [echo]}}\n".to_string(),
                 no_switch,
             ),
             (
-                format!(
-                    "s:\n  for_each: X\n  do: {{a: {{http: {{method: GET, url: x}}}}}}\n  switch: X\n{case}"
-                ),
+                format!("s:\n  for_each: X\n  do: {{a: {{cmd: [echo]}}}}\n  switch: X\n{case}"),
                 "`s` is a loop (`for_each`) and cannot have",
             ),
             (
@@ -801,10 +657,8 @@ mod tests {
             assert!(msg.contains(expected), "{yaml}: {msg}");
         }
         assert!(
-            parse_named(
-                "s:\n  switch: X\n  cases: [{match: 1, do: {a: {http: {method: GET, url: x}}}}]\n"
-            )
-            .is_err()
+            parse_named("s:\n  switch: X\n  cases: [{match: 1, do: {a: {cmd: [echo]}}}]\n")
+                .is_err()
         );
         let err = parse_named(
             "s:\n  switch: X\n  cases: {1: {a: {cmd: [echo]}}, 1: {b: {cmd: [echo]}}}\n",
@@ -818,7 +672,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let sub = dir.path().join("tasks");
         std::fs::create_dir(&sub).unwrap();
-        std::fs::write(sub.join("login.yaml"), "http: {method: GET, url: x}\n").unwrap();
+        std::fs::write(sub.join("login.yaml"), "cmd: [echo]\n").unwrap();
         std::fs::write(
             sub.join("each.yaml"),
             "for_each: IDS\ndo:\n  inner: login.yaml\n  echo:\n    cmd: [echo]\n    cwd: w\n",
@@ -863,9 +717,7 @@ mod tests {
 
     #[test]
     fn rejects_invalid_condition() {
-        let msg = invalid_task(
-            "r:\n  if: {this: X, gt: ten}\n  then: {a: {http: {method: GET, url: x}}}\n",
-        );
+        let msg = invalid_task("r:\n  if: {this: X, gt: ten}\n  then: {a: {cmd: [echo]}}\n");
         assert!(
             msg.starts_with("`r`: invalid condition: `gt` needs a number"),
             "{msg}"
