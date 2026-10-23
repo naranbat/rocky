@@ -99,6 +99,34 @@ tasks:
 
 A switch can't also have `cmd`, `timeout`, `allow_failure`, `if`, `then` or `else`. Tasks inside a case or `default` behave like those inside `then`/`else`.
 
+## While
+
+A task with `while` is a loop that repeats while a condition holds. The condition is checked before each run of its `do` tasks; once it's false, the job continues with the task after the loop. If it's false the first time, `do` never runs.
+
+```yaml
+tasks:
+  check:
+    cmd: [curl, -sS, -o, /dev/null, -w, '%{http_code}', '${BASE}/health']
+  wait:
+    while: { this: tasks.check.stdout, ne: 200 }   # any condition
+    max: 10                                         # optional
+    do:
+      pause:
+        cmd: [sleep, '5']
+      check:                                        # updates tasks.check for the next check
+        cmd: [curl, -sS, -o, /dev/null, -w, '%{http_code}', '${BASE}/health']
+```
+
+Example: the `poll` job in [`examples/httpbin.yaml`](../examples/httpbin.yaml).
+
+| Field | Notes |
+|---|---|
+| `while` | Required. A [condition](#condition-shape), evaluated like `if`'s. An undefined variable fails the task, except with `exists`. |
+| `max` | Optional, at least 1. The most times `do` may run. If the condition still holds after `max` runs, the task fails with ``while: still true after N iterations``. Without it, the loop has no limit. |
+| `do` | Required, non-empty. The tasks to run on each iteration. |
+
+A `while` loop can't also have `cmd`, `timeout`, `allow_failure`, `if`, `then`, `else`, `switch`, `cases`, `default`, `for_each` or `as`. Like [`for_each`](loops.md#behaviour), results set inside `do` stay available after the loop, a failing task stops the job, and nothing pauses between iterations unless a `do` task does (`sleep`).
+
 ## Errors
 
 Conditions are checked when the project loads, before any task runs. A non-boolean for `exists`, an invalid regex or an unknown key fails as ``invalid YAML in <file>``, with the cause. An operator without `this`, `exists` combined with another operator, `this` mixed with `all`/`any`/`not`, or a non-number for `gt`/`gte`/`lt`/`lte` (other than a `${...}`) fails as an invalid condition, e.g.:

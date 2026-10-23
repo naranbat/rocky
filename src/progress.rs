@@ -77,6 +77,11 @@ pub fn for_each(name: &str, var: &str, count: usize) -> Value {
     json!({"event": "for_each", "task": name, "var": var, "items": count})
 }
 
+/// One `while` condition check; `iteration` counts checks from 1.
+pub fn repeat(name: &str, iteration: u64, holds: bool) -> Value {
+    json!({"event": "while", "task": name, "iteration": iteration, "holds": holds})
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -136,6 +141,10 @@ mod tests {
         assert_eq!(
             for_each("each", "IDS", 3),
             json!({"event": "for_each", "task": "each", "var": "IDS", "items": 3})
+        );
+        assert_eq!(
+            repeat("wait", 2, true),
+            json!({"event": "while", "task": "wait", "iteration": 2, "holds": true})
         );
     }
 }

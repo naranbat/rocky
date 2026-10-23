@@ -50,7 +50,7 @@ Each feature has its own page in [`docs/`](docs/README.md):
 - [Projects](docs/projects.md): jobs, tasks, fields, validation, using earlier tasks' output
 - [Cmd tasks](docs/cmd-tasks.md): running programs, pipes, `stdin`, reading and writing files, HTTP requests with `curl`
 - [Env](docs/env.md): `${NAME}` substitution and env files
-- [Conditions](docs/conditions.md): `if` / `then` / `else`, `switch`
+- [Conditions](docs/conditions.md): `if` / `then` / `else`, `switch`, `while`
 - [Loops](docs/loops.md): `for_each` / `as` / `do`
 - [Debugging](docs/debugging.md): `run` log lines
 - [Run](docs/run.md) and [schedules](docs/schedules.md): running jobs on a schedule, or when a client of a Unix socket asks

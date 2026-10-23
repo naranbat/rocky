@@ -1,6 +1,6 @@
 # Loops
 
-A task with `for_each` is a loop. Its `do` tasks run once for each element of a list, in order, and the job then continues with the task after the loop.
+A task with `for_each` is a loop. Its `do` tasks run once for each element of a list, in order, and the job then continues with the task after the loop. To repeat tasks while a condition holds instead, use a [`while` loop](conditions.md#while).
 
 ```yaml
 tasks:
@@ -28,7 +28,7 @@ Example: the `loop` job in [`examples/httpbin.yaml`](../examples/httpbin.yaml).
 
 Like every task, a loop is named by its key, which labels it in errors and `run`'s log lines.
 
-A loop can't also have `cmd`, `timeout`, `allow_failure`, `if`, `then`, `else`, `switch`, `cases` or `default`.
+A loop can't also have `cmd`, `timeout`, `allow_failure`, `if`, `then`, `else`, `switch`, `cases`, `default`, `while` or `max`.
 
 ## The list
 

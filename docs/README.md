@@ -25,7 +25,7 @@ One page per feature. For installing and a first run, see the [project README](.
 
 | Page | What it covers |
 |---|---|
-| [Conditions](conditions.md) | `if` / `then` / `else` branches, `switch`, and their operators |
+| [Conditions](conditions.md) | `if` / `then` / `else` branches, `switch`, `while` loops, and their operators |
 | [Loops](loops.md) | `for_each` / `as` / `do` over a list |
 
 ## Operating

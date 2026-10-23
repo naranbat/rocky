@@ -38,6 +38,8 @@ pub enum Error {
     Condition(String),
     #[error("for_each: {0}")]
     Loop(String),
+    #[error("while: {0}")]
+    While(String),
     #[error("task `{name}` failed")]
     Task {
         name: String,

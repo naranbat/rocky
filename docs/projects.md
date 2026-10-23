@@ -39,7 +39,7 @@ jobs:
 rocky exec project.yaml report | jq .stdout.json   # {"date": "2026-10-09"}
 ```
 
-Examples: [`httpbin.yaml`](../examples/httpbin.yaml) (jobs `login`, `mixed`, `conditional`, `health`, `loop`, and `files` from [`jobs/files.yaml`](../examples/jobs/files.yaml)), [`imports.yaml`](../examples/imports.yaml) (jobs `health`, `report` and `files`, each from its own file), [`env-file.yaml`](../examples/env-file.yaml) (job `user`), [`cmd-env.yaml`](../examples/cmd-env.yaml) (job `greet`).
+Examples: [`httpbin.yaml`](../examples/httpbin.yaml) (jobs `login`, `mixed`, `conditional`, `health`, `loop`, `poll`, and `files` from [`jobs/files.yaml`](../examples/jobs/files.yaml)), [`imports.yaml`](../examples/imports.yaml) (jobs `health`, `report` and `files`, each from its own file), [`env-file.yaml`](../examples/env-file.yaml) (job `user`), [`cmd-env.yaml`](../examples/cmd-env.yaml) (job `greet`).
 
 ## Project fields
 

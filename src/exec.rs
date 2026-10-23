@@ -5,10 +5,11 @@ use serde::Serialize;
 use serde_json::{Map, Value, json};
 
 use crate::command::{self, CommandResult};
+use crate::condition::{self, Condition};
 use crate::error::Error;
 use crate::project::Project;
 use crate::task::Task;
-use crate::{condition, env_file, extract, progress, vars};
+use crate::{env_file, extract, progress, vars};
 
 /// What one task produced: a finished command, or (with `allow_failure`) the timeout that
 /// stopped it.
@@ -59,10 +60,12 @@ impl Outcome {
     }
 }
 
-/// Queued work: a task to run with its label, or a loop's remaining items.
+/// Queued work: a task to run with its label, a loop's remaining items, or a `while`
+/// loop's next condition check.
 enum Work {
     Task { task: Box<Task>, name: String },
     Loop(Box<Loop>),
+    While(Box<While>),
 }
 
 /// Per remaining item, bind `var` to it and run `body`; then restore `var` to `previous`
@@ -72,6 +75,15 @@ struct Loop {
     var: String,
     items: std::vec::IntoIter<Value>,
     previous: Option<Value>,
+}
+
+/// While `condition` holds, run `body` again; fail once `done` reaches `max`.
+struct While {
+    name: String,
+    condition: Condition,
+    body: Vec<Task>,
+    max: Option<u64>,
+    done: u64,
 }
 
 /// `tasks` as work, in order.
@@ -85,9 +97,10 @@ fn queued(tasks: Vec<Task>) -> impl DoubleEndedIterator<Item = Work> {
 /// Runs the project's `job` tasks in order; later tasks read earlier results as
 /// `tasks.NAME`. A branch's chosen `then`/`else` tasks, or a switch's matching case or
 /// `default`, run in its place; a loop's `do` tasks run once per list element, with the
-/// element bound to its `as` variable.
+/// element bound to its `as` variable, or, for a `while` loop, as long as its condition holds.
 /// The job's `values` (the project's merged in at load) are read as `${NAME}`.
-/// With `log`, one JSON line per task, branch or switch decision, and loop is printed to stdout.
+/// With `log`, one JSON line per task, branch or switch decision, loop, and `while` check is
+/// printed to stdout.
 pub async fn exec(mut project: Project, job: &str, log: bool) -> Result<Outcome, Error> {
     let tasks = project.take(job)?;
     let env: Map<String, Value> = match project.env_file.clone() {
@@ -116,6 +129,33 @@ pub async fn exec(mut project: Project, job: &str, log: bool) -> Result<Outcome,
                         Some(value) => values.insert(each.var, value),
                         None => values.remove(&each.var),
                     };
+                }
+                continue;
+            }
+            Work::While(mut repeat) => {
+                let name = repeat.name.clone();
+                let to_task_error = |source| Error::Task {
+                    name: name.clone(),
+                    source: Box::new(source),
+                };
+                let holds = repeat
+                    .condition
+                    .evaluate(&|var| lookup(var, &values, &env))
+                    .map_err(to_task_error)?;
+                if log {
+                    progress::emit(job, progress::repeat(&name, repeat.done + 1, holds)).await;
+                }
+                if holds {
+                    if repeat.max == Some(repeat.done) {
+                        return Err(to_task_error(Error::While(format!(
+                            "still true after {} iterations",
+                            repeat.done
+                        ))));
+                    }
+                    repeat.done += 1;
+                    let body: Vec<Work> = queued(repeat.body.clone()).collect();
+                    stack.push(Work::While(repeat));
+                    stack.extend(body.into_iter().rev());
                 }
                 continue;
             }
@@ -175,6 +215,17 @@ pub async fn exec(mut project: Project, job: &str, log: bool) -> Result<Outcome,
                 previous: values.get(&var).cloned(),
                 var,
                 items: items.into_iter(),
+            })));
+            continue;
+        }
+
+        if let Some(condition) = task.repeat.take() {
+            stack.push(Work::While(Box::new(While {
+                name,
+                condition,
+                body: task.body,
+                max: task.max,
+                done: 0,
             })));
             continue;
         }
@@ -577,6 +628,69 @@ mod tests {
         let (name, err) = task_error(project(yaml)).await;
         assert_eq!(name, "each");
         assert!(matches!(err, Error::UndefinedVar(_)), "{err}");
+    }
+
+    /// A job that sets `tasks.count.stdout` to 0, then runs `wait`: `while` it is below 3
+    /// (with `max`, if given), append `x` to `acc` and set it to `acc`'s length; then `after`
+    /// task.
+    fn while_project(dir: &Path, start: u32, max: Option<u32>, after: &str) -> Project {
+        let max = max.map_or(String::new(), |max| format!("    max: {max}\n"));
+        project_in(
+            dir,
+            &format!(
+                "tasks:\n  count:\n    cmd: [echo, '{start}']\n\
+                 \x20 wait:\n    while: {{this: tasks.count.stdout, lt: 3}}\n{max}    do:\n\
+                 \x20     count:\n        cmd: [sh, -c, 'printf x >> acc; wc -c < acc']\n        cwd: .\n\
+                 \x20 after:\n{after}"
+            ),
+        )
+    }
+
+    #[tokio::test]
+    async fn while_repeats_until_the_condition_is_false() {
+        let dir = tempfile::tempdir().unwrap();
+        let cat = "    cmd: [cat, acc]\n    cwd: .\n";
+        let outcome = exec(while_project(dir.path(), 0, None, cat)).await.unwrap();
+        assert_eq!(stdout(&outcome), &json!("xxx"));
+        // Reaching `max` just as the condition turns false is fine.
+        std::fs::remove_file(dir.path().join("acc")).unwrap();
+        let outcome = exec(while_project(dir.path(), 0, Some(3), cat))
+            .await
+            .unwrap();
+        assert_eq!(stdout(&outcome), &json!("xxx"));
+    }
+
+    #[tokio::test]
+    async fn while_that_is_false_at_first_runs_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let echo = "    cmd: [echo, done]\n";
+        let outcome = exec(while_project(dir.path(), 5, None, echo))
+            .await
+            .unwrap();
+        assert_eq!(stdout(&outcome), &json!("done"));
+        assert!(!dir.path().join("acc").exists());
+    }
+
+    #[tokio::test]
+    async fn while_fails_when_still_true_after_max() {
+        let dir = tempfile::tempdir().unwrap();
+        let echo = "    cmd: [echo, never]\n";
+        let (name, err) = task_error(while_project(dir.path(), 0, Some(2), echo)).await;
+        assert_eq!(name, "wait");
+        assert_eq!(err.to_string(), "while: still true after 2 iterations");
+    }
+
+    #[tokio::test]
+    async fn while_on_undefined_var_errors() {
+        let (name, err) = task_error(project(
+            "tasks:\n  wait:\n    while: {this: NOPE_W, eq: 1}\n    do: {e: {cmd: [echo]}}\n",
+        ))
+        .await;
+        assert_eq!(name, "wait");
+        assert!(
+            matches!(err, Error::UndefinedVar(ref v) if v == "NOPE_W"),
+            "{err}"
+        );
     }
 
     #[tokio::test]

@@ -10,7 +10,7 @@ use crate::condition::Condition;
 use crate::error::Error;
 use crate::{project, var_name};
 
-/// One entry of a job's `tasks`: a cmd task, a branch, or a loop.
+/// One entry of a job's `tasks`: a cmd task, a branch, a switch, or a loop.
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Task {
@@ -59,6 +59,11 @@ pub struct Task {
     /// The variable each element is bound to inside `do` (default `ITEM`).
     #[serde(rename = "as")]
     pub item_var: Option<String>,
+    /// Makes this a `while` loop: runs `do` again and again while the condition holds.
+    #[serde(rename = "while")]
+    pub repeat: Option<Condition>,
+    /// The most iterations a `while` loop may run before it fails.
+    pub max: Option<u64>,
     #[serde(default, rename = "do", deserialize_with = "named")]
     pub body: Vec<Task>,
     /// Makes this a switch: runs the first case whose key equals this variable, else `default`.
@@ -229,9 +234,17 @@ fn resolve_one(task: &mut Task, dir: &Path, stack: &mut Vec<PathBuf>) -> Result<
     if task.for_each.is_some() {
         return resolve_loop(task, &name, dir, stack);
     }
-    if !task.body.is_empty() || task.item_var.is_some() {
+    if task.item_var.is_some() {
         return Err(Error::InvalidTask(format!(
-            "`{name}` has `do`/`as` but no `for_each`"
+            "`{name}` has `as` but no `for_each`"
+        )));
+    }
+    if task.repeat.is_some() {
+        return resolve_while(task, &name, dir, stack);
+    }
+    if !task.body.is_empty() || task.max.is_some() {
+        return Err(Error::InvalidTask(format!(
+            "`{name}` has `do`/`max` but no `for_each` or `while`"
         )));
     }
     if task.switch.is_some() {
@@ -293,9 +306,11 @@ fn resolve_loop(
         || !task.then.is_empty()
         || !task.otherwise.is_empty()
         || task.has_switch_fields()
+        || task.repeat.is_some()
+        || task.max.is_some()
     {
         return Err(Error::InvalidTask(format!(
-            "`{name}` is a loop (`for_each`) and cannot have `cmd`, `timeout`, `allow_failure`, `if`, `then`, `else`, `switch`, `cases` or `default`"
+            "`{name}` is a loop (`for_each`) and cannot have `cmd`, `timeout`, `allow_failure`, `if`, `then`, `else`, `switch`, `cases`, `default`, `while` or `max`"
         )));
     }
     if task.body.is_empty() {
@@ -310,6 +325,40 @@ fn resolve_loop(
             "`{name}`: `as` name `{var}` {}",
             var_name::VAR_RULE
         )));
+    }
+    resolve_all(&mut task.body, dir, stack)
+}
+
+fn resolve_while(
+    task: &mut Task,
+    name: &str,
+    dir: &Path,
+    stack: &mut Vec<PathBuf>,
+) -> Result<(), Error> {
+    if task.has_task_fields()
+        || task.condition.is_some()
+        || !task.then.is_empty()
+        || !task.otherwise.is_empty()
+        || task.has_switch_fields()
+    {
+        return Err(Error::InvalidTask(format!(
+            "`{name}` is a loop (`while`) and cannot have `cmd`, `timeout`, `allow_failure`, `if`, `then`, `else`, `switch`, `cases` or `default`"
+        )));
+    }
+    if task.body.is_empty() {
+        return Err(Error::InvalidTask(format!(
+            "`{name}` needs a non-empty `do`"
+        )));
+    }
+    if task.max == Some(0) {
+        return Err(Error::InvalidTask(format!(
+            "`{name}`: `max` must be at least 1"
+        )));
+    }
+    if let Some(condition) = &task.repeat {
+        condition
+            .validate()
+            .map_err(|source| Error::InvalidTask(format!("`{name}`: {source}")))?;
     }
     resolve_all(&mut task.body, dir, stack)
 }
@@ -574,7 +623,7 @@ mod tests {
     fn rejects_invalid_loops() {
         let body = "  do: {a: {cmd: [echo]}}\n";
         let a_loop = "`l` is a loop (`for_each`) and cannot have";
-        let no_loop = "`l` has `do`/`as` but no `for_each`";
+        let no_loop = "`l` has `do`/`max` but no `for_each` or `while`";
         for (yaml, expected) in [
             (format!("l:\n  for_each: X\n{body}  cmd: [echo]\n"), a_loop),
             (
@@ -590,7 +639,15 @@ mod tests {
                 "`l` needs a non-empty `do`",
             ),
             (format!("l:\n  cmd: [echo]\n{body}"), no_loop),
-            ("l:\n  cmd: [echo]\n  as: X\n".to_string(), no_loop),
+            (
+                "l:\n  cmd: [echo]\n  as: X\n".to_string(),
+                "`l` has `as` but no `for_each`",
+            ),
+            ("l:\n  cmd: [echo]\n  max: 3\n".to_string(), no_loop),
+            (
+                format!("l:\n  for_each: X\n{body}  while: {{this: X, eq: 1}}\n"),
+                a_loop,
+            ),
             (
                 "each:\n  for_each: X\n  do:\n    l:\n      cmd: []\n".to_string(),
                 "`l` has an empty `cmd`",
@@ -599,6 +656,54 @@ mod tests {
             let msg = invalid_task(&yaml);
             assert!(msg.contains(expected), "{yaml}: {msg}");
         }
+    }
+
+    #[test]
+    fn rejects_invalid_while_loops() {
+        let body = "  do: {a: {cmd: [echo]}}\n";
+        let cond = "  while: {this: X, eq: 1}\n";
+        let a_while = "`w` is a loop (`while`) and cannot have";
+        for (yaml, expected) in [
+            (format!("w:\n{cond}{body}  cmd: [echo]\n"), a_while),
+            (format!("w:\n{cond}{body}  timeout: 1\n"), a_while),
+            (
+                format!("w:\n{cond}{body}  if: {{this: X, eq: 1}}\n"),
+                a_while,
+            ),
+            (format!("w:\n{cond}{body}  switch: X\n"), a_while),
+            (
+                format!("w:\n{cond}{body}  as: Y\n"),
+                "`w` has `as` but no `for_each`",
+            ),
+            (format!("w:\n{cond}"), "`w` needs a non-empty `do`"),
+            (
+                format!("w:\n{cond}{body}  max: 0\n"),
+                "`w`: `max` must be at least 1",
+            ),
+            (
+                format!("w:\n  while: {{this: X, gt: ten}}\n{body}"),
+                "`w`: invalid condition: `gt` needs a number",
+            ),
+            (
+                format!("w:\n{cond}  do:\n    l:\n      cmd: []\n"),
+                "`l` has an empty `cmd`",
+            ),
+        ] {
+            let msg = invalid_task(&yaml);
+            assert!(msg.contains(expected), "{yaml}: {msg}");
+        }
+    }
+
+    #[test]
+    fn resolves_paths_inside_while_loops() {
+        let dir = Path::new("/project");
+        let tasks = resolve_in(
+            dir,
+            "w:\n  while: {this: X, eq: 1}\n  max: 3\n  do: {a: {cmd: [a], cwd: a}}\n",
+        )
+        .unwrap();
+        assert_eq!(tasks[0].max, Some(3));
+        assert_eq!(tasks[0].body[0].dir, dir);
     }
 
     #[test]
