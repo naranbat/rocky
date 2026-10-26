@@ -132,6 +132,7 @@ jobs:
       retry:
         while: { this: tasks.check.stdout, ne: 200 }   # checked before each iteration
         max: 10                       # optional; fails the task if still true after 10
+        allow_failure: true           # a failing `do` task (e.g. curl can't connect) skips to the next check
         do:
           pause:
             cmd: [sleep, '1']
