@@ -11,8 +11,8 @@ use crate::project::Project;
 use crate::task::Task;
 use crate::{env_file, extract, progress, vars};
 
-/// What one task produced: a finished command, or (with `allow_failure`) the timeout that
-/// stopped it.
+/// What one task produced: a finished command, or (with `allow_failure`, its own or an
+/// enclosing loop's) the timeout that stopped it.
 #[derive(Debug, Serialize)]
 #[serde(untagged)]
 pub enum TaskResult {
@@ -70,20 +70,59 @@ enum Work {
 
 /// Per remaining item, bind `var` to it and run `body`; then restore `var` to `previous`
 /// (`None` unbinds it). Expanded one item at a time, so memory stays O(`body`).
+/// With `allow_failure`, a failing `body` task skips to the next item.
 struct Loop {
     body: Vec<Task>,
     var: String,
     items: std::vec::IntoIter<Value>,
     previous: Option<Value>,
+    allow_failure: bool,
+}
+
+impl Loop {
+    /// Puts `var` back as it was before the loop.
+    fn restore(self, values: &mut Map<String, Value>) {
+        match self.previous {
+            Some(value) => values.insert(self.var, value),
+            None => values.remove(&self.var),
+        };
+    }
 }
 
 /// While `condition` holds, run `body` again; fail once `done` reaches `max`.
+/// With `allow_failure`, a failing `body` task skips to the next condition check.
 struct While {
     name: String,
     condition: Condition,
     body: Vec<Task>,
     max: Option<u64>,
     done: u64,
+    allow_failure: bool,
+}
+
+impl Work {
+    /// Whether this is a loop whose `allow_failure` skips a failing iteration.
+    fn allows_failure(&self) -> bool {
+        match self {
+            Work::Loop(each) => each.allow_failure,
+            Work::While(repeat) => repeat.allow_failure,
+            Work::Task { .. } => false,
+        }
+    }
+}
+
+/// Drops the rest of the current iteration of the innermost loop with `allow_failure`,
+/// restoring the variables of loops left on the way, so that loop moves on to its next
+/// iteration.
+fn skip_iteration(stack: &mut Vec<Work>, values: &mut Map<String, Value>) {
+    while let Some(work) = stack.last() {
+        if work.allows_failure() {
+            return;
+        }
+        if let Some(Work::Loop(each)) = stack.pop() {
+            each.restore(values);
+        }
+    }
 }
 
 /// `tasks` as work, in order.
@@ -98,6 +137,7 @@ fn queued(tasks: Vec<Task>) -> impl DoubleEndedIterator<Item = Work> {
 /// `tasks.NAME`. A branch's chosen `then`/`else` tasks, or a switch's matching case or
 /// `default`, run in its place; a loop's `do` tasks run once per list element, with the
 /// element bound to its `as` variable, or, for a `while` loop, as long as its condition holds.
+/// A failing task inside a loop with `allow_failure` skips the rest of that iteration.
 /// The job's `values` (the project's merged in at load) are read as `${NAME}`.
 /// With `log`, one JSON line per task, branch or switch decision, loop, and `while` check is
 /// printed to stdout.
@@ -125,10 +165,7 @@ pub async fn exec(mut project: Project, job: &str, log: bool) -> Result<Outcome,
                     stack.push(Work::Loop(each));
                     stack.extend(body.into_iter().rev());
                 } else {
-                    match each.previous {
-                        Some(value) => values.insert(each.var, value),
-                        None => values.remove(&each.var),
-                    };
+                    each.restore(&mut values);
                 }
                 continue;
             }
@@ -215,6 +252,7 @@ pub async fn exec(mut project: Project, job: &str, log: bool) -> Result<Outcome,
                 previous: values.get(&var).cloned(),
                 var,
                 items: items.into_iter(),
+                allow_failure: task.allow_failure,
             })));
             continue;
         }
@@ -226,27 +264,33 @@ pub async fn exec(mut project: Project, job: &str, log: bool) -> Result<Outcome,
                 body: task.body,
                 max: task.max,
                 done: 0,
+                allow_failure: task.allow_failure,
             })));
             continue;
         }
 
         let allow_failure = task.allow_failure;
+        let in_allowing_loop = stack.iter().any(Work::allows_failure);
+        let allowed = allow_failure || in_allowing_loop;
         let started = Instant::now();
-        let result = run_task(task, &mut values, &env)
+        let result = run_task(task, allowed, &mut values, &env)
             .await
             .map_err(to_task_error)?;
         if log {
             progress::emit(
                 job,
-                progress::task(&name, &result, started.elapsed(), allow_failure),
+                progress::task(&name, &result, started.elapsed(), allowed),
             )
             .await;
         }
         if result.failure().is_some() && !allow_failure {
-            return Ok(Outcome {
-                result: Some(result),
-                failed_task: Some(name),
-            });
+            if !in_allowing_loop {
+                return Ok(Outcome {
+                    result: Some(result),
+                    failed_task: Some(name),
+                });
+            }
+            skip_iteration(&mut stack, &mut values);
         }
         last = Some(result);
     }
@@ -256,10 +300,11 @@ pub async fn exec(mut project: Project, job: &str, log: bool) -> Result<Outcome,
     })
 }
 
-/// Runs one task and records its result as `tasks.<name>` in `values`. With `allow_failure`, a
+/// Runs one task and records its result as `tasks.<name>` in `values`. With `allowed`, a
 /// timeout becomes an [`TaskResult::Errored`] result instead of an error.
 async fn run_task(
     task: Task,
+    allowed: bool,
     values: &mut Map<String, Value>,
     env: &Map<String, Value>,
 ) -> Result<TaskResult, Error> {
@@ -268,7 +313,7 @@ async fn run_task(
         return Err(Error::InvalidTask("must have `cmd`".to_string()));
     };
     let result = match execute(argv, &task, &find).await {
-        Err(err @ Error::CommandTimeout { .. }) if task.allow_failure => {
+        Err(err @ Error::CommandTimeout { .. }) if allowed => {
             TaskResult::Errored { error: err.chain() }
         }
         result => result?,
@@ -713,6 +758,101 @@ mod tests {
                 .as_deref(),
             Some("exited with code 5")
         );
+    }
+
+    #[tokio::test]
+    async fn failing_task_in_allow_failure_loop_skips_the_iteration() {
+        let dir = tempfile::tempdir().unwrap();
+        let outcome = exec(project_in(
+            dir.path(),
+            &format!(
+                "{}\
+                 \x20 each:\n    for_each: tasks.seed.stdout.IDS\n    allow_failure: true\n    do:\n\
+                 \x20     check:\n        cmd: [test, '${{ITEM}}', '!=', '2']\n\
+                 \x20     add:\n{}\
+                 \x20 print:\n    cmd: [sh, -c, 'cat acc; echo \":$0\"', '${{tasks.check.exit_code}}']\n    cwd: .\n",
+                seed(json!({"IDS": [1, 2, 3]})),
+                append(8, "${ITEM}")
+            ),
+        ))
+        .await
+        .unwrap();
+        assert_eq!(outcome.failed_task, None);
+        assert_eq!(stdout(&outcome), &json!("13:0"));
+    }
+
+    #[tokio::test]
+    async fn failure_in_inner_loop_skips_to_the_allow_failure_loop() {
+        let dir = tempfile::tempdir().unwrap();
+        let outcome = exec(project_in(
+            dir.path(),
+            &format!(
+                "{}\
+                 \x20 rows:\n    for_each: tasks.seed.stdout.ROWS\n    as: ROW\n    allow_failure: true\n    do:\n\
+                 \x20     cells:\n        for_each: ROW\n        as: CELL\n        do:\n\
+                 \x20         check:\n            cmd: [test, '${{CELL}}', '!=', b]\n\
+                 \x20         add:\n{}\
+                 \x20     end:\n{}\
+                 \x20 print:\n    if: {{this: CELL, exists: false}}\n    then:\n\
+                 \x20     cat:\n        cmd: [cat, acc]\n        cwd: .\n",
+                seed(json!({"ROWS": [["a", "b", "x"], ["c", "d"]]})),
+                append(12, "${CELL}"),
+                append(8, "|")
+            ),
+        ))
+        .await
+        .unwrap();
+        assert_eq!(stdout(&outcome), &json!("acd|"));
+    }
+
+    #[tokio::test]
+    async fn failing_task_in_allow_failure_while_rechecks_the_condition() {
+        let dir = tempfile::tempdir().unwrap();
+        let outcome = exec(project_in(
+            dir.path(),
+            &format!(
+                "tasks:\n  count:\n    cmd: [echo, '0']\n\
+                 \x20 wait:\n    while: {{this: tasks.count.stdout, lt: 3}}\n    max: 3\n    allow_failure: true\n    do:\n\
+                 \x20     count:\n        cmd: [sh, -c, 'printf x >> acc; wc -c < acc']\n        cwd: .\n\
+                 \x20     fail:\n        cmd: ['false']\n\
+                 \x20     never:\n{}\
+                 \x20 print:\n    cmd: [cat, acc]\n    cwd: .\n",
+                append(8, "y")
+            ),
+        ))
+        .await
+        .unwrap();
+        assert_eq!(stdout(&outcome), &json!("xxx"));
+    }
+
+    #[tokio::test]
+    async fn timeout_in_allow_failure_loop_is_recorded() {
+        let outcome = exec(project(&format!(
+            "{}\
+             \x20 each:\n    for_each: tasks.seed.stdout.IDS\n    allow_failure: true\n    do:\n\
+             \x20     slow:\n        cmd: [sleep, '5']\n        timeout: 1\n\
+             \x20 print:\n    cmd: [echo, '${{tasks.slow.error}}']\n",
+            seed(json!({"IDS": [1]}))
+        )))
+        .await
+        .unwrap();
+        assert_eq!(
+            stdout(&outcome),
+            &json!("command `sleep` timed out after 1s")
+        );
+    }
+
+    #[tokio::test]
+    async fn undefined_var_in_allow_failure_loop_still_errors() {
+        let (name, err) = task_error(project(&format!(
+            "{}\
+             \x20 each:\n    for_each: tasks.seed.stdout.IDS\n    allow_failure: true\n    do:\n\
+             \x20     e:\n        cmd: [echo, '${{NOPE_L}}']\n",
+            seed(json!({"IDS": [1]}))
+        )))
+        .await;
+        assert_eq!(name, "e");
+        assert!(matches!(err, Error::UndefinedVar(_)), "{err}");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]

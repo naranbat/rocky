@@ -76,10 +76,10 @@ Each entry in `tasks` (and in `then`, `else`, `do`, each switch case and `defaul
 | `cmd` | cmd tasks | Required, and must not be empty. |
 | `timeout` | cmd tasks | Seconds before the command is killed and the task fails. No default. |
 | `cwd`, `stdin`, `env`, `capture_stdout` | cmd tasks | Working directory, standard input, environment variables, and whether stdout is kept. See [Cmd tasks](cmd-tasks.md#options). |
-| `allow_failure` | cmd tasks | `true` to continue when the task fails. |
+| `allow_failure` | cmd tasks, loops | `true` to continue when the task fails; on a loop, to skip to the next iteration when a `do` task fails. |
 | `if`, `then`, `else` | branches | A branch has no `cmd`, `timeout` or `allow_failure`. |
 | `switch`, `cases`, `default` | switches | Like a branch: no `cmd`, `timeout` or `allow_failure`, and no `if`, `then` or `else`. |
-| `for_each`, `as`, `do` | loops | A loop has none of those keys and no `if`, `then`, `else`, `switch`, `cases` or `default`. |
+| `for_each`, `as`, `do` | loops | A loop has no `cmd` or `timeout`, and no `if`, `then`, `else`, `switch`, `cases` or `default`. |
 
 The task's name is its key. It saves a cmd task's result as `tasks.<name>`, and labels the task in errors and log lines (see [labels](cli.md#errors-and-exit-codes)). It must be a [variable name](env.md#names) other than `tasks`, and two tasks in the same map can't share it. There is no `name` field.
 
@@ -112,6 +112,7 @@ A cmd task **fails** when its exit code isn't `0`. `curl` exits `0` for any HTTP
 
 - **Without `allow_failure`:** the job stops. `rocky exec` prints the failed task's result, then reports ``task `name` exited with code 3`` and exits `1`.
 - **With `allow_failure: true`:** the job continues. The result is still saved as `tasks.<name>`, so you can branch on `${tasks.x.exit_code}`.
+- **Inside a loop with `allow_failure: true`:** the rest of that iteration is skipped and the loop goes on with its next element or condition check (see [Loops](loops.md#behaviour)).
 
 `allow_failure: true` also lets the job continue after a **timeout** (a command that runs past its `timeout`). The task has no exit code, so its result is just the error, e.g. `tasks.<name>` is ``{"error": "command `curl` timed out after 5s"}``. Branch on it with `if: {this: tasks.<name>.error, exists: true}` (see [Conditions](conditions.md#condition-shape)).
 

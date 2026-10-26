@@ -45,6 +45,8 @@ pub struct Task {
     /// `false` sends a `cmd` command's stdout to /dev/null instead of keeping it in memory;
     /// the result's `stdout` is then `null`. Default `true`.
     pub capture_stdout: Option<bool>,
+    /// On a `cmd` task, a non-zero exit or a timeout doesn't stop the job. On a loop, a failing
+    /// `do` task skips the rest of that iteration instead.
     #[serde(default)]
     pub allow_failure: bool,
     /// Makes this a branch: runs `then` if the condition holds, else `else`.
@@ -301,7 +303,8 @@ fn resolve_loop(
     dir: &Path,
     stack: &mut Vec<PathBuf>,
 ) -> Result<(), Error> {
-    if task.has_task_fields()
+    if task.cmd.is_some()
+        || task.timeout.is_some()
         || task.condition.is_some()
         || !task.then.is_empty()
         || !task.otherwise.is_empty()
@@ -310,7 +313,7 @@ fn resolve_loop(
         || task.max.is_some()
     {
         return Err(Error::InvalidTask(format!(
-            "`{name}` is a loop (`for_each`) and cannot have `cmd`, `timeout`, `allow_failure`, `if`, `then`, `else`, `switch`, `cases`, `default`, `while` or `max`"
+            "`{name}` is a loop (`for_each`) and cannot have `cmd`, `timeout`, `if`, `then`, `else`, `switch`, `cases`, `default`, `while` or `max`"
         )));
     }
     if task.body.is_empty() {
@@ -335,14 +338,15 @@ fn resolve_while(
     dir: &Path,
     stack: &mut Vec<PathBuf>,
 ) -> Result<(), Error> {
-    if task.has_task_fields()
+    if task.cmd.is_some()
+        || task.timeout.is_some()
         || task.condition.is_some()
         || !task.then.is_empty()
         || !task.otherwise.is_empty()
         || task.has_switch_fields()
     {
         return Err(Error::InvalidTask(format!(
-            "`{name}` is a loop (`while`) and cannot have `cmd`, `timeout`, `allow_failure`, `if`, `then`, `else`, `switch`, `cases` or `default`"
+            "`{name}` is a loop (`while`) and cannot have `cmd`, `timeout`, `if`, `then`, `else`, `switch`, `cases` or `default`"
         )));
     }
     if task.body.is_empty() {
@@ -626,10 +630,7 @@ mod tests {
         let no_loop = "`l` has `do`/`max` but no `for_each` or `while`";
         for (yaml, expected) in [
             (format!("l:\n  for_each: X\n{body}  cmd: [echo]\n"), a_loop),
-            (
-                format!("l:\n  for_each: X\n{body}  allow_failure: true\n"),
-                a_loop,
-            ),
+            (format!("l:\n  for_each: X\n{body}  timeout: 1\n"), a_loop),
             (
                 format!("l:\n  for_each: X\n{body}  if: {{this: X, eq: 1}}\n"),
                 a_loop,
@@ -704,6 +705,16 @@ mod tests {
         .unwrap();
         assert_eq!(tasks[0].max, Some(3));
         assert_eq!(tasks[0].body[0].dir, dir);
+    }
+
+    #[test]
+    fn loops_accept_allow_failure() {
+        let tasks = resolve_here(
+            "l:\n  for_each: X\n  allow_failure: true\n  do: {a: {cmd: [a]}}\n\
+             w:\n  while: {this: X, eq: 1}\n  allow_failure: true\n  do: {b: {cmd: [b]}}\n",
+        )
+        .unwrap();
+        assert!(tasks.iter().all(|task| task.allow_failure));
     }
 
     #[test]

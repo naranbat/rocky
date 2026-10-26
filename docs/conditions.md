@@ -124,8 +124,9 @@ Example: the `poll` job in [`examples/httpbin.yaml`](../examples/httpbin.yaml).
 | `while` | Required. A [condition](#condition-shape), evaluated like `if`'s. An undefined variable fails the task, except with `exists`. |
 | `max` | Optional, at least 1. The most times `do` may run. If the condition still holds after `max` runs, the task fails with ``while: still true after N iterations``. Without it, the loop has no limit. |
 | `do` | Required, non-empty. The tasks to run on each iteration. |
+| `allow_failure` | Optional, default `false`. `true` makes a failing `do` task skip the rest of that iteration; the condition is checked again next. A skipped iteration counts toward `max`. |
 
-A `while` loop can't also have `cmd`, `timeout`, `allow_failure`, `if`, `then`, `else`, `switch`, `cases`, `default`, `for_each` or `as`. Like [`for_each`](loops.md#behaviour), results set inside `do` stay available after the loop, a failing task stops the job, and nothing pauses between iterations unless a `do` task does (`sleep`).
+A `while` loop can't also have `cmd`, `timeout`, `if`, `then`, `else`, `switch`, `cases`, `default`, `for_each` or `as`. Like [`for_each`](loops.md#behaviour), results set inside `do` stay available after the loop, a failing task stops the job unless a loop around it has `allow_failure`, and nothing pauses between iterations unless a `do` task does (`sleep`).
 
 ## Errors
 
