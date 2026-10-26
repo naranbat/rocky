@@ -23,6 +23,9 @@ enum Command {
         file: PathBuf,
         /// The job to run.
         job: String,
+        /// Print each command to stderr before it runs, with `${VAR}`s filled in.
+        #[arg(short, long)]
+        verbose: bool,
     },
     /// Run a project's scheduled jobs.
     ///
@@ -71,8 +74,9 @@ enum NewKind {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     match Cli::parse().command {
-        Command::Exec { file, job } => {
-            let outcome = until_stopped(exec::exec(project::load(&file)?, &job, false)).await?;
+        Command::Exec { file, job, verbose } => {
+            let outcome =
+                until_stopped(exec::exec(project::load(&file)?, &job, false, verbose)).await?;
             println!("{}", serde_json::to_string_pretty(&outcome.result)?);
             if let Some(task) = &outcome.failed_task {
                 let reason = outcome.reason().unwrap_or_default();

@@ -141,6 +141,30 @@ pub async fn run(
     })
 }
 
+/// `stages` as one shell-like line: arguments joined by spaces, stages by ` | `. An
+/// argument that is empty or has a character a shell would read specially is single-quoted.
+pub fn display(stages: &[Vec<String>]) -> String {
+    stages
+        .iter()
+        .map(|argv| {
+            argv.iter()
+                .map(|arg| quote(arg))
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .collect::<Vec<_>>()
+        .join(" | ")
+}
+
+fn quote(arg: &str) -> String {
+    let plain = |c: char| c.is_ascii_alphanumeric() || "_-./:=@%+,".contains(c);
+    if !arg.is_empty() && arg.chars().all(plain) {
+        arg.to_string()
+    } else {
+        format!("'{}'", arg.replace('\'', "'\\''"))
+    }
+}
+
 pub(crate) fn output_value(bytes: &[u8]) -> Value {
     serde_json::from_slice(bytes).unwrap_or_else(|_| Value::String(text(bytes)))
 }
@@ -170,6 +194,18 @@ mod tests {
     async fn run_pipe(stages: &[&[&str]], stdin: Option<&str>) -> Result<CommandResult, Error> {
         let stages: Vec<_> = stages.iter().map(|stage| argv(stage)).collect();
         run(&stages, stdin, &BTreeMap::new(), None, None, true).await
+    }
+
+    #[test]
+    fn displays_stages_quoting_special_arguments() {
+        let stages = [
+            argv(&["echo", "-n", "hi there", "it's", ""]),
+            argv(&["jq", ".token"]),
+        ];
+        assert_eq!(
+            display(&stages),
+            r"echo -n 'hi there' 'it'\''s' '' | jq .token"
+        );
     }
 
     #[tokio::test]

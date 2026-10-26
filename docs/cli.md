@@ -4,6 +4,7 @@
 
 ```sh
 rocky exec <PROJECT> <JOB>
+rocky exec <PROJECT> <JOB> --verbose
 rocky run <PROJECT>
 rocky run <PROJECT> --socket <PATH>
 rocky trigger <SOCKET> <JOB>
@@ -25,6 +26,13 @@ The job name is required. An unknown name fails before anything runs and lists t
 ```
 $ rocky exec project.yaml deploy
 Error: no job `deploy` (available: `login`, `report`)
+```
+
+`--verbose` (or `-v`) prints each command to stderr just before it runs, with `${VAR}`s filled in, so values from the `env_file` (secrets included) show. Pipe stages are joined with `|`, and an argument with spaces or shell characters is single-quoted:
+
+```
+$ rocky exec project.yaml login --verbose > result.json
++ [login] curl -s -H 'Authorization: Bearer abc123' https://example.com/login | jq .token
 ```
 
 ## `rocky run <PROJECT>`
@@ -83,7 +91,7 @@ add it to a project:
 ## Output streams
 
 - **stdout** holds only results: one JSON document for `exec`, one JSON log line per task, branch, switch, loop, finished run, error and stopped schedule for `run`. It is safe to pipe into `jq`.
-- **stderr** holds errors and `run`'s ``cannot write log file`` messages.
+- **stderr** holds errors, `exec --verbose`'s command lines and `run`'s ``cannot write log file`` messages.
 
 ## Errors and exit codes
 

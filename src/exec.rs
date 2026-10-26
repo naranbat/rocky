@@ -140,8 +140,13 @@ fn queued(tasks: Vec<Task>) -> impl DoubleEndedIterator<Item = Work> {
 /// A failing task inside a loop with `allow_failure` skips the rest of that iteration.
 /// The job's `values` (the project's merged in at load) are read as `${NAME}`.
 /// With `log`, one JSON line per task, branch or switch decision, loop, and `while` check is
-/// printed to stdout.
-pub async fn exec(mut project: Project, job: &str, log: bool) -> Result<Outcome, Error> {
+/// printed to stdout. With `verbose`, each command is printed to stderr before it runs.
+pub async fn exec(
+    mut project: Project,
+    job: &str,
+    log: bool,
+    verbose: bool,
+) -> Result<Outcome, Error> {
     let tasks = project.take(job)?;
     let env: Map<String, Value> = match project.env_file.clone() {
         Some(path) => tokio::task::spawn_blocking(move || env_file::load(&path)).await??,
@@ -273,7 +278,7 @@ pub async fn exec(mut project: Project, job: &str, log: bool) -> Result<Outcome,
         let in_allowing_loop = stack.iter().any(Work::allows_failure);
         let allowed = allow_failure || in_allowing_loop;
         let started = Instant::now();
-        let result = run_task(task, allowed, &mut values, &env)
+        let result = run_task(task, allowed, verbose, &mut values, &env)
             .await
             .map_err(to_task_error)?;
         if log {
@@ -301,10 +306,12 @@ pub async fn exec(mut project: Project, job: &str, log: bool) -> Result<Outcome,
 }
 
 /// Runs one task and records its result as `tasks.<name>` in `values`. With `allowed`, a
-/// timeout becomes an [`TaskResult::Errored`] result instead of an error.
+/// timeout becomes an [`TaskResult::Errored`] result instead of an error. With `verbose`,
+/// the command is printed to stderr first.
 async fn run_task(
     task: Task,
     allowed: bool,
+    verbose: bool,
     values: &mut Map<String, Value>,
     env: &Map<String, Value>,
 ) -> Result<TaskResult, Error> {
@@ -312,7 +319,7 @@ async fn run_task(
     let Some(argv) = &task.cmd else {
         return Err(Error::InvalidTask("must have `cmd`".to_string()));
     };
-    let result = match execute(argv, &task, &find).await {
+    let result = match execute(argv, &task, verbose, &find).await {
         Err(err @ Error::CommandTimeout { .. }) if allowed => {
             TaskResult::Errored { error: err.chain() }
         }
@@ -325,10 +332,11 @@ async fn run_task(
 }
 
 /// Runs `argv`, piped into `task`'s `pipe` stages, with `task`'s `stdin`, `env`, `cwd`,
-/// `timeout` and `capture_stdout`.
+/// `timeout` and `capture_stdout`. With `verbose`, prints the command to stderr first.
 async fn execute(
     argv: &[String],
     task: &Task,
+    verbose: bool,
     find: &(dyn Fn(&str) -> Option<Value> + Sync),
 ) -> Result<TaskResult, Error> {
     let substitute = |text: &str| vars::substitute(text, find);
@@ -341,6 +349,9 @@ async fn execute(
         .chain(task.pipe.iter().map(Vec::as_slice))
         .map(|argv| argv.iter().map(|arg| substitute(arg)).collect())
         .collect::<Result<Vec<_>, _>>()?;
+    if verbose {
+        eprintln!("+ [{}] {}", task.name, command::display(&stages));
+    }
     let stdin = render(task.stdin.clone(), find)?;
     let mut rendered = BTreeMap::new();
     for (name, value) in &task.env {
@@ -403,7 +414,7 @@ mod tests {
     }
 
     async fn exec(project: Project) -> Result<Outcome, Error> {
-        super::exec(project, "w", false).await
+        super::exec(project, "w", false, false).await
     }
 
     /// The failing task's name and its error, for a run that must fail in a task.

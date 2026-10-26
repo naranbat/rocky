@@ -231,6 +231,22 @@ fn missing_env_file_fails() {
 }
 
 #[test]
+fn verbose_exec_prints_substituted_commands_to_stderr() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = write(
+        dir.path(),
+        "project.yaml",
+        "jobs:\n  w:\n    values:\n      NAME: hi there\n    tasks:\n\
+         \x20     t:\n        cmd: [echo, '${NAME}']\n        pipe: [[cat]]\n",
+    );
+    let out = rocky(&["exec", path_str(&file), "w", "--verbose"], dir.path());
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stderr(&out), "+ [t] echo 'hi there' | cat\n");
+    let result: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(result["stdout"], json!("hi there"));
+}
+
+#[test]
 fn invalid_condition_fails_at_load_before_any_task() {
     let dir = tempfile::tempdir().unwrap();
     let out = exec_yaml(

@@ -140,7 +140,7 @@ pub(crate) async fn run_once(path: &Path, name: &str, locks: &JobLocks) {
     let (path, job) = (path.to_path_buf(), name.to_string());
     let outcome = tokio::spawn(async move {
         let project = tokio::task::spawn_blocking(move || project::load(&path)).await??;
-        exec::exec(project, &job, true).await
+        exec::exec(project, &job, true, false).await
     })
     .await;
     let event = match outcome {
