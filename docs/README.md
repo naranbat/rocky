@@ -6,14 +6,14 @@ One page per feature. For installing and a first run, see the [project README](.
 
 | Page | What it covers |
 |---|---|
-| [Command line](cli.md) | `rocky exec`, `rocky run`, `rocky validate` and `rocky new`, their flags, output, and exit codes |
+| [Command line](cli.md) | `rocky exec`, `rocky run`, `rocky trigger`, `rocky validate` and `rocky new`, their flags, output, and exit codes |
 | [Projects](projects.md) | The project file: jobs, tasks, fields, job and task files, validation, and using earlier tasks' output |
 
 ## Tasks
 
 | Page | What it covers |
 |---|---|
-| [Cmd tasks](cmd-tasks.md) | Running programs with `cmd:`, `stdin`, reading and writing files, HTTP requests with `curl` |
+| [Cmd tasks](cmd-tasks.md) | Running programs with `cmd:`, pipes, `stdin`, reading and writing files |
 
 ## Data between tasks
 
