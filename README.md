@@ -68,6 +68,17 @@ rocky new task tasks/login.yaml            # a task in its own file
 rocky new project full.yaml --level full   # every field, with comments
 ```
 
+## Agent skill
+
+[`skills/rocky/`](skills/rocky/SKILL.md) teaches Claude Code and OpenCode agents to write, validate and run rocky projects. Link it into your agent's skills directory:
+
+```sh
+ln -s "$PWD/skills/rocky" ~/.claude/skills/rocky             # Claude Code
+ln -s "$PWD/skills/rocky" ~/.config/opencode/skills/rocky    # OpenCode
+```
+
+OpenCode also reads `~/.claude/skills/`, so the first link covers both.
+
 ## Documentation
 
 All pages are in [`docs/`](docs/README.md).
