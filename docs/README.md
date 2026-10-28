@@ -35,3 +35,4 @@ One page per feature. For installing and a first run, see the [project README](.
 | [Debugging](debugging.md) | `run`'s JSON log lines |
 | [Run](run.md) | Running a project's scheduled jobs |
 | [Schedules](schedules.md) | `every`, `hourly`, `daily`, `weekly` and `at` |
+| [Service](service.md) | Running `rocky run` in the background with systemd or launchd |
