@@ -29,7 +29,7 @@ Example: the `loop` job in [`examples/httpbin.yaml`](../examples/httpbin.yaml).
 
 Like every task, a loop is named by its key, which labels it in errors and `run`'s log lines.
 
-A loop can't also have `cmd`, `timeout`, `if`, `then`, `else`, `switch`, `cases`, `default`, `while` or `max`. It can't have `allow_failure` either, which is for cmd tasks: a loop with it fails to load, pointing to `on_failure: next`.
+A loop can't also have `cmd`, `timeout`, `if`, `then`, `else`, `switch`, `cases`, `default`, `while` or `attempts`. It can't have `allow_failure` either, which is for cmd tasks: a loop with it fails to load, pointing to `on_failure: next`.
 
 ## The list
 

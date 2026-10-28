@@ -214,7 +214,7 @@ pub async fn exec(
                 if holds {
                     if repeat.max == Some(repeat.done) {
                         return Err(to_task_error(Error::While(format!(
-                            "still true after {} iterations",
+                            "still true after {} attempts",
                             repeat.done
                         ))));
                     }
@@ -291,7 +291,7 @@ pub async fn exec(
                 name,
                 condition,
                 body: task.body,
-                max: task.max,
+                max: task.attempts,
                 done: 0,
                 allow_failure: task.on_failure == Some(OnFailure::Next),
             })));
@@ -771,10 +771,10 @@ mod tests {
     }
 
     /// A job that sets `tasks.count.stdout` to 0, then runs `wait`: `while` it is below 3
-    /// (with `max`, if given), append `x` to `acc` and set it to `acc`'s length; then `after`
+    /// (with `attempts`, if given), append `x` to `acc` and set it to `acc`'s length; then `after`
     /// task.
     fn while_project(dir: &Path, start: u32, max: Option<u32>, after: &str) -> Project {
-        let max = max.map_or(String::new(), |max| format!("    max: {max}\n"));
+        let max = max.map_or(String::new(), |max| format!("    attempts: {max}\n"));
         project_in(
             dir,
             &format!(
@@ -792,7 +792,7 @@ mod tests {
         let cat = "    cmd: [cat, acc]\n    cwd: .\n";
         let outcome = exec(while_project(dir.path(), 0, None, cat)).await.unwrap();
         assert_eq!(stdout(&outcome), &json!("xxx"));
-        // Reaching `max` just as the condition turns false is fine.
+        // Reaching `attempts` just as the condition turns false is fine.
         std::fs::remove_file(dir.path().join("acc")).unwrap();
         let outcome = exec(while_project(dir.path(), 0, Some(3), cat))
             .await
@@ -812,12 +812,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn while_fails_when_still_true_after_max() {
+    async fn while_fails_when_still_true_after_its_attempts() {
         let dir = tempfile::tempdir().unwrap();
         let echo = "    cmd: [echo, never]\n";
         let (name, err) = task_error(while_project(dir.path(), 0, Some(2), echo)).await;
         assert_eq!(name, "wait");
-        assert_eq!(err.to_string(), "while: still true after 2 iterations");
+        assert_eq!(err.to_string(), "while: still true after 2 attempts");
     }
 
     #[tokio::test]
@@ -1020,7 +1020,7 @@ mod tests {
             dir.path(),
             &format!(
                 "tasks:\n  count:\n    cmd: [echo, '0']\n\
-                 \x20 wait:\n    while: {{this: tasks.count.stdout, lt: 3}}\n    max: 3\n    on_failure: next\n    do:\n\
+                 \x20 wait:\n    while: {{this: tasks.count.stdout, lt: 3}}\n    attempts: 3\n    on_failure: next\n    do:\n\
                  \x20     count:\n        cmd: [sh, -c, 'printf x >> acc; wc -c < acc']\n        cwd: .\n\
                  \x20     fail:\n        cmd: ['false']\n\
                  \x20     never:\n{}\

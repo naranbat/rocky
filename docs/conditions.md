@@ -109,7 +109,7 @@ tasks:
     cmd: [curl, -sS, -o, /dev/null, -w, '%{http_code}', '${BASE}/health']
   wait:
     while: { this: tasks.check.stdout, ne: 200 }   # any condition
-    max: 10                                         # optional
+    attempts: 10                                    # optional
     do:
       pause:
         cmd: [sleep, '5']
@@ -122,9 +122,9 @@ To run one command again until it succeeds or a condition holds, [`retry`](cmd-t
 | Field | Notes |
 |---|---|
 | `while` | Required. A [condition](#condition-shape), evaluated like `if`'s. An undefined variable fails the task, except with `exists`. |
-| `max` | Optional, at least 1. The most times `do` may run. If the condition still holds after `max` runs, the task fails with ``while: still true after N iterations``. Without it, the loop has no limit. |
+| `attempts` | Optional, at least 1. The most times `do` may run, like [`retry`](cmd-tasks.md#retry)'s `attempts`. If the condition still holds after that many runs, the task fails with ``while: still true after N attempts``. Without it, the loop has no limit. It used to be called `max`, which now fails to load with `` `max` is now `attempts` ``. |
 | `do` | Required, non-empty. The tasks to run on each iteration. |
-| `on_failure` | Optional, `stop` (the default) or `next`. With `next`, a failing `do` task skips the rest of that iteration; the condition is checked again next. A skipped iteration counts toward `max`. |
+| `on_failure` | Optional, `stop` (the default) or `next`. With `next`, a failing `do` task skips the rest of that iteration; the condition is checked again next. A skipped iteration counts toward `attempts`. |
 
 A `while` loop can't also have `cmd`, `timeout`, `allow_failure`, `if`, `then`, `else`, `switch`, `cases`, `default`, `for_each` or `as`. Like [`for_each`](loops.md#behaviour), results set inside `do` stay available after the loop, a failing task stops the job unless a loop around it has `on_failure: next`, and nothing pauses between iterations unless a `do` task does (`sleep`).
 

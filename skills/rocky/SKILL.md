@@ -129,7 +129,7 @@ status:                              # switch: first matching case, compared lik
 
 wait:                                # while: checked before each iteration
   while: {this: tasks.check.stdout, ne: 200}
-  max: 10                            # fails the task if still true after 10
+  attempts: 10                       # fails the task if still true after 10 runs (like retry's)
   do:
     pause: {cmd: [sleep, '5']}
     check: {cmd: [curl, -sS, -o, /dev/null, -w, '%{http_code}', '${BASE}/health']}

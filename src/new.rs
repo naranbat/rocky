@@ -147,7 +147,7 @@ const FULL_CONTROL: &str = "
       any:
         - {this: tasks.status, exists: false}   # not run yet: run `do` at least once
         - {this: tasks.status.stdout, ne: 200}
-    max: 5                              # optional: fail if still true after 5 runs
+    attempts: 5                         # optional: fail if still true after 5 runs
     on_failure: stop                    # next: a failing `do` task skips to the next condition check
     do:
       status:                           # httpbin picks 200 or 503 at random

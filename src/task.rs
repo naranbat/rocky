@@ -79,7 +79,10 @@ pub struct Task {
     #[serde(rename = "while")]
     pub repeat: Option<Condition>,
     /// The most iterations a `while` loop may run before it fails.
-    pub max: Option<u64>,
+    pub attempts: Option<u64>,
+    /// The old name of `attempts`, read only to point there.
+    #[serde(rename = "max")]
+    pub old_max: Option<Value>,
     #[serde(default, rename = "do", deserialize_with = "named")]
     pub body: Vec<Task>,
     /// Makes this a switch: runs the first case whose key equals this variable, else `default`.
@@ -312,6 +315,11 @@ fn resolve_one(task: &mut Task, dir: &Path, stack: &mut Vec<PathBuf>) -> Result<
     }
     task.dir = dir.to_path_buf();
     task.cwd_dir = dir.to_path_buf();
+    if task.old_max.is_some() {
+        return Err(Error::InvalidTask(format!(
+            "`{name}`: `max` is now `attempts`"
+        )));
+    }
     if task.for_each.is_some() {
         return resolve_loop(task, &name, dir, stack);
     }
@@ -323,9 +331,9 @@ fn resolve_one(task: &mut Task, dir: &Path, stack: &mut Vec<PathBuf>) -> Result<
     if task.repeat.is_some() {
         return resolve_while(task, &name, dir, stack);
     }
-    if !task.body.is_empty() || task.max.is_some() {
+    if !task.body.is_empty() || task.attempts.is_some() {
         return Err(Error::InvalidTask(format!(
-            "`{name}` has `do`/`max` but no `for_each` or `while`"
+            "`{name}` has `do`/`attempts` but no `for_each` or `while`"
         )));
     }
     if task.on_failure.is_some() {
@@ -399,10 +407,10 @@ fn resolve_loop(
         || !task.otherwise.is_empty()
         || task.has_switch_fields()
         || task.repeat.is_some()
-        || task.max.is_some()
+        || task.attempts.is_some()
     {
         return Err(Error::InvalidTask(format!(
-            "`{name}` is a loop (`for_each`) and cannot have `cmd`, `timeout`, `if`, `then`, `else`, `switch`, `cases`, `default`, `while` or `max`"
+            "`{name}` is a loop (`for_each`) and cannot have `cmd`, `timeout`, `if`, `then`, `else`, `switch`, `cases`, `default`, `while` or `attempts`"
         )));
     }
     if task.body.is_empty() {
@@ -448,9 +456,9 @@ fn resolve_while(
             "`{name}` needs a non-empty `do`"
         )));
     }
-    if task.max == Some(0) {
+    if task.attempts == Some(0) {
         return Err(Error::InvalidTask(format!(
-            "`{name}`: `max` must be at least 1"
+            "`{name}`: `attempts` must be at least 1"
         )));
     }
     if let Some(condition) = &task.repeat {
@@ -791,7 +799,7 @@ mod tests {
     fn rejects_invalid_loops() {
         let body = "  do: {a: {cmd: [echo]}}\n";
         let a_loop = "`l` is a loop (`for_each`) and cannot have";
-        let no_loop = "`l` has `do`/`max` but no `for_each` or `while`";
+        let no_loop = "`l` has `do`/`attempts` but no `for_each` or `while`";
         for (yaml, expected) in [
             (format!("l:\n  for_each: X\n{body}  cmd: [echo]\n"), a_loop),
             (format!("l:\n  for_each: X\n{body}  timeout: 1\n"), a_loop),
@@ -808,7 +816,8 @@ mod tests {
                 "l:\n  cmd: [echo]\n  as: X\n".to_string(),
                 "`l` has `as` but no `for_each`",
             ),
-            ("l:\n  cmd: [echo]\n  max: 3\n".to_string(), no_loop),
+            ("l:\n  cmd: [echo]\n  attempts: 3\n".to_string(), no_loop),
+            (format!("l:\n  for_each: X\n{body}  attempts: 3\n"), a_loop),
             (
                 format!("l:\n  for_each: X\n{body}  while: {{this: X, eq: 1}}\n"),
                 a_loop,
@@ -842,8 +851,12 @@ mod tests {
             ),
             (format!("w:\n{cond}"), "`w` needs a non-empty `do`"),
             (
-                format!("w:\n{cond}{body}  max: 0\n"),
-                "`w`: `max` must be at least 1",
+                format!("w:\n{cond}{body}  attempts: 0\n"),
+                "`w`: `attempts` must be at least 1",
+            ),
+            (
+                format!("w:\n{cond}{body}  max: 3\n"),
+                "`w`: `max` is now `attempts`",
             ),
             (
                 format!("w:\n  while: {{this: X, gt: ten}}\n{body}"),
@@ -864,10 +877,10 @@ mod tests {
         let dir = Path::new("/project");
         let tasks = resolve_in(
             dir,
-            "w:\n  while: {this: X, eq: 1}\n  max: 3\n  do: {a: {cmd: [a], cwd: a}}\n",
+            "w:\n  while: {this: X, eq: 1}\n  attempts: 3\n  do: {a: {cmd: [a], cwd: a}}\n",
         )
         .unwrap();
-        assert_eq!(tasks[0].max, Some(3));
+        assert_eq!(tasks[0].attempts, Some(3));
         assert_eq!(tasks[0].body[0].dir, dir);
     }
 
