@@ -44,7 +44,7 @@ A condition is either `this` with **one or more** operators, or exactly one of `
 - **Several operators** must all hold, checked in the table's order and stopping at the first false: `{this: X, gt: 1, lt: 10}` is a range. `exists` can't be combined with other operators.
 - **A list** is shorthand for `all`: `if: [{this: A, eq: 1}, {this: B, eq: 2}]` is `if: {all: [...]}`. It works anywhere a condition does, including inside `all`, `any` and `not`.
 
-`this` names the variable or dot path to test, with or without `${}`: `this: tasks.login.exit_code` or `this: ${tasks.login.exit_code}`.
+`this` names the variable or dot path to test, with or without `${}`: `this: tasks.login.exit_code` or `this: ${tasks.login.exit_code}`. Inside `{...}`, quote a `${}` so YAML doesn't end the map at its `}`: `{this: '${tasks.login.exit_code}', eq: 0}`.
 
 | Operator | True when |
 |---|---|

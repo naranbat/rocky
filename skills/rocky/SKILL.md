@@ -107,7 +107,7 @@ For HTTP use `curl -sS --fail-with-body` so 4xx/5xx exit non-zero; `--json '@-'`
 
 ## Control flow
 
-`if`/`while` (`this:`), `switch` and `for_each` name one variable: `tasks.x.stdout` and `${tasks.x.stdout}` are the same.
+`if`/`while` (`this:`), `switch` and `for_each` name one variable: `tasks.x.stdout` and `${tasks.x.stdout}` are the same (inside `{...}`, quote the `${}` form).
 
 ```yaml
 route:                               # branch
