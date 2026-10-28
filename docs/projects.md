@@ -47,6 +47,7 @@ Examples: [`httpbin.yaml`](../examples/httpbin.yaml) (jobs `login`, `mixed`, `co
 |---|---|
 | `values` | Map of uppercase name → fixed value (any YAML value: string, number, boolean, list or object), read as `${NAME}` by every job. See [Env](env.md#values). |
 | `env_file` | A `.env` file shared by all jobs, relative to the project file. See [Env](env.md#env-file). |
+| `defaults` | Fields every cmd task in every job gets unless it sets them. See [Defaults](#defaults). |
 | `jobs` | Required, at least one. Map of job name → job, → the path of a job file, or → a job file with its own `schedule` and `values` (see [Reusing a job file](#reusing-a-job-file)). |
 
 ## Job fields
@@ -55,7 +56,42 @@ Examples: [`httpbin.yaml`](../examples/httpbin.yaml) (jobs `login`, `mixed`, `co
 |---|---|
 | `schedule` | Optional. When `rocky run` runs this job. See [Schedules](schedules.md). `exec` checks it but doesn't run it. |
 | `values` | Map of uppercase name → fixed value, read as `${NAME}` by this job's tasks; wins over a project value of the same name. See [Env](env.md#values). |
+| `defaults` | Fields this job's cmd tasks get unless they set them; win over the project's. See [Defaults](#defaults). |
 | `tasks` | Required, and must not be empty. Map of task name → task, or → the path of a task file. Tasks run in the order they are written. |
+
+## Defaults
+
+`defaults` sets `timeout`, `cwd`, `env` and `retry` for every cmd task that doesn't set them itself, so they aren't repeated on each task:
+
+```yaml
+defaults:                    # the project's: every job, job files included
+  timeout: 30s
+  cwd: .                     # relative to this file
+jobs:
+  api:
+    defaults:                # the job's: win over the project's, field by field
+      env:
+        TOKEN: ${API_TOKEN}
+      retry: {attempts: 3, delay: 2s}
+    tasks:
+      users:
+        cmd: [curl, -sS, --fail-with-body, -H, 'Authorization: Bearer ${TOKEN}', '${BASE}/users']
+        timeout: 5m          # its own value wins
+      cached:
+        cmd: [cat, users.json]   # runs in the project file's directory
+```
+
+| Field | Notes |
+|---|---|
+| `timeout` | Like a task's [`timeout`](cmd-tasks.md#options). |
+| `cwd` | Like a task's `cwd`, but relative to the file the `defaults` are written in (the project or a job file), not the task's file. `${...}` is substituted when the task runs. |
+| `env` | Merged by name: a task gets every default name it doesn't set itself. |
+| `retry` | Like a task's [`retry`](cmd-tasks.md#retry). |
+
+- A task's own value wins. A job's `defaults` win over the project's, field by field, and their `env` is merged by name.
+- Defaults reach every cmd task of the job: inside branches, switches and loops, and in task files. Branches, switches and loops themselves don't take them.
+- Other fields, such as `allow_failure` or `stdout_file`, aren't allowed: unknown keys are an error.
+- A [job file entry with `file`](#reusing-a-job-file) can't have `defaults`; put them in the job file.
 
 ## Task kinds
 
@@ -175,7 +211,7 @@ cmd: [curl, -sS, --fail-with-body, https://httpbin.org/anything/login]
 
 - A task file holds one task, without a `name`: the key that points at it names it, so one file can be used under several names. It can use other task files, inside a branch or loop too, but not itself, directly or through other files.
 - A task file entry is just a path, so everything else goes in the file. To change a field for one use, write the task inline.
-- A job file has the job fields `schedule`, `values` and `tasks`. The project keeps `env_file`. To run one job file with different values or schedules, see below.
+- A job file has the job fields `schedule`, `values`, `defaults` and `tasks`. The project keeps `env_file`. To run one job file with different values or schedules, see below.
 
 Example: [`imports.yaml`](../examples/imports.yaml), whose jobs all come from [`jobs/`](../examples/jobs/) and share its env file.
 
@@ -201,7 +237,7 @@ tasks:
     cmd: [curl, -sS, --fail-with-body, '${TARGET}']
 ```
 
-- Only `file`, `schedule` and `values` are allowed; the tasks come from the file.
+- Only `file`, `schedule` and `values` are allowed; the tasks and `defaults` come from the file.
 - The entry's `values` win over the file's, which win over the project's.
 - The entry's `schedule` replaces the file's; without one, the file's is kept.
 - A value the file uses but nobody sets is an undefined variable, which fails when its task runs.
@@ -210,4 +246,4 @@ Example: `echo_health` in [`imports.yaml`](../examples/imports.yaml).
 
 ## Paths
 
-Relative paths are resolved against the directory of **the file they are written in**: the project, a job file or a task file. That covers task file paths, `cwd` and `stdout_file`. The project `env_file` and job file paths are relative to the project file. None are relative to your current directory. Commands in `cmd:` tasks without `cwd` run in your current directory.
+Relative paths are resolved against the directory of **the file they are written in**: the project, a job file or a task file. That covers task file paths, `cwd` and `stdout_file`; a `cwd` from [`defaults`](#defaults) is relative to the file the defaults are in. The project `env_file` and job file paths are relative to the project file. None are relative to your current directory. Commands in `cmd:` tasks without `cwd` run in your current directory.

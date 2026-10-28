@@ -381,7 +381,7 @@ async fn execute(
     let cwd = task
         .cwd
         .as_deref()
-        .map(|path| substitute(&path.to_string_lossy()).map(|path| task.dir.join(path)))
+        .map(|path| substitute(&path.to_string_lossy()).map(|path| task.cwd_dir.join(path)))
         .transpose()?;
     let stages = std::iter::once(argv)
         .chain(task.pipe.iter().map(Vec::as_slice))

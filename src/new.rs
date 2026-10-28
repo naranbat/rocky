@@ -49,6 +49,11 @@ values:
 # when a run starts, so it must exist. ${USER} below comes from it or from the environment.
 # env_file: .env
 
+# Fields every cmd task in every job gets unless it sets them: `timeout`, `cwd` (relative to this
+# file), `env` (merged by name) and `retry`. A job's own `defaults` win over these, field by field.
+defaults:
+  timeout: 1m
+
 # Job name: its tasks, the path of a job file (`report: jobs/report.yaml`), or a job file with its
 # own `schedule` and `values`, winning over the file's (`eu: {file: jobs/report.yaml, values: {REGION: eu-west-1}}`).
 jobs:
@@ -210,6 +215,8 @@ fn full_tasks() -> String {
         "{FULL_SCHEDULE}values:                             # fixed values for this job's tasks, read as ${{NAME}}\n  \
          REGION: eu-west-1\n  \
          LIMITS: {{retries: 3}}             # an object: read inside it with ${{LIMITS.retries}}\n\
+         defaults:                           # timeout, cwd, env, retry for this job's cmd tasks; a task's own win\n  \
+         env: {{LOG_LEVEL: info}}           # merged by name with each task's `env`\n\
          tasks:\n  \
          # An HTTP request with curl. Later tasks read its result by name; JSON output is parsed:\n  \
          # ${{tasks.login.stdout.json.token}}.\n  \

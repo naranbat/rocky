@@ -2,6 +2,7 @@
 
 pub mod command;
 pub mod condition;
+pub mod defaults;
 pub mod env_file;
 pub mod error;
 pub mod exec;

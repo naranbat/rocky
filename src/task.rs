@@ -34,9 +34,12 @@ pub struct Task {
     /// Directory a `cmd` task runs in, relative to the file that declares this task;
     /// default: the current directory. `${VAR}` is substituted.
     pub cwd: Option<PathBuf>,
-    /// Directory of the file that declares this task; `cwd` is relative to it.
+    /// Directory of the file that declares this task; `stdout_file` is relative to it.
     #[serde(skip)]
     pub dir: PathBuf,
+    /// Directory `cwd` is relative to: `dir`, or that of the file whose `defaults` set `cwd`.
+    #[serde(skip)]
+    pub cwd_dir: PathBuf,
     /// A `cmd` command's standard input: a string as-is, anything else as JSON.
     /// `${VAR}` is substituted.
     pub stdin: Option<Value>,
@@ -98,6 +101,20 @@ pub struct Retry {
     pub until: Option<Condition>,
 }
 
+impl Retry {
+    /// Checks `attempts` and the `until` condition; the error is a message for the caller's
+    /// error type.
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        if self.attempts == 0 {
+            return Err("`retry` needs `attempts` of at least 1".to_string());
+        }
+        match &self.until {
+            Some(until) => until.validate().map_err(|err| err.to_string()),
+            None => Ok(()),
+        }
+    }
+}
+
 /// One `cases` entry of a switch: tasks to run when the variable equals its key.
 #[derive(Clone, Debug)]
 pub struct Case {
@@ -106,7 +123,7 @@ pub struct Case {
 }
 
 /// Reads whole seconds, written as a number or as a duration such as `30s`, `5m` or `2h`.
-fn seconds<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<u64>, D::Error> {
+pub(crate) fn seconds<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<u64>, D::Error> {
     struct SecondsVisitor;
 
     impl Visitor<'_> for SecondsVisitor {
@@ -282,6 +299,7 @@ fn resolve_one(task: &mut Task, dir: &Path, stack: &mut Vec<PathBuf>) -> Result<
         }
     }
     task.dir = dir.to_path_buf();
+    task.cwd_dir = dir.to_path_buf();
     if task.for_each.is_some() {
         return resolve_loop(task, &name, dir, stack);
     }
@@ -495,16 +513,9 @@ fn resolve_leaf(task: &Task, name: &str) -> Result<(), Error> {
         )));
     }
     if let Some(retry) = &task.retry {
-        if retry.attempts == 0 {
-            return Err(Error::InvalidTask(format!(
-                "`{name}`: `retry` needs `attempts` of at least 1"
-            )));
-        }
-        if let Some(until) = &retry.until {
-            until
-                .validate()
-                .map_err(|source| Error::InvalidTask(format!("`{name}`: {source}")))?;
-        }
+        retry
+            .validate()
+            .map_err(|msg| Error::InvalidTask(format!("`{name}`: {msg}")))?;
     }
     Ok(())
 }

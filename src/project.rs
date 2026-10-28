@@ -7,6 +7,7 @@ use serde::de::{self, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer};
 use serde_json::Value;
 
+use crate::defaults::Defaults;
 use crate::error::Error;
 use crate::schedule::Schedule;
 use crate::task::{self, Task};
@@ -26,6 +27,8 @@ struct RawProject {
     #[serde(default, deserialize_with = "unique")]
     values: BTreeMap<String, Value>,
     env_file: Option<PathBuf>,
+    #[serde(default)]
+    defaults: Defaults,
     #[serde(deserialize_with = "unique")]
     jobs: BTreeMap<String, JobSource>,
 }
@@ -65,7 +68,7 @@ where
 /// `schedule` and `values`.
 enum JobSource {
     Path(PathBuf),
-    Inline(Job),
+    Inline(Box<Job>),
     File {
         file: PathBuf,
         schedule: Option<Schedule>,
@@ -82,6 +85,7 @@ struct JobEntry {
     schedule: Option<Schedule>,
     #[serde(default, deserialize_with = "unique")]
     values: BTreeMap<String, Value>,
+    defaults: Option<Defaults>,
     #[serde(default, deserialize_with = "some_named")]
     tasks: Option<Vec<Task>>,
 }
@@ -110,16 +114,20 @@ impl<'de> Deserialize<'de> for JobSource {
             fn visit_map<A: MapAccess<'de>>(self, map: A) -> Result<JobSource, A::Error> {
                 let entry = JobEntry::deserialize(de::value::MapAccessDeserializer::new(map))?;
                 match (entry.file, entry.tasks) {
+                    (Some(_), None) if entry.defaults.is_some() => Err(de::Error::custom(
+                        "a job with `file` can't have `defaults`; set them in the job file",
+                    )),
                     (Some(file), None) => Ok(JobSource::File {
                         file,
                         schedule: entry.schedule,
                         values: entry.values,
                     }),
-                    (None, Some(tasks)) => Ok(JobSource::Inline(Job {
+                    (None, Some(tasks)) => Ok(JobSource::Inline(Box::new(Job {
                         schedule: entry.schedule,
                         values: entry.values,
+                        defaults: entry.defaults.unwrap_or_default(),
                         tasks,
-                    })),
+                    }))),
                     (Some(_), Some(_)) => Err(de::Error::custom(
                         "a job can't have both `file` and `tasks`",
                     )),
@@ -143,6 +151,9 @@ pub struct Job {
     /// are merged in, with the job's own winning.
     #[serde(default, deserialize_with = "unique")]
     pub values: BTreeMap<String, Value>,
+    /// Fields this job's `cmd` tasks get unless they set them; already applied once loaded.
+    #[serde(default)]
+    pub defaults: Defaults,
     #[serde(deserialize_with = "task::named")]
     pub tasks: Vec<Task>,
 }
@@ -174,10 +185,15 @@ pub fn load(path: &Path) -> Result<Project, Error> {
         return Err(Error::InvalidProject("project has no jobs".to_string()));
     }
     check_names(raw.values.keys())?;
+    raw.defaults.validate()?;
     let dir = path.parent().unwrap_or(Path::new(""));
+    let defaults = Defaults {
+        dir: dir.to_path_buf(),
+        ..raw.defaults
+    };
     let mut jobs = BTreeMap::new();
     for (name, source) in raw.jobs {
-        let job = load_job(source, dir, &raw.values).map_err(|source| Error::Job {
+        let job = load_job(source, dir, &raw.values, &defaults).map_err(|source| Error::Job {
             name: name.clone(),
             source: Box::new(source),
         })?;
@@ -190,11 +206,17 @@ pub fn load(path: &Path) -> Result<Project, Error> {
 }
 
 /// Reads a job file if `source` names one, applies the entry's `schedule` and `values` over
-/// the file's, validates its tasks, and merges the project's `values` under its own.
-fn load_job(source: JobSource, dir: &Path, values: &BTreeMap<String, Value>) -> Result<Job, Error> {
+/// the file's, validates its tasks, merges the project's `values` under its own, and applies
+/// its `defaults`, over the project's, to its tasks.
+fn load_job(
+    source: JobSource,
+    dir: &Path,
+    values: &BTreeMap<String, Value>,
+    defaults: &Defaults,
+) -> Result<Job, Error> {
     let (mut job, dir) = match source {
         JobSource::Path(path) => read_job(&dir.join(path))?,
-        JobSource::Inline(job) => (job, dir.to_path_buf()),
+        JobSource::Inline(job) => (*job, dir.to_path_buf()),
         JobSource::File {
             file,
             schedule,
@@ -212,6 +234,10 @@ fn load_job(source: JobSource, dir: &Path, values: &BTreeMap<String, Value>) -> 
     check_names(job.values.keys())?;
     task::resolve(&mut job.tasks, &dir)?;
     job.values = values.clone().into_iter().chain(job.values).collect();
+    job.defaults.validate()?;
+    job.defaults.dir = dir;
+    job.defaults = std::mem::take(&mut job.defaults).over(defaults);
+    job.defaults.apply(&mut job.tasks);
     Ok(job)
 }
 
@@ -514,5 +540,104 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let err = load_in(dir.path(), "jobs:\n  a: 5\n").unwrap_err();
         assert!(err.chain().contains("a job file path or a job"), "{err}");
+    }
+
+    #[test]
+    fn defaults_fill_cmd_tasks_and_layer_job_over_project() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = load_in(
+            dir.path(),
+            "defaults:\n  timeout: 30s\n  env: {A: project, B: project}\n  retry: {attempts: 2}\n\
+             jobs:\n  w:\n    defaults:\n      timeout: 5\n      env: {B: job, C: job}\n    tasks:\n\
+             \x20     plain: {cmd: [echo]}\n\
+             \x20     own: {cmd: [echo], timeout: 1, env: {C: task}, retry: {attempts: 9}}\n\
+             \x20     branch:\n        if: {this: X, eq: 1}\n        then: {nested: {cmd: [echo]}}\n",
+        )
+        .unwrap();
+        let job = project.take("w").unwrap();
+        let env = |task: &Task| serde_json::to_value(&task.env).unwrap();
+        let plain = &job.tasks[0];
+        assert_eq!(plain.timeout, Some(5));
+        assert_eq!(
+            env(plain),
+            serde_json::json!({"A": "project", "B": "job", "C": "job"})
+        );
+        assert_eq!(plain.retry.as_ref().map(|r| r.attempts), Some(2));
+        let own = &job.tasks[1];
+        assert_eq!(own.timeout, Some(1));
+        assert_eq!(
+            env(own),
+            serde_json::json!({"A": "project", "B": "job", "C": "task"})
+        );
+        assert_eq!(own.retry.as_ref().map(|r| r.attempts), Some(9));
+        let branch = &job.tasks[2];
+        assert_eq!(branch.timeout, None);
+        assert!(branch.env.is_empty());
+        assert_eq!(branch.then[0].timeout, Some(5));
+    }
+
+    #[test]
+    fn default_cwd_is_relative_to_the_file_with_the_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        let jobs = dir.path().join("jobs");
+        let tasks = dir.path().join("tasks");
+        std::fs::create_dir(&jobs).unwrap();
+        std::fs::create_dir(&tasks).unwrap();
+        std::fs::write(tasks.join("t.yaml"), "cmd: [echo]\n").unwrap();
+        std::fs::write(
+            jobs.join("own.yaml"),
+            "defaults: {cwd: work}\ntasks:\n  t: ../tasks/t.yaml\n",
+        )
+        .unwrap();
+        std::fs::write(jobs.join("inherit.yaml"), "tasks:\n  t: ../tasks/t.yaml\n").unwrap();
+        let mut project = load_in(
+            dir.path(),
+            "defaults: {cwd: .}\njobs:\n  own: jobs/own.yaml\n  inherit: jobs/inherit.yaml\n\
+             \x20 set:\n    tasks: {t: {cmd: [echo], cwd: mine}}\n",
+        )
+        .unwrap();
+        let task = |project: &mut Project, name: &str| project.take(name).unwrap().tasks.remove(0);
+        let own = task(&mut project, "own");
+        assert_eq!(
+            (own.cwd, own.cwd_dir, own.dir),
+            (Some("work".into()), jobs.clone(), jobs.join("../tasks"))
+        );
+        let inherit = task(&mut project, "inherit");
+        assert_eq!(
+            (inherit.cwd, inherit.cwd_dir),
+            (Some(".".into()), dir.path().to_path_buf())
+        );
+        let set = task(&mut project, "set");
+        assert_eq!(
+            (set.cwd, set.cwd_dir),
+            (Some("mine".into()), dir.path().to_path_buf())
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("j.yaml"), "tasks: {t: {cmd: [echo]}}\n").unwrap();
+        let job = "jobs:\n  w: {tasks: {t: {cmd: [echo]}}}\n";
+        for (yaml, expected) in [
+            (format!("defaults: {{allow_failure: true}}\n{job}"), "unknown field `allow_failure`"),
+            (format!("defaults: {{timeout: soon}}\n{job}"), "is not a duration"),
+            (
+                format!("defaults: {{retry: {{attempts: 0}}}}\n{job}"),
+                "`defaults`: `retry` needs `attempts` of at least 1",
+            ),
+            (
+                "jobs:\n  w:\n    defaults: {retry: {attempts: 0}}\n    tasks: {t: {cmd: [echo]}}\n"
+                    .to_string(),
+                "`defaults`: `retry` needs `attempts` of at least 1",
+            ),
+            (
+                "jobs:\n  w: {file: j.yaml, defaults: {timeout: 1}}\n".to_string(),
+                "can't have `defaults`",
+            ),
+        ] {
+            let err = load_in(dir.path(), &yaml).unwrap_err();
+            assert!(err.chain().contains(expected), "{yaml}: {}", err.chain());
+        }
     }
 }
