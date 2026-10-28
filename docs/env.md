@@ -79,11 +79,12 @@ Only at the top level of a project, with a path relative to the project file. It
 | Expanded | Not expanded |
 |---|---|
 | each [`cmd`](cmd-tasks.md) argument | `stdin` keys, `env` names |
-| a cmd task's `cwd` | a [condition](conditions.md)'s `this` and a `switch` (they name a variable, not `${...}`) |
-| any string inside a cmd task's `stdin` | [`for_each`](loops.md) (it names a variable directly) |
-| | schedules, `matches` patterns, switch `cases` keys |
+| a cmd task's `cwd` | schedules, `matches` patterns, switch `cases` keys |
+| any string inside a cmd task's `stdin` | |
 | any string inside a cmd task's [`env`](cmd-tasks.md#options) values | |
 | condition operator values other than `matches` | |
+
+A [condition](conditions.md)'s `this`, a `switch` and [`for_each`](loops.md) name one variable rather than expand text, so `tasks.x.stdout` and `${tasks.x.stdout}` mean the same there. Anything else, such as `a${X}`, fails when the project loads.
 
 An undefined variable fails the task: ``variable `NAME` is not defined (checked tasks, loop items, values, env_file, environment)``.
 

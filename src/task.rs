@@ -8,7 +8,7 @@ use serde_json::Value;
 
 use crate::condition::Condition;
 use crate::error::Error;
-use crate::{project, var_name};
+use crate::{project, var_name, vars};
 
 /// One entry of a job's `tasks`: a cmd task, a branch, a switch, or a loop.
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -57,6 +57,7 @@ pub struct Task {
     #[serde(default, rename = "else", deserialize_with = "named")]
     pub otherwise: Vec<Task>,
     /// Makes this a loop: runs `do` once per element of this list variable.
+    #[serde(default, deserialize_with = "vars::var_path")]
     pub for_each: Option<String>,
     /// The variable each element is bound to inside `do` (default `ITEM`).
     #[serde(rename = "as")]
@@ -69,6 +70,7 @@ pub struct Task {
     #[serde(default, rename = "do", deserialize_with = "named")]
     pub body: Vec<Task>,
     /// Makes this a switch: runs the first case whose key equals this variable, else `default`.
+    #[serde(default, deserialize_with = "vars::var_path")]
     pub switch: Option<String>,
     #[serde(default, deserialize_with = "cases")]
     pub cases: Vec<Case>,
@@ -838,6 +840,27 @@ mod tests {
             msg.starts_with("`r`: invalid condition: `gt` needs a number"),
             "{msg}"
         );
+    }
+
+    #[test]
+    fn for_each_and_switch_take_a_bare_or_wrapped_path() {
+        let tasks = resolve_here(
+            "l:\n  for_each: ${tasks.a.stdout}\n  do: {a: {cmd: [echo]}}\n\
+             s:\n  switch: ${X}\n  cases: {1: {b: {cmd: [echo]}}}\n",
+        )
+        .unwrap();
+        assert_eq!(tasks[0].for_each.as_deref(), Some("tasks.a.stdout"));
+        assert_eq!(tasks[1].switch.as_deref(), Some("X"));
+        for yaml in [
+            "l:\n  for_each: a${X}\n  do: {a: {cmd: [echo]}}\n",
+            "s:\n  switch: ${X}${Y}\n  cases: {1: {b: {cmd: [echo]}}}\n",
+        ] {
+            let err = parse_named(yaml).unwrap_err();
+            assert!(
+                err.to_string().contains("must name one variable"),
+                "{yaml}: {err}"
+            );
+        }
     }
 
     #[test]

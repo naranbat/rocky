@@ -101,7 +101,7 @@ const FULL_CONTROL: &str = "
   # A branch: `then` runs when the condition holds, `else` otherwise. Either may be left out.
   check:
     if:                                 # a list: all must hold (also `all`, `any`, `not`)
-      - {this: tasks.login.exit_code, eq: 0}   # a name or dot path, without ${}
+      - {this: tasks.login.exit_code, eq: 0}   # a name or dot path; ${} optional
       - {this: tasks.shout.stdout, contains: ALICE}   # also ne, gt, gte, lt, lte, matches
       - {this: tasks.login.stdout.json.token, exists: true}   # defined at all; never fails
     then:
@@ -124,7 +124,7 @@ const FULL_CONTROL: &str = "
 
   # A loop: runs `do` once for each element of a list.
   each_tag:
-    for_each: tasks.login.stdout.json.tags   # a list, without ${}
+    for_each: tasks.login.stdout.json.tags   # a list; ${} optional
     as: TAG                             # default ITEM
     allow_failure: true                 # a failing `do` task skips to the next element instead of stopping the job
     do:

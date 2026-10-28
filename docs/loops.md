@@ -22,7 +22,7 @@ Example: the `loop` job in [`examples/httpbin.yaml`](../examples/httpbin.yaml).
 
 | Field | Notes |
 |---|---|
-| `for_each` | Required. A variable name or dot path, **without** `${}`. Its value must be a list. |
+| `for_each` | Required. A variable name or dot path, with or without `${}`. Its value must be a list. |
 | `as` | Optional, default `ITEM`. The name of the current element inside `do`. Must be a [variable name](env.md#names) other than `tasks`. |
 | `do` | Required, non-empty. The tasks to run for each element. |
 | `allow_failure` | Optional, default `false`. `true` makes a failing `do` task skip the rest of that element's tasks; the loop goes on with the next element. See [Failures](#behaviour). |

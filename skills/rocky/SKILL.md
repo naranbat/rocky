@@ -43,7 +43,7 @@ jobs:
         stdin:                   # non-string stdin is written as JSON
           users: [{id: 1, name: alice}, {id: 2, name: bob}]
       notify_all:
-        for_each: tasks.users.stdout.json.users   # bare path, no ${}
+        for_each: tasks.users.stdout.json.users   # a path; ${} optional
         as: USER
         do:
           notify:
@@ -107,7 +107,7 @@ For HTTP use `curl -sS --fail-with-body` so 4xx/5xx exit non-zero; `--json '@-'`
 
 ## Control flow
 
-`if`, `while`, `switch` and `for_each` take a **bare path** (`tasks.x.stdout`), not `${...}`.
+`if`/`while` (`this:`), `switch` and `for_each` name one variable: `tasks.x.stdout` and `${tasks.x.stdout}` are the same.
 
 ```yaml
 route:                               # branch

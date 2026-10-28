@@ -101,7 +101,7 @@ Each cmd task's result is saved as `tasks.<key>`, and later tasks read it with a
 | `${tasks.today.stdout}` | a command's output (parsed JSON if it is valid JSON, otherwise text; `null` with `capture_stdout: false`) |
 | `${tasks.check.exit_code}`, `${tasks.check.stderr}` | a command's exit code and error output |
 
-- **Where it works:** anywhere `${...}` works. In an `if` condition or `for_each`, write the path without `${}`: `if: { this: tasks.login.exit_code, eq: 0 }`.
+- **Where it works:** anywhere `${...}` works. In an `if` condition, `switch` or `for_each`, the `${}` is optional: `this: tasks.login.exit_code` and `this: ${tasks.login.exit_code}` are the same.
 - **Typed values:** a `stdin` field that is exactly `${tasks...}` keeps its JSON type, so `stdin: ${tasks.fetch.stdout}` writes the whole object.
 - **Every task:** each cmd task is saved under its key. Keys only need to be unique within one map, so a task nested in a branch or loop can share a name with another; the later result replaces the earlier one.
 - **`tasks` is reserved:** a variable named `tasks` fails when the project loads (see [names](env.md#names)).

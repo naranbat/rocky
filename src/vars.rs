@@ -1,3 +1,5 @@
+use serde::de;
+use serde::{Deserialize, Deserializer};
 use serde_json::Value;
 
 use crate::error::Error;
@@ -33,6 +35,23 @@ pub(crate) fn substitute_value(
 fn whole_var(s: &str) -> Option<&str> {
     let name = s.strip_prefix("${")?.strip_suffix('}')?;
     (!name.contains('}') && !name.contains("${")).then_some(name)
+}
+
+/// Reads a field that names one variable: a bare path such as `tasks.x.stdout`, or the same
+/// path written as `${tasks.x.stdout}`.
+pub(crate) fn var_path<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error> {
+    let Some(text) = Option::<String>::deserialize(deserializer)? else {
+        return Ok(None);
+    };
+    let path = whole_var(&text).unwrap_or(&text);
+    if path.contains("${") {
+        return Err(de::Error::custom(format!(
+            "`{text}` must name one variable, like `tasks.x.stdout` or `${{tasks.x.stdout}}`"
+        )));
+    }
+    Ok(Some(path.to_string()))
 }
 
 /// Expands `${NAME}`; `$${` is an escape for a literal `${`.
@@ -154,6 +173,27 @@ mod tests {
             value,
             json!({"count": 5, "tags": ["a"], "label": "n=5", "two": "55"})
         );
+    }
+
+    #[derive(Debug, serde::Deserialize)]
+    struct Named {
+        #[serde(default, deserialize_with = "var_path")]
+        this: Option<String>,
+    }
+
+    #[test]
+    fn var_path_takes_a_bare_or_wrapped_path() {
+        for yaml in ["this: tasks.a.stdout", "this: ${tasks.a.stdout}"] {
+            let named: Named = serde_yaml::from_str(yaml).unwrap();
+            assert_eq!(named.this.as_deref(), Some("tasks.a.stdout"), "{yaml}");
+        }
+        for yaml in ["this: x${A}", "this: ${A}${B}", "this: ${A}x"] {
+            let err = serde_yaml::from_str::<Named>(yaml).unwrap_err();
+            assert!(
+                err.to_string().contains("must name one variable"),
+                "{yaml}: {err}"
+            );
+        }
     }
 
     #[test]

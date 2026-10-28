@@ -44,7 +44,7 @@ A condition is either `this` with **one or more** operators, or exactly one of `
 - **Several operators** must all hold, checked in the table's order and stopping at the first false: `{this: X, gt: 1, lt: 10}` is a range. `exists` can't be combined with other operators.
 - **A list** is shorthand for `all`: `if: [{this: A, eq: 1}, {this: B, eq: 2}]` is `if: {all: [...]}`. It works anywhere a condition does, including inside `all`, `any` and `not`.
 
-`this` names the variable or dot path to test, **without** `${}`: `this: tasks.login.exit_code`.
+`this` names the variable or dot path to test, with or without `${}`: `this: tasks.login.exit_code` or `this: ${tasks.login.exit_code}`.
 
 | Operator | True when |
 |---|---|
@@ -78,7 +78,7 @@ tasks:
   check:
     cmd: [curl, -sS, -o, /dev/null, -w, '%{http_code}', '${BASE}/health']   # prints the status code
   route:
-    switch: tasks.check.stdout                # a variable or dot path, without ${}
+    switch: tasks.check.stdout                # a variable or dot path; ${} optional
     cases:                                    # value: tasks to run
       200:
         healthy:

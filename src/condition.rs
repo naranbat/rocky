@@ -19,6 +19,7 @@ pub struct Condition(Fields);
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Fields {
+    #[serde(default, deserialize_with = "vars::var_path")]
     this: Option<String>,
     #[serde(default, deserialize_with = "present")]
     gt: Option<Value>,
@@ -513,6 +514,12 @@ mod tests {
         assert!(eval("{this: MSG, contains: '${SUB}'}"));
         assert!(eval("{this: TAGS, contains: '${TAG}'}"));
         assert!(!eval("{this: WORD, eq: '$${WORD}'}"));
+    }
+
+    #[test]
+    fn this_may_be_written_with_braces() {
+        assert!(eval("{this: '${N}', gt: 10}"));
+        assert!(eval("[{this: '${MSG}', contains: disk}]"));
     }
 
     #[test]

@@ -603,6 +603,17 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn for_each_list_may_be_written_with_braces() {
+        let outcome = exec(project(&format!(
+            "{}  each:\n    for_each: ${{tasks.seed.stdout.IDS}}\n    do: {{e: {{cmd: [echo, '${{ITEM}}']}}}}\n",
+            seed(json!({"IDS": [1, 2]}))
+        )))
+        .await
+        .unwrap();
+        assert_eq!(stdout(&outcome), &json!(2));
+    }
+
+    #[tokio::test]
     async fn for_each_default_item_with_paths_and_nested_branch() {
         let dir = tempfile::tempdir().unwrap();
         let outcome = exec(project_in(
