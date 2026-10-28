@@ -1,6 +1,6 @@
 # Cmd tasks
 
-A cmd task runs a program and produces `{exit_code, stdout, stderr}`. It runs the program **directly**, not through a shell. Its `stdin`, if any, is the command's standard input.
+A cmd task runs a program and produces `{ok, exit_code, stdout, stderr}`. It runs the program **directly**, not through a shell. Its `stdin`, if any, is the command's standard input.
 
 ```yaml
 jobs:
@@ -80,13 +80,14 @@ top_titles:
 
 | Field | Value |
 |---|---|
+| `ok` | `true` unless the task failed: a non-zero exit, or (with `allow_failure`) a timeout or a [`retry`](#retry) that ran out. |
 | `exit_code` | The exit code, or `-1` if the process was killed by a signal. |
 | `stdout` | Parsed as JSON if the whole output is valid JSON (`echo 42` gives the number `42`). Otherwise text with trailing newlines (`\n`, `\r`) removed. `null` with `capture_stdout: false`. |
 | `stderr` | Always text, with trailing newlines removed. |
 
 Invalid UTF-8 in `stdout` or `stderr` is replaced with `�`.
 
-A non-zero exit code fails the task unless `allow_failure: true`. A command that times out with `allow_failure` has no exit code or output; its result is just `` {"error": "command `x` timed out after 5s"} ``. See [Projects](projects.md#failures-and-allow_failure).
+A non-zero exit code fails the task unless `allow_failure: true`. A command that times out with `allow_failure` has no exit code or output; its result is just `` {"ok": false, "error": "command `x` timed out after 5s"} ``. To check for any failure, test `ok`: `if: {this: tasks.x.ok, eq: false}`. See [Projects](projects.md#failures-and-allow_failure).
 
 ## Options
 
@@ -144,7 +145,7 @@ check:                          # wait for a status instead of a successful exit
 - When a run is enough, retrying stops and that run is the task's result. It is then treated like any cmd task: with `until`, a non-zero exit still fails the task.
 - When the last run isn't enough:
   - **Without `until`:** that run is the task's result, and it fails the task as usual.
-  - **With `until`:** the task fails with ``retry: `until` still false after N attempts``. With `allow_failure`, the job goes on and `tasks.<name>` is `{"error": "…"}`, like after a timeout.
+  - **With `until`:** the task fails with ``retry: `until` still false after N attempts``. With `allow_failure`, the job goes on and `tasks.<name>` is `{"ok": false, "error": "…"}`, like after a timeout.
 - `rocky run` logs a `task` line for every run.
 
 ## Reading and writing files

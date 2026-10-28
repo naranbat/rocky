@@ -124,7 +124,7 @@ Unknown keys are an error.
 
 ## Results
 
-What goes into a task is its `cmd`, `stdin` and `env`. What comes out is its result, `{exit_code, stdout, stderr}`, saved as `tasks.<name>`.
+What goes into a task is its `cmd`, `stdin` and `env`. What comes out is its result, `{ok, exit_code, stdout, stderr}`, saved as `tasks.<name>`.
 
 `${...}` is substituted in `stdin`, and a field that is exactly `${NAME}` keeps its JSON type (see [typed values](env.md#typed-values)). For stdin, a string is used as-is and any other value is written as compact JSON, so `stdin: ${tasks.fetch.stdout}` is ready for `jq`.
 
@@ -137,6 +137,7 @@ Each cmd task's result is saved as `tasks.<key>`, and later tasks read it with a
 | `${tasks.login.stdout.user.id}` | a field of a command's JSON output, such as a `curl` response body |
 | `${tasks.today.stdout}` | a command's output (parsed JSON if it is valid JSON, otherwise text; `null` with `capture_stdout: false`) |
 | `${tasks.check.exit_code}`, `${tasks.check.stderr}` | a command's exit code and error output |
+| `${tasks.check.ok}` | `false` if the task failed in any way (non-zero exit, timeout, exhausted `retry`), otherwise `true` |
 
 - **Where it works:** anywhere `${...}` works. In an `if` condition, `switch` or `for_each`, the `${}` is optional: `this: tasks.login.exit_code` and `this: ${tasks.login.exit_code}` are the same.
 - **Typed values:** a `stdin` field that is exactly `${tasks...}` keeps its JSON type, so `stdin: ${tasks.fetch.stdout}` writes the whole object.
@@ -151,7 +152,7 @@ A cmd task **fails** when its exit code isn't `0`. `curl` exits `0` for any HTTP
 - **With `allow_failure: true`:** the job continues. The result is still saved as `tasks.<name>`, so you can branch on `${tasks.x.exit_code}`.
 - **Inside a loop with `allow_failure: true`:** the rest of that iteration is skipped and the loop goes on with its next element or condition check (see [Loops](loops.md#behaviour)).
 
-`allow_failure: true` also lets the job continue after a **timeout** (a command that runs past its `timeout`). The task has no exit code, so its result is just the error, e.g. `tasks.<name>` is ``{"error": "command `curl` timed out after 5s"}``. Branch on it with `if: {this: tasks.<name>.error, exists: true}` (see [Conditions](conditions.md#condition-shape)).
+`allow_failure: true` also lets the job continue after a **timeout** (a command that runs past its `timeout`). The task has no exit code, so its result is just the error, e.g. `tasks.<name>` is ``{"ok": false, "error": "command `curl` timed out after 5s"}``. To branch on any failure, a non-zero exit or a timeout alike, test `ok`: `if: {this: tasks.<name>.ok, eq: false}`.
 
 Other errors stop the job no matter what `allow_failure` says: an undefined variable, a missing program. Without `allow_failure`, so do timeouts. See [Command line](cli.md#errors-and-exit-codes).
 

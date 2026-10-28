@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
 use std::time::Instant;
 
-use serde::Serialize;
+use serde::ser::SerializeMap;
+use serde::{Serialize, Serializer};
 use serde_json::{Map, Value, json};
 
 use crate::command::{self, CommandResult, Stdout};
@@ -13,8 +14,7 @@ use crate::{env_file, extract, progress, vars};
 
 /// What one task produced: a finished command, or (with `allow_failure`, its own or an
 /// enclosing loop's) the timeout that stopped it.
-#[derive(Debug, Serialize)]
-#[serde(untagged)]
+#[derive(Debug)]
 pub enum TaskResult {
     Cmd(CommandResult),
     Errored { error: String },
@@ -29,6 +29,30 @@ impl TaskResult {
             }
             TaskResult::Errored { error } => Some(error.clone()),
             _ => None,
+        }
+    }
+}
+
+/// `{ok, exit_code, stdout, stderr}` for a command, `{ok, error}` for an error; `ok` is
+/// whether the task didn't fail.
+impl Serialize for TaskResult {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let ok = self.failure().is_none();
+        match self {
+            TaskResult::Cmd(result) => {
+                let mut map = serializer.serialize_map(Some(4))?;
+                map.serialize_entry("ok", &ok)?;
+                map.serialize_entry("exit_code", &result.exit_code)?;
+                map.serialize_entry("stdout", &result.stdout)?;
+                map.serialize_entry("stderr", &result.stderr)?;
+                map.end()
+            }
+            TaskResult::Errored { error } => {
+                let mut map = serializer.serialize_map(Some(2))?;
+                map.serialize_entry("ok", &ok)?;
+                map.serialize_entry("error", error)?;
+                map.end()
+            }
         }
     }
 }
@@ -1288,5 +1312,30 @@ mod tests {
             error: "timed out".to_string(),
         };
         assert_eq!(errored.failure().as_deref(), Some("timed out"));
+    }
+
+    #[test]
+    fn results_say_whether_they_are_ok() {
+        assert_eq!(
+            json!(TaskResult::cmd(0)),
+            json!({"ok": true, "exit_code": 0, "stdout": null, "stderr": ""})
+        );
+        assert_eq!(json!(TaskResult::cmd(3))["ok"], json!(false));
+        let errored = TaskResult::Errored {
+            error: "timed out".to_string(),
+        };
+        assert_eq!(json!(errored), json!({"ok": false, "error": "timed out"}));
+    }
+
+    #[tokio::test]
+    async fn later_tasks_read_ok() {
+        let outcome = exec(project(
+            "tasks:\n  bad:\n    cmd: [sh, -c, 'exit 3']\n    allow_failure: true\n\
+             \x20 good:\n    cmd: [echo]\n\
+             \x20 report:\n    cmd: [echo, '${tasks.bad.ok} ${tasks.good.ok}']\n",
+        ))
+        .await
+        .unwrap();
+        assert_eq!(stdout(&outcome), &json!("false true"));
     }
 }

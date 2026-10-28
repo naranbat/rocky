@@ -40,6 +40,7 @@ rocky exec project.yaml example    # run the job once
 
 ```json
 {
+  "ok": true,
   "exit_code": 0,
   "stdout": "HELLO",
   "stderr": ""

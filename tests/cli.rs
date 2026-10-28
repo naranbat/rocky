@@ -274,6 +274,7 @@ fn job_prints_failing_task_result() {
     );
     assert_eq!(out.status.code(), Some(1));
     let result: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(result["ok"], false);
     assert_eq!(result["exit_code"], 3);
     assert_eq!(result["stdout"], "gone");
     let err = stderr(&out);
@@ -299,7 +300,7 @@ fn cmd_output_branch_and_env_file() {
     let out = exec_project(&file, other_cwd.path());
     assert_eq!(
         stdout_json(&out),
-        json!({"exit_code": 0, "stdout": "hello alice n=5", "stderr": ""})
+        json!({"ok": true, "exit_code": 0, "stdout": "hello alice n=5", "stderr": ""})
     );
 }
 

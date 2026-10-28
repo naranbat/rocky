@@ -87,7 +87,7 @@ jobs:
               warn:
                 cmd: [curl, -sS, --fail-with-body, -X, POST, '${BASE}/anything/warn']
 
-  # Tolerating a timeout: `allow_failure` keeps going and the result is just `{error: ...}`; `exists` checks for it.
+  # Tolerating a timeout: `allow_failure` keeps going and the result is just `{ok: false, error: ...}`.
   health:
     tasks:
       ping:
@@ -96,7 +96,7 @@ jobs:
         allow_failure: true
 
       report:
-        if: { this: tasks.ping.error, exists: true }   # never fails on an undefined variable
+        if: { this: tasks.ping.ok, eq: false }   # false after a non-zero exit or a timeout
         then:
           failed:
             cmd: [echo, 'ping failed: ${tasks.ping.error}']
