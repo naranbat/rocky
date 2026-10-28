@@ -277,17 +277,50 @@ pub async fn exec(
         let allow_failure = task.allow_failure;
         let in_allowing_loop = stack.iter().any(Work::allows_failure);
         let allowed = allow_failure || in_allowing_loop;
-        let started = Instant::now();
-        let result = run_task(task, allowed, verbose, &mut values, &env)
-            .await
-            .map_err(to_task_error)?;
-        if log {
-            progress::emit(
-                job,
-                progress::task(&name, &result, started.elapsed(), allowed),
-            )
-            .await;
-        }
+        let retry = task.retry.take();
+        let attempts = retry.as_ref().map_or(1, |retry| retry.attempts);
+        let mut attempt = 1;
+        let result = loop {
+            let last = attempt >= attempts;
+            // Before the last attempt, a timeout is only a reason to try again.
+            let tolerated = allowed || !last;
+            let started = Instant::now();
+            let result = run_task(&task, tolerated, verbose, &mut values, &env)
+                .await
+                .map_err(to_task_error)?;
+            if log {
+                progress::emit(
+                    job,
+                    progress::task(&name, &result, started.elapsed(), tolerated),
+                )
+                .await;
+            }
+            let Some(retry) = &retry else {
+                break result;
+            };
+            let done = match &retry.until {
+                Some(until) => until
+                    .evaluate(&|var| lookup(var, &values, &env))
+                    .map_err(to_task_error)?,
+                None => result.failure().is_none(),
+            };
+            if done || (last && retry.until.is_none()) {
+                break result;
+            }
+            if last {
+                let err = Error::Retry(format!("`until` still false after {attempts} attempts"));
+                if !allowed {
+                    return Err(to_task_error(err));
+                }
+                let result = TaskResult::Errored { error: err.chain() };
+                record(&name, &result, &mut values);
+                break result;
+            }
+            if let Some(secs) = retry.delay {
+                tokio::time::sleep(std::time::Duration::from_secs(secs)).await;
+            }
+            attempt += 1;
+        };
         if result.failure().is_some() && !allow_failure {
             if !in_allowing_loop {
                 return Ok(Outcome {
@@ -309,7 +342,7 @@ pub async fn exec(
 /// timeout becomes an [`TaskResult::Errored`] result instead of an error. With `verbose`,
 /// the command is printed to stderr first.
 async fn run_task(
-    task: Task,
+    task: &Task,
     allowed: bool,
     verbose: bool,
     values: &mut Map<String, Value>,
@@ -319,16 +352,21 @@ async fn run_task(
     let Some(argv) = &task.cmd else {
         return Err(Error::InvalidTask("must have `cmd`".to_string()));
     };
-    let result = match execute(argv, &task, verbose, &find).await {
+    let result = match execute(argv, task, verbose, &find).await {
         Err(err @ Error::CommandTimeout { .. }) if allowed => {
             TaskResult::Errored { error: err.chain() }
         }
         result => result?,
     };
-    if let Value::Object(tasks) = values.entry("tasks").or_insert_with(|| json!({})) {
-        tasks.insert(task.name.clone(), json!(result));
-    }
+    record(&task.name, &result, values);
     Ok(result)
+}
+
+/// Saves `result` as `tasks.<name>`.
+fn record(name: &str, result: &TaskResult, values: &mut Map<String, Value>) {
+    if let Value::Object(tasks) = values.entry("tasks").or_insert_with(|| json!({})) {
+        tasks.insert(name.to_string(), json!(result));
+    }
 }
 
 /// Runs `argv`, piped into `task`'s `pipe` stages, with `task`'s `stdin`, `env`, `cwd`,
@@ -745,6 +783,86 @@ mod tests {
         let (name, err) = task_error(while_project(dir.path(), 0, Some(2), echo)).await;
         assert_eq!(name, "wait");
         assert_eq!(err.to_string(), "while: still true after 2 iterations");
+    }
+
+    /// A job whose `count` task appends `x` to `acc` and prints `acc`'s length, with `fields`
+    /// (such as `retry`) added; it exits 1 until the length reaches 3 when `failing`.
+    fn retry_project(dir: &Path, failing: bool, fields: &str) -> Project {
+        let check = if failing { "; test $n -ge 3" } else { "" };
+        project_in(
+            dir,
+            &format!(
+                "tasks:\n  count:\n    cmd: [sh, -c, 'printf x >> acc; n=$(wc -c < acc); echo $n{check}']\n\
+                 \x20   cwd: .\n{fields}"
+            ),
+        )
+    }
+
+    #[tokio::test]
+    async fn retry_runs_until_the_command_succeeds() {
+        let dir = tempfile::tempdir().unwrap();
+        let fields = "    retry: {attempts: 5}\n";
+        let outcome = exec(retry_project(dir.path(), true, fields)).await.unwrap();
+        assert_eq!(outcome.failed_task, None);
+        assert_eq!(stdout(&outcome), &json!(3));
+    }
+
+    #[tokio::test]
+    async fn retry_without_until_fails_like_its_last_attempt() {
+        let dir = tempfile::tempdir().unwrap();
+        let fields = "    retry: {attempts: 2}\n";
+        let outcome = exec(retry_project(dir.path(), true, fields)).await.unwrap();
+        assert_eq!(outcome.failed_task.as_deref(), Some("count"));
+        assert_eq!(outcome.reason().as_deref(), Some("exited with code 1"));
+        assert_eq!(stdout(&outcome), &json!(2));
+    }
+
+    #[tokio::test]
+    async fn retry_runs_until_the_condition_holds() {
+        let dir = tempfile::tempdir().unwrap();
+        let fields = "    retry: {attempts: 5, until: {this: tasks.count.stdout, gte: 3}}\n";
+        let outcome = exec(retry_project(dir.path(), false, fields))
+            .await
+            .unwrap();
+        assert_eq!(stdout(&outcome), &json!(3));
+    }
+
+    #[tokio::test]
+    async fn retry_with_until_fails_after_its_attempts() {
+        let dir = tempfile::tempdir().unwrap();
+        let fields = "    retry: {attempts: 2, until: {this: tasks.count.stdout, gte: 3}}\n";
+        let (name, err) = task_error(retry_project(dir.path(), false, fields)).await;
+        assert_eq!(name, "count");
+        assert_eq!(
+            err.to_string(),
+            "retry: `until` still false after 2 attempts"
+        );
+
+        std::fs::remove_file(dir.path().join("acc")).unwrap();
+        let fields = format!(
+            "{fields}    allow_failure: true\n  after:\n    cmd: [echo, '${{tasks.count.error}}']\n"
+        );
+        let outcome = exec(retry_project(dir.path(), false, &fields))
+            .await
+            .unwrap();
+        assert_eq!(
+            stdout(&outcome),
+            &json!("retry: `until` still false after 2 attempts")
+        );
+    }
+
+    /// The first attempt sleeps past the 1s timeout.
+    #[tokio::test]
+    async fn retry_tries_again_after_a_timeout() {
+        let dir = tempfile::tempdir().unwrap();
+        let outcome = exec(project_in(
+            dir.path(),
+            "tasks:\n  slow:\n    cmd: [sh, -c, 'test -e acc || { touch acc; sleep 5; }; echo ok']\n\
+             \x20   cwd: .\n    timeout: 1s\n    retry: {attempts: 2}\n",
+        ))
+        .await
+        .unwrap();
+        assert_eq!(stdout(&outcome), &json!("ok"));
     }
 
     #[tokio::test]

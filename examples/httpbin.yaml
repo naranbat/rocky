@@ -123,21 +123,15 @@ jobs:
             stdin:
               name: ${USER.name}
 
-  # Polling: retry while the status isn't 200, at most 10 times.
+  # Polling: run the request again until the status is 200, at most 10 times.
   poll:
     tasks:
       check:                          # httpbin picks 200 or 503 at random
         cmd: [curl, -sS, -o, /dev/null, -w, '%{http_code}', '${BASE}/status/200,503']
-
-      retry:
-        while: { this: tasks.check.stdout, ne: 200 }   # checked before each iteration
-        max: 10                       # optional; fails the task if still true after 10
-        allow_failure: true           # a failing `do` task (e.g. curl can't connect) skips to the next check
-        do:
-          pause:
-            cmd: [sleep, '1']
-          check:                      # updates tasks.check for the next check
-            cmd: [curl, -sS, -o, /dev/null, -w, '%{http_code}', '${BASE}/status/200,503']
+        retry:
+          attempts: 10                # fails the task if still not 200 after 10 runs
+          delay: 1s                   # wait between runs
+          until: { this: tasks.check.stdout, eq: 200 }   # checked after each run; a failed run (e.g. curl can't connect) is tried again
 
   # A job file that uses a task file, with `timeout`.
   files: jobs/files.yaml

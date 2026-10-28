@@ -16,7 +16,7 @@ $ rocky run project.yaml | jq -c '{event, task, arm, ok}'
 
 | `event` | Meaning |
 |---|---|
-| `task` | a cmd task finished. `ok: false` with `allowed: true` means it failed with `allow_failure` (its own, or a loop's around it) and the job continued |
+| `task` | a cmd task finished, or one run of a task with [`retry`](cmd-tasks.md#retry) did. `ok: false` with `allowed: true` means it failed with `allow_failure` (its own, or a loop's around it) and the job continued |
 | `branch` | a branch chose `then` or `else` |
 | `switch` | a switch chose a case or `default` |
 | `for_each` | a loop started |

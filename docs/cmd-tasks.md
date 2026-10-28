@@ -110,7 +110,41 @@ build:
 
 Example of `env`: [`examples/cmd-env.yaml`](../examples/cmd-env.yaml).
 
-`cwd`, `stdin`, `env` and `capture_stdout` only work on cmd tasks; on any other task they are an error.
+`cwd`, `stdin`, `env`, `capture_stdout` and [`retry`](#retry) only work on cmd tasks; on any other task they are an error.
+
+## Retry
+
+`retry` runs a cmd task again until it succeeds, up to `attempts` times:
+
+```yaml
+fetch:
+  cmd: [curl, -sS, --fail-with-body, '${BASE}/flaky']
+  timeout: 10s
+  retry:
+    attempts: 5                 # the most runs, the first one included
+    delay: 2s                   # optional: wait between runs, seconds or a duration
+
+check:                          # wait for a status instead of a successful exit
+  cmd: [curl, -sS, -o, /dev/null, -w, '%{http_code}', '${BASE}/health']
+  retry:
+    attempts: 10
+    delay: 1s
+    until: {this: tasks.check.stdout, eq: 200}   # any condition
+```
+
+| Field | Notes |
+|---|---|
+| `attempts` | Required, at least 1. The most times the command runs. |
+| `delay` | Optional. How long to wait before each run after the first: seconds (`2`) or a duration (`2s`, `1m`). Default: no wait. |
+| `until` | Optional. A [condition](conditions.md#condition-shape), checked after each run. Without it, a run is enough when it exits `0`. |
+
+- Each run is saved as `tasks.<name>` before `until` is checked, so `until` reads the run that just finished.
+- A run that exits non-zero or times out is just tried again, unless it is the last one.
+- When a run is enough, retrying stops and that run is the task's result. It is then treated like any cmd task: with `until`, a non-zero exit still fails the task.
+- When the last run isn't enough:
+  - **Without `until`:** that run is the task's result, and it fails the task as usual.
+  - **With `until`:** the task fails with ``retry: `until` still false after N attempts``. With `allow_failure`, the job goes on and `tasks.<name>` is `{"error": "…"}`, like after a timeout.
+- `rocky run` logs a `task` line for every run.
 
 ## Reading and writing files
 

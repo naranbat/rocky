@@ -94,6 +94,10 @@ env:                                # added to the command's environment, read a
 cwd: .                              # relative to this file; ${VAR} works (default: your current directory)
 timeout: 30s                        # seconds (30) or a duration: 30s, 5m, 2h
 capture_stdout: true                # false sends stdout to /dev/null instead of keeping it in memory
+retry:                              # optional: run again until it exits 0, at most `attempts` times
+  attempts: 1
+  delay: 1s                         # wait between runs
+  # until: {this: tasks.NAME.stdout, eq: ok}   # or until this holds
 allow_failure: false                # true continues after a non-zero exit or a timeout
 ";
 

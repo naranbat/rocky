@@ -80,6 +80,7 @@ jobs:
 | `cwd` | Working directory; relative to the YAML file. |
 | `timeout` | Seconds (`30`) or a duration (`30s`, `5m`, `2h`); the command (and its children) are killed and the task fails. |
 | `capture_stdout` | `false` discards stdout (result `stdout` is `null`). |
+| `retry` | `{attempts: 5, delay: 2s, until: COND}`: run again until it exits 0 (or `until` holds), at most `attempts` times. Use it for polling instead of `while`. |
 | `allow_failure` | `true` keeps the job going after a non-zero exit or timeout. |
 
 Result, saved as `tasks.<key>`: `{exit_code, stdout, stderr}`. `stdout` is parsed as JSON when the whole output is valid JSON, otherwise text with trailing newlines trimmed. A timeout under `allow_failure` saves `{error: "..."}` instead; test it with `{this: tasks.x.error, exists: true}`.

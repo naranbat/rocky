@@ -76,6 +76,7 @@ Each entry in `tasks` (and in `then`, `else`, `do`, each switch case and `defaul
 | `cmd` | cmd tasks | Required, and must not be empty. |
 | `timeout` | cmd tasks | How long before the command is killed and the task fails: seconds (`300`) or a duration (`30s`, `5m`, `2h`). No default. |
 | `cwd`, `stdin`, `env`, `capture_stdout` | cmd tasks | Working directory, standard input, environment variables, and whether stdout is kept. See [Cmd tasks](cmd-tasks.md#options). |
+| `retry` | cmd tasks | Run the command again until it succeeds or a condition holds. See [Retry](cmd-tasks.md#retry). |
 | `allow_failure` | cmd tasks, loops | `true` to continue when the task fails; on a loop, to skip to the next iteration when a `do` task fails. |
 | `if`, `then`, `else` | branches | A branch has no `cmd`, `timeout` or `allow_failure`. |
 | `switch`, `cases`, `default` | switches | Like a branch: no `cmd`, `timeout` or `allow_failure`, and no `if`, `then` or `else`. |
@@ -132,7 +133,7 @@ The whole project, every job including nested branches and loops, is checked whe
 - `tasks`, `then`, `else`, `do` or `default` written as a list instead of a map, or two tasks with the same key in one map
 - a task without `cmd` that isn't a branch, switch, loop or task file
 - a job entry with both `file` and `tasks`, or with neither
-- `cwd`, `stdin`, `env` or `capture_stdout` without `cmd`; `timeout` on a branch, switch or loop; `then`/`else` without `if`; `cases`/`default` without `switch`; `do`/`as` without `for_each`
+- `cwd`, `stdin`, `env`, `capture_stdout` or `retry` without `cmd`; `timeout` on a branch, switch or loop; `then`/`else` without `if`; `cases`/`default` without `switch`; `do`/`as` without `for_each`
 - a missing task or job file, a task file with a `name` field, or a task file that uses itself, directly or through other files
 - a name that appears twice in `jobs`, a cmd task's `env`, or a switch's `cases`
 - a [variable name](env.md#names) in `as` that isn't uppercase (`A-Z`, `0-9`, `_`), or a task key that isn't an identifier or is `tasks`

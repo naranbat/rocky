@@ -47,6 +47,8 @@ pub struct Task {
     /// `false` sends a `cmd` command's stdout to /dev/null instead of keeping it in memory;
     /// the result's `stdout` is then `null`. Default `true`.
     pub capture_stdout: Option<bool>,
+    /// Runs a `cmd` task again until it succeeds or its `until` condition holds.
+    pub retry: Option<Retry>,
     /// On a `cmd` task, a non-zero exit or a timeout doesn't stop the job. On a loop, a failing
     /// `do` task skips the rest of that iteration instead.
     #[serde(default)]
@@ -78,6 +80,18 @@ pub struct Task {
     pub cases: Vec<Case>,
     #[serde(default, deserialize_with = "named")]
     pub default: Vec<Task>,
+}
+
+/// A `cmd` task's `retry`: run it up to `attempts` times, `delay` seconds apart, until it
+/// succeeds or, with `until`, until that condition holds.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Retry {
+    /// The most runs, the first one included.
+    pub attempts: u64,
+    #[serde(default, deserialize_with = "seconds")]
+    pub delay: Option<u64>,
+    pub until: Option<Condition>,
 }
 
 /// One `cases` entry of a switch: tasks to run when the variable equals its key.
@@ -254,6 +268,7 @@ fn resolve_one(task: &mut Task, dir: &Path, stack: &mut Vec<PathBuf>) -> Result<
         ("env", !task.env.is_empty()),
         ("capture_stdout", task.capture_stdout.is_some()),
         ("pipe", !task.pipe.is_empty()),
+        ("retry", task.retry.is_some()),
     ] {
         if set && task.cmd.is_none() {
             return Err(Error::InvalidTask(format!(
@@ -469,6 +484,18 @@ fn resolve_leaf(task: &Task, name: &str) -> Result<(), Error> {
             return Err(Error::InvalidTask(format!("`{name}` must have `cmd`")));
         }
     }
+    if let Some(retry) = &task.retry {
+        if retry.attempts == 0 {
+            return Err(Error::InvalidTask(format!(
+                "`{name}`: `retry` needs `attempts` of at least 1"
+            )));
+        }
+        if let Some(until) = &retry.until {
+            until
+                .validate()
+                .map_err(|source| Error::InvalidTask(format!("`{name}`: {source}")))?;
+        }
+    }
     Ok(())
 }
 
@@ -550,6 +577,7 @@ mod tests {
             ("a:\n  env: {A: y}\n", "env"),
             ("a:\n  capture_stdout: false\n", "capture_stdout"),
             ("a:\n  pipe: [[cat]]\n", "pipe"),
+            ("a:\n  retry: {attempts: 2}\n", "retry"),
         ] {
             let msg = invalid_task(yaml);
             assert!(
@@ -585,6 +613,46 @@ mod tests {
             let err =
                 parse_named(&format!("s:\n  cmd: [echo]\n  timeout: {timeout}\n")).unwrap_err();
             assert!(err.to_string().contains("timeout"), "{timeout}: {err}");
+        }
+    }
+
+    #[test]
+    fn retry_needs_attempts_and_a_valid_condition() {
+        let tasks = resolve_here(
+            "a:\n  cmd: [echo]\n  retry: {attempts: 3, delay: 2s, until: {this: '${tasks.a.stdout}', eq: ok}}\n",
+        )
+        .unwrap();
+        let retry = tasks[0].retry.as_ref().unwrap();
+        assert_eq!((retry.attempts, retry.delay), (3, Some(2)));
+        for (yaml, expected) in [
+            (
+                "a:\n  cmd: [echo]\n  retry: {attempts: 0}\n",
+                "`a`: `retry` needs `attempts` of at least 1",
+            ),
+            (
+                "a:\n  cmd: [echo]\n  retry: {attempts: 2, until: {this: X, gt: ten}}\n",
+                "`a`: invalid condition: `gt` needs a number",
+            ),
+        ] {
+            let msg = invalid_task(yaml);
+            assert!(msg.contains(expected), "{yaml}: {msg}");
+        }
+        for (yaml, expected) in [
+            (
+                "a:\n  cmd: [echo]\n  retry: {delay: 1s}\n",
+                "missing field `attempts`",
+            ),
+            (
+                "a:\n  cmd: [echo]\n  retry: {attempts: 2, max: 3}\n",
+                "unknown field `max`",
+            ),
+            (
+                "a:\n  cmd: [echo]\n  retry: {attempts: 2, delay: soon}\n",
+                "is not a duration",
+            ),
+        ] {
+            let err = parse_named(yaml).unwrap_err();
+            assert!(err.to_string().contains(expected), "{yaml}: {err}");
         }
     }
 

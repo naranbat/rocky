@@ -40,6 +40,8 @@ pub enum Error {
     Loop(String),
     #[error("while: {0}")]
     While(String),
+    #[error("retry: {0}")]
+    Retry(String),
     #[error("task `{name}` failed")]
     Task {
         name: String,

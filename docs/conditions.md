@@ -117,7 +117,7 @@ tasks:
         cmd: [curl, -sS, -o, /dev/null, -w, '%{http_code}', '${BASE}/health']
 ```
 
-Example: the `poll` job in [`examples/httpbin.yaml`](../examples/httpbin.yaml).
+To run one command again until it succeeds or a condition holds, [`retry`](cmd-tasks.md#retry) is shorter: no separate first run, and no copy of the command inside `do`.
 
 | Field | Notes |
 |---|---|
