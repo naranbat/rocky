@@ -46,7 +46,7 @@ jobs:
 
 Example: [`examples/values.yaml`](../examples/values.yaml).
 
-- `values` can go at the top level of a project and in a job, inline or in a job file. Tasks nested in branches, switches and loops, and task files, see their job's values. Tasks can't have their own `values`.
+- `values` can go at the top level of a project and in a job, inline or in a job file. Tasks nested in branches, switches and loops, and task files, see their job's values. Tasks can't have their own `values`, except a [task file entry](projects.md#reusing-a-task-file), which sets values for that file while it runs.
 - A value can be a string, number, boolean, list or object, and keeps its JSON type (see [typed values](#typed-values)). Use a dot path to read inside one: `${SITE.name}`.
 - Values are used as written: `${...}` inside a value is not expanded.
 - A job value with the same name as a project value replaces it for that job. A job entry that [reuses a job file](projects.md#reusing-a-job-file) can set `values` too; they replace the file's.
@@ -106,10 +106,11 @@ These only fill in `${...}`. A command doesn't see env file values in its enviro
 First match wins, for every kind of task, and for conditions, `switch` and `for_each`:
 
 1. loop variables and `tasks.NAME...`
-2. job `values`
-3. project `values`
-4. project `env_file`
-5. the process environment
+2. the `values` of a [task file entry](projects.md#reusing-a-task-file), while that task runs
+3. job `values`
+4. project `values`
+5. project `env_file`
+6. the process environment
 
 ## Names
 

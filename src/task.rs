@@ -18,9 +18,13 @@ pub struct Task {
     #[serde(skip)]
     pub name: String,
     /// A task YAML file, relative to the file that declares this task, used in its place:
-    /// the entry's value when it is a string.
-    #[serde(skip)]
+    /// the entry's value when it is a string, or its `file`.
+    #[serde(rename = "file")]
     pub r#use: Option<PathBuf>,
+    /// Next to `file`: values for `${NAME}` while that task runs, winning over the job's and
+    /// the project's.
+    #[serde(default, deserialize_with = "project::unique")]
+    pub values: BTreeMap<String, Value>,
     /// Program and arguments, run directly without a shell; `${VAR}` is substituted per element.
     pub cmd: Option<Vec<String>>,
     /// Further programs, each with its arguments, run like `cmd`: `cmd`'s stdout is piped
@@ -269,6 +273,31 @@ impl Task {
         self.switch.is_some() || !self.cases.is_empty() || !self.default.is_empty()
     }
 
+    /// Whether any field other than `values` is set, on an entry that has `file`.
+    fn has_fields_besides_values(&self) -> bool {
+        self.cmd.is_some()
+            || !self.pipe.is_empty()
+            || self.timeout.is_some()
+            || self.cwd.is_some()
+            || self.stdin.is_some()
+            || !self.env.is_empty()
+            || self.capture_stdout.is_some()
+            || self.stdout_file.is_some()
+            || self.retry.is_some()
+            || self.allow_failure
+            || self.on_failure.is_some()
+            || self.condition.is_some()
+            || !self.then.is_empty()
+            || !self.otherwise.is_empty()
+            || self.for_each.is_some()
+            || self.item_var.is_some()
+            || self.repeat.is_some()
+            || self.attempts.is_some()
+            || self.old_max.is_some()
+            || !self.body.is_empty()
+            || self.has_switch_fields()
+    }
+
     fn has_task_fields(&self) -> bool {
         self.cmd.is_some() || self.timeout.is_some() || self.allow_failure
     }
@@ -296,7 +325,27 @@ fn resolve_one(task: &mut Task, dir: &Path, stack: &mut Vec<PathBuf>) -> Result<
         )));
     }
     if let Some(path) = task.r#use.take() {
-        return resolve_use(task, path, dir, stack);
+        if task.has_fields_besides_values() {
+            return Err(Error::InvalidTask(format!(
+                "`{name}` has `file`, so its other fields go in that file; only `values` can be next to it"
+            )));
+        }
+        if let Some(var) = task.values.keys().find(|var| !var_name::is_valid_var(var)) {
+            return Err(Error::InvalidTask(format!(
+                "`{name}`: `values` name `{var}` {}",
+                var_name::VAR_RULE
+            )));
+        }
+        let values = std::mem::take(&mut task.values);
+        resolve_use(task, path, dir, stack)?;
+        // Over those of a `file` entry the loaded file may itself be.
+        task.values.extend(values);
+        return Ok(());
+    }
+    if !task.values.is_empty() {
+        return Err(Error::InvalidTask(format!(
+            "`{name}` has `values`, which only works next to `file`"
+        )));
     }
     for (field, set) in [
         ("cwd", task.cwd.is_some()),
@@ -1028,6 +1077,58 @@ mod tests {
             matches!(&err, Error::InvalidTask(msg) if msg.contains("task file cycle through")),
             "{err}"
         );
+    }
+
+    #[test]
+    fn task_file_entries_take_values() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("greet.yaml"), "cmd: [echo, '${WHO}']\n").unwrap();
+        std::fs::write(
+            dir.path().join("wrap.yaml"),
+            "file: greet.yaml\nvalues: {WHO: inner, KEEP: inner}\n",
+        )
+        .unwrap();
+        let tasks = resolve_in(
+            dir.path(),
+            "a: {file: greet.yaml, values: {WHO: a}}\nb: {file: greet.yaml}\n\
+             c: {file: wrap.yaml, values: {WHO: outer}}\n",
+        )
+        .unwrap();
+        let values = |task: &Task| serde_json::to_value(&task.values).unwrap();
+        assert_eq!(
+            tasks[0].cmd.as_deref(),
+            Some(&["echo".to_string(), "${WHO}".to_string()][..])
+        );
+        assert_eq!(values(&tasks[0]), serde_json::json!({"WHO": "a"}));
+        assert!(tasks[1].values.is_empty());
+        assert_eq!(
+            values(&tasks[2]),
+            serde_json::json!({"WHO": "outer", "KEEP": "inner"})
+        );
+
+        for (yaml, expected) in [
+            (
+                "a: {file: greet.yaml, cmd: [echo]}\n",
+                "`a` has `file`, so its other fields go in that file",
+            ),
+            (
+                "a: {file: greet.yaml, timeout: 5}\n",
+                "`a` has `file`, so its other fields go in that file",
+            ),
+            (
+                "a: {cmd: [echo], values: {X: 1}}\n",
+                "`a` has `values`, which only works next to `file`",
+            ),
+            (
+                "a: {file: greet.yaml, values: {who: 1}}\n",
+                "`a`: `values` name `who`",
+            ),
+        ] {
+            match resolve_in(dir.path(), yaml) {
+                Err(Error::InvalidTask(msg)) => assert!(msg.contains(expected), "{yaml}: {msg}"),
+                other => panic!("{yaml}: expected an invalid task, got {other:?}"),
+            }
+        }
     }
 
     #[test]

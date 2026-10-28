@@ -61,12 +61,12 @@ jobs:
 |---|---|
 | project | `jobs` (required), `values`, `env_file` (only here; relative to the project file), `defaults` |
 | job | `tasks` (required, non-empty map), `schedule`, `values` (win over project values), `defaults` (win over project defaults) |
-| task | exactly one kind: cmd (`cmd`), branch (`if`), switch (`switch`), loop (`for_each` or `while`), or a string path to a task file |
+| task | exactly one kind: cmd (`cmd`), branch (`if`), switch (`switch`), loop (`for_each` or `while`), or a task file: a path, or `{file: path, values: {...}}` |
 
 - Tasks are a **map**, never a list. The key is the name; there is no `name` field. Keys are identifiers (`user_id`), `tasks` is reserved, and keys are unique within one map.
 - Unknown keys anywhere are a load error.
 - `defaults: {timeout, cwd, env, retry}` fills those fields on every cmd task (nested ones and task files too) that doesn't set them; `env` merges by name. A default `cwd` is relative to the file the defaults are in. Use it instead of repeating `timeout`/`cwd: .`/`env` on each task.
-- Job file: `jobs: {report: jobs/report.yaml}`; the file holds `tasks`, `schedule`, `values`, `defaults`. Task file: `tasks: {login: tasks/login.yaml}`; the file holds one task, no `name`.
+- Job file: `jobs: {report: jobs/report.yaml}`; the file holds `tasks`, `schedule`, `values`, `defaults`. Task file: `tasks: {login: tasks/login.yaml}`; the file holds one task, no `name`. Reuse it with different values: `tasks: {as_bob: {file: tasks/login.yaml, values: {USER: bob}}}` (only `file` and `values` there; the values win over job values while it runs).
 - Reuse one job file as several jobs: `jobs: {news: {file: jobs/fetch.yaml, schedule: {every: 1h}, values: {TARGET: https://x}}}`. Only `file`, `schedule`, `values` are allowed there.
 - Relative paths (`cwd`, task and job files) resolve against the file they're written in; `env_file` and job file paths against the project file. Commands **without** `cwd` run in the current directory.
 

@@ -57,7 +57,7 @@ Examples: [`httpbin.yaml`](../examples/httpbin.yaml) (jobs `login`, `mixed`, `co
 | `schedule` | Optional. When `rocky run` runs this job. See [Schedules](schedules.md). `exec` checks it but doesn't run it. |
 | `values` | Map of uppercase name → fixed value, read as `${NAME}` by this job's tasks; wins over a project value of the same name. See [Env](env.md#values). |
 | `defaults` | Fields this job's cmd tasks get unless they set them; win over the project's. See [Defaults](#defaults). |
-| `tasks` | Required, and must not be empty. Map of task name → task, or → the path of a task file. Tasks run in the order they are written. |
+| `tasks` | Required, and must not be empty. Map of task name → task, → the path of a task file, or → a task file with its own `values`. Tasks run in the order they are written. |
 
 ## Defaults
 
@@ -103,7 +103,7 @@ Each entry in `tasks` (and in `then`, `else`, `do`, each switch case and `defaul
 | Branch | `if`, `then`, `else` | [Conditions](conditions.md) |
 | Switch | `switch`, `cases`, `default` | [Conditions](conditions.md#switch) |
 | Loop | `for_each`, `as`, `do` | [Loops](loops.md) |
-| Task file | a string: the path of a task file | [Job and task files](#job-and-task-files) |
+| Task file | a string: the path of a task file, or `{file, values}` | [Job and task files](#job-and-task-files) |
 
 ## Task fields
 
@@ -173,6 +173,7 @@ The whole project, every job including nested branches and loops, is checked whe
 - a job entry with both `file` and `tasks`, or with neither
 - `cwd`, `stdin`, `env`, `capture_stdout`, `stdout_file` or `retry` without `cmd`; both `stdout_file` and `capture_stdout`; `timeout` on a branch, switch or loop; `allow_failure` on a loop (use `on_failure: next`), or `on_failure` on anything but a loop; `then`/`else` without `if`; `cases`/`default` without `switch`; `do`/`as` without `for_each`
 - a missing task or job file, a task file with a `name` field, or a task file that uses itself, directly or through other files
+- a task entry with `file` and any field but `values`, or `values` without `file`
 - a name that appears twice in `jobs`, a cmd task's `env`, or a switch's `cases`
 - a [variable name](env.md#names) in `as` that isn't uppercase (`A-Z`, `0-9`, `_`), or a task key that isn't an identifier or is `tasks`
 - an invalid [condition](conditions.md) or [schedule](schedules.md)
@@ -212,10 +213,32 @@ cmd: [curl, -sS, --fail-with-body, https://httpbin.org/anything/login]
 ```
 
 - A task file holds one task, without a `name`: the key that points at it names it, so one file can be used under several names. It can use other task files, inside a branch or loop too, but not itself, directly or through other files.
-- A task file entry is just a path, so everything else goes in the file. To change a field for one use, write the task inline.
+- A task file entry is a path, or `{file: path, values: {...}}` to give the file [values of its own](#reusing-a-task-file). Everything else goes in the file. To change another field for one use, write the task inline.
 - A job file has the job fields `schedule`, `values`, `defaults` and `tasks`. The project keeps `env_file`. To run one job file with different values or schedules, see below.
 
 Example: [`imports.yaml`](../examples/imports.yaml), whose jobs all come from [`jobs/`](../examples/jobs/) and share its env file.
+
+### Reusing a task file
+
+A task entry can name its file under `file`, with `values` that the file reads as `${NAME}`, so one file can be used with different values:
+
+```yaml
+tasks:
+  alice: {file: tasks/greet.yaml, values: {WHO: alice}}
+  bob:
+    file: tasks/greet.yaml
+    values:
+      WHO: bob
+  anyone: tasks/greet.yaml       # WHO from the job's or project's values
+
+# tasks/greet.yaml
+cmd: [echo, 'hello ${WHO}']
+```
+
+- Only `file` and `values` are allowed; everything else goes in the file. `values` only works next to `file`.
+- The values apply while that task runs, including tasks nested in it, and win over the job's and the project's. Afterwards the earlier values are back.
+- Like any `values`, names are uppercase and values are used as written: `${...}` inside them isn't expanded.
+- A task file can itself be a `{file, values}` entry; the outer entry's values win over the inner one's.
 
 ### Reusing a job file
 

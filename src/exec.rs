@@ -84,12 +84,23 @@ impl Outcome {
     }
 }
 
-/// Queued work: a task to run with its label, a loop's remaining items, or a `while`
-/// loop's next condition check.
+/// Queued work: a task to run with its label, a loop's remaining items, a `while` loop's
+/// next condition check, or the values to put back once a task file entry's `values` end.
 enum Work {
     Task { task: Box<Task>, name: String },
     Loop(Box<Loop>),
     While(Box<While>),
+    Restore(Vec<(String, Option<Value>)>),
+}
+
+/// Puts each variable back to its value before (`None` unbinds it).
+fn restore(previous: Vec<(String, Option<Value>)>, values: &mut Map<String, Value>) {
+    for (var, value) in previous {
+        match value {
+            Some(value) => values.insert(var, value),
+            None => values.remove(&var),
+        };
+    }
 }
 
 /// Per remaining item, bind `var` to it and run `body`; then restore `var` to `previous`
@@ -130,21 +141,23 @@ impl Work {
         match self {
             Work::Loop(each) => each.allow_failure,
             Work::While(repeat) => repeat.allow_failure,
-            Work::Task { .. } => false,
+            Work::Task { .. } | Work::Restore(_) => false,
         }
     }
 }
 
 /// Drops the rest of the current iteration of the innermost loop with `allow_failure`,
-/// restoring the variables of loops left on the way, so that loop moves on to its next
-/// iteration.
+/// restoring the variables of loops and task file entries left on the way, so that loop
+/// moves on to its next iteration.
 fn skip_iteration(stack: &mut Vec<Work>, values: &mut Map<String, Value>) {
     while let Some(work) = stack.last() {
         if work.allows_failure() {
             return;
         }
-        if let Some(Work::Loop(each)) = stack.pop() {
-            each.restore(values);
+        match stack.pop() {
+            Some(Work::Loop(each)) => each.restore(values),
+            Some(Work::Restore(previous)) => restore(previous, values),
+            _ => {}
         }
     }
 }
@@ -198,6 +211,10 @@ pub async fn exec(
                 }
                 continue;
             }
+            Work::Restore(previous) => {
+                restore(previous, &mut values);
+                continue;
+            }
             Work::While(mut repeat) => {
                 let name = repeat.name.clone();
                 let to_task_error = |source| Error::Task {
@@ -226,6 +243,19 @@ pub async fn exec(
                 continue;
             }
         };
+        if !task.values.is_empty() {
+            // Set for this task and the tasks it runs, then put back.
+            let previous = std::mem::take(&mut task.values)
+                .into_iter()
+                .map(|(var, value)| (var.clone(), values.insert(var, value)))
+                .collect();
+            stack.push(Work::Restore(previous));
+            stack.push(Work::Task {
+                task: Box::new(task),
+                name,
+            });
+            continue;
+        }
         let to_task_error = |source| Error::Task {
             name: name.clone(),
             source: Box::new(source),
@@ -818,6 +848,60 @@ mod tests {
         let (name, err) = task_error(while_project(dir.path(), 0, Some(2), echo)).await;
         assert_eq!(name, "wait");
         assert_eq!(err.to_string(), "while: still true after 2 attempts");
+    }
+
+    /// `say.yaml` appends `${WHO}` to `acc`; `fail.yaml` fails when `${WHO}` is `b`.
+    fn task_files(dir: &Path) {
+        std::fs::write(dir.join("say.yaml"), append(0, "${WHO} ")).unwrap();
+        std::fs::write(
+            dir.join("fail.yaml"),
+            "cmd: [sh, -c, 'test \"$0\" != b', '${WHO}']\n",
+        )
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn task_file_values_apply_only_while_it_runs() {
+        let dir = tempfile::tempdir().unwrap();
+        task_files(dir.path());
+        let outcome = exec(project_in(
+            dir.path(),
+            "values: {WHO: job}\n\
+             tasks:\n  a: {file: say.yaml, values: {WHO: a}}\n  plain: say.yaml\n\
+             \x20 b: {file: say.yaml, values: {WHO: b, EXTRA: x}}\n  again: say.yaml\n\
+             \x20 print:\n    cmd: [cat, acc]\n    cwd: .\n",
+        ))
+        .await
+        .unwrap();
+        assert_eq!(stdout(&outcome), &json!("a job b job "));
+
+        let (_, err) = task_error(project_in(
+            dir.path(),
+            "tasks:\n  b: {file: say.yaml, values: {WHO: b, EXTRA: x}}\n\
+             \x20 after:\n    cmd: [echo, '${EXTRA}']\n",
+        ))
+        .await;
+        assert!(
+            matches!(&err, Error::UndefinedVar(var) if var == "EXTRA"),
+            "{err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn task_file_values_are_put_back_when_a_loop_skips_an_iteration() {
+        let dir = tempfile::tempdir().unwrap();
+        task_files(dir.path());
+        let outcome = exec(project_in(
+            dir.path(),
+            "values: {WHO: job, IDS: [1, 2]}\n\
+             tasks:\n  each:\n    for_each: IDS\n    on_failure: next\n    do:\n\
+             \x20     check: {file: fail.yaml, values: {WHO: b}}\n\
+             \x20 print:\n    cmd: [echo, '${WHO}']\n",
+        ))
+        .await
+        .unwrap();
+        assert_eq!(outcome.failed_task, None);
+        assert_eq!(stdout(&outcome), &json!("job"));
     }
 
     #[tokio::test]

@@ -29,6 +29,7 @@ tasks:
 
 const TASK_HEADER: &str = "\
 # One task in its own file. Add it to a job's `tasks`: `name: path/to/this.yaml`.
+# To give it values of its own: `name: {file: path/to/this.yaml, values: {USER: bob}}`.
 ";
 
 const CMD_TASK: &str = "\

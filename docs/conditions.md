@@ -59,7 +59,7 @@ A condition is either `this` with **one or more** operators, or exactly one of `
 
 ## Variable lookup
 
-`this` is looked up in this order: loop variables and `tasks.NAME...`; then job `values`; then project `values`; then the project `env_file`; then the environment. An undefined variable fails the task, except with `exists`.
+`this` is looked up in this order: loop variables and `tasks.NAME...`; then a [task file entry's](projects.md#reusing-a-task-file) `values`; then job `values`; then project `values`; then the project `env_file`; then the environment. An undefined variable fails the task, except with `exists`.
 
 Values from env files and the environment are strings, which is why numeric strings are accepted by the number operators.
 
