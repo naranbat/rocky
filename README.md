@@ -103,7 +103,6 @@ All pages are in [`docs/`](docs/README.md).
 ## Limitations
 
 - Unix only: commands run in their own process group, which needs Unix signals.
-- No dry run: commands always run. `exec --verbose` shows each command as it runs.
 - `timeout` is in whole seconds, minutes or hours (`30`, `30s`, `5m`, `2h`).
 - `tasks.NAME...` dot paths can't address keys that contain `.`.
 - Ctrl-C, SIGTERM, SIGHUP (closing the terminal) and SIGQUIT stop `rocky` and the commands it runs; `kill -9` can't be caught, so it leaves running commands behind.
