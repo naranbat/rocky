@@ -56,10 +56,12 @@ pub struct Task {
     pub stdout_file: Option<PathBuf>,
     /// Runs a `cmd` task again until it succeeds or its `until` condition holds.
     pub retry: Option<Retry>,
-    /// On a `cmd` task, a non-zero exit or a timeout doesn't stop the job. On a loop, a failing
-    /// `do` task skips the rest of that iteration instead.
+    /// A non-zero exit or a timeout of this `cmd` task doesn't stop the job.
     #[serde(default)]
     pub allow_failure: bool,
+    /// On a loop, what a failing `do` task does: stop the job (the default), or skip the rest of
+    /// that iteration.
+    pub on_failure: Option<OnFailure>,
     /// Makes this a branch: runs `then` if the condition holds, else `else`.
     #[serde(rename = "if")]
     pub condition: Option<Condition>,
@@ -87,6 +89,16 @@ pub struct Task {
     pub cases: Vec<Case>,
     #[serde(default, deserialize_with = "named")]
     pub default: Vec<Task>,
+}
+
+/// A loop's `on_failure`.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum OnFailure {
+    /// Stop the job.
+    Stop,
+    /// Skip the rest of the iteration and go on with the next one.
+    Next,
 }
 
 /// A `cmd` task's `retry`: run it up to `attempts` times, `delay` seconds apart, until it
@@ -316,6 +328,11 @@ fn resolve_one(task: &mut Task, dir: &Path, stack: &mut Vec<PathBuf>) -> Result<
             "`{name}` has `do`/`max` but no `for_each` or `while`"
         )));
     }
+    if task.on_failure.is_some() {
+        return Err(Error::InvalidTask(format!(
+            "`{name}` has `on_failure`, which only works on loops (`for_each`, `while`)"
+        )));
+    }
     if task.switch.is_some() {
         return resolve_switch(task, &name, dir, stack);
     }
@@ -370,6 +387,11 @@ fn resolve_loop(
     dir: &Path,
     stack: &mut Vec<PathBuf>,
 ) -> Result<(), Error> {
+    if task.allow_failure {
+        return Err(Error::InvalidTask(format!(
+            "`{name}` is a loop (`for_each`): `allow_failure` only works on cmd tasks; use `on_failure: next` to skip to the next iteration when a `do` task fails"
+        )));
+    }
     if task.cmd.is_some()
         || task.timeout.is_some()
         || task.condition.is_some()
@@ -405,6 +427,11 @@ fn resolve_while(
     dir: &Path,
     stack: &mut Vec<PathBuf>,
 ) -> Result<(), Error> {
+    if task.allow_failure {
+        return Err(Error::InvalidTask(format!(
+            "`{name}` is a loop (`while`): `allow_failure` only works on cmd tasks; use `on_failure: next` to skip to the next iteration when a `do` task fails"
+        )));
+    }
     if task.cmd.is_some()
         || task.timeout.is_some()
         || task.condition.is_some()
@@ -845,13 +872,35 @@ mod tests {
     }
 
     #[test]
-    fn loops_accept_allow_failure() {
+    fn loops_take_on_failure_instead_of_allow_failure() {
         let tasks = resolve_here(
-            "l:\n  for_each: X\n  allow_failure: true\n  do: {a: {cmd: [a]}}\n\
-             w:\n  while: {this: X, eq: 1}\n  allow_failure: true\n  do: {b: {cmd: [b]}}\n",
+            "l:\n  for_each: X\n  on_failure: next\n  do: {a: {cmd: [a]}}\n\
+             w:\n  while: {this: X, eq: 1}\n  on_failure: stop\n  do: {b: {cmd: [b]}}\n",
         )
         .unwrap();
-        assert!(tasks.iter().all(|task| task.allow_failure));
+        assert_eq!(tasks[0].on_failure, Some(OnFailure::Next));
+        assert_eq!(tasks[1].on_failure, Some(OnFailure::Stop));
+        for yaml in [
+            "l:\n  for_each: X\n  allow_failure: true\n  do: {a: {cmd: [a]}}\n",
+            "w:\n  while: {this: X, eq: 1}\n  allow_failure: true\n  do: {b: {cmd: [b]}}\n",
+        ] {
+            let msg = invalid_task(yaml);
+            assert!(msg.contains("use `on_failure: next`"), "{yaml}: {msg}");
+        }
+        for yaml in [
+            "a:\n  cmd: [a]\n  on_failure: next\n",
+            "r:\n  if: {this: X, eq: 1}\n  then: {a: {cmd: [a]}}\n  on_failure: next\n",
+            "s:\n  switch: X\n  cases: {1: {a: {cmd: [a]}}}\n  on_failure: next\n",
+        ] {
+            let msg = invalid_task(yaml);
+            assert!(
+                msg.contains("`on_failure`, which only works on loops"),
+                "{yaml}: {msg}"
+            );
+        }
+        let err = parse_named("l:\n  for_each: X\n  on_failure: skip\n  do: {a: {cmd: [a]}}\n")
+            .unwrap_err();
+        assert!(err.to_string().contains("unknown variant `skip`"), "{err}");
     }
 
     #[test]

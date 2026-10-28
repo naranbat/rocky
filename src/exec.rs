@@ -9,7 +9,7 @@ use crate::command::{self, CommandResult, Stdout};
 use crate::condition::{self, Condition};
 use crate::error::Error;
 use crate::project::Project;
-use crate::task::Task;
+use crate::task::{OnFailure, Task};
 use crate::{env_file, extract, progress, vars};
 
 /// What one task produced: a finished command, or (with `allow_failure`, its own or an
@@ -281,7 +281,7 @@ pub async fn exec(
                 previous: values.get(&var).cloned(),
                 var,
                 items: items.into_iter(),
-                allow_failure: task.allow_failure,
+                allow_failure: task.on_failure == Some(OnFailure::Next),
             })));
             continue;
         }
@@ -293,7 +293,7 @@ pub async fn exec(
                 body: task.body,
                 max: task.max,
                 done: 0,
-                allow_failure: task.allow_failure,
+                allow_failure: task.on_failure == Some(OnFailure::Next),
             })));
             continue;
         }
@@ -969,13 +969,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn failing_task_in_allow_failure_loop_skips_the_iteration() {
+    async fn failing_task_in_on_failure_next_loop_skips_the_iteration() {
         let dir = tempfile::tempdir().unwrap();
         let outcome = exec(project_in(
             dir.path(),
             &format!(
                 "{}\
-                 \x20 each:\n    for_each: tasks.seed.stdout.IDS\n    allow_failure: true\n    do:\n\
+                 \x20 each:\n    for_each: tasks.seed.stdout.IDS\n    on_failure: next\n    do:\n\
                  \x20     check:\n        cmd: [test, '${{ITEM}}', '!=', '2']\n\
                  \x20     add:\n{}\
                  \x20 print:\n    cmd: [sh, -c, 'cat acc; echo \":$0\"', '${{tasks.check.exit_code}}']\n    cwd: .\n",
@@ -990,13 +990,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn failure_in_inner_loop_skips_to_the_allow_failure_loop() {
+    async fn failure_in_inner_loop_skips_to_the_on_failure_next_loop() {
         let dir = tempfile::tempdir().unwrap();
         let outcome = exec(project_in(
             dir.path(),
             &format!(
                 "{}\
-                 \x20 rows:\n    for_each: tasks.seed.stdout.ROWS\n    as: ROW\n    allow_failure: true\n    do:\n\
+                 \x20 rows:\n    for_each: tasks.seed.stdout.ROWS\n    as: ROW\n    on_failure: next\n    do:\n\
                  \x20     cells:\n        for_each: ROW\n        as: CELL\n        do:\n\
                  \x20         check:\n            cmd: [test, '${{CELL}}', '!=', b]\n\
                  \x20         add:\n{}\
@@ -1014,13 +1014,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn failing_task_in_allow_failure_while_rechecks_the_condition() {
+    async fn failing_task_in_on_failure_next_while_rechecks_the_condition() {
         let dir = tempfile::tempdir().unwrap();
         let outcome = exec(project_in(
             dir.path(),
             &format!(
                 "tasks:\n  count:\n    cmd: [echo, '0']\n\
-                 \x20 wait:\n    while: {{this: tasks.count.stdout, lt: 3}}\n    max: 3\n    allow_failure: true\n    do:\n\
+                 \x20 wait:\n    while: {{this: tasks.count.stdout, lt: 3}}\n    max: 3\n    on_failure: next\n    do:\n\
                  \x20     count:\n        cmd: [sh, -c, 'printf x >> acc; wc -c < acc']\n        cwd: .\n\
                  \x20     fail:\n        cmd: ['false']\n\
                  \x20     never:\n{}\
@@ -1034,10 +1034,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn timeout_in_allow_failure_loop_is_recorded() {
+    async fn timeout_in_on_failure_next_loop_is_recorded() {
         let outcome = exec(project(&format!(
             "{}\
-             \x20 each:\n    for_each: tasks.seed.stdout.IDS\n    allow_failure: true\n    do:\n\
+             \x20 each:\n    for_each: tasks.seed.stdout.IDS\n    on_failure: next\n    do:\n\
              \x20     slow:\n        cmd: [sleep, '5']\n        timeout: 1\n\
              \x20 print:\n    cmd: [echo, '${{tasks.slow.error}}']\n",
             seed(json!({"IDS": [1]}))
@@ -1051,10 +1051,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn undefined_var_in_allow_failure_loop_still_errors() {
+    async fn undefined_var_in_on_failure_next_loop_still_errors() {
         let (name, err) = task_error(project(&format!(
             "{}\
-             \x20 each:\n    for_each: tasks.seed.stdout.IDS\n    allow_failure: true\n    do:\n\
+             \x20 each:\n    for_each: tasks.seed.stdout.IDS\n    on_failure: next\n    do:\n\
              \x20     e:\n        cmd: [echo, '${{NOPE_L}}']\n",
             seed(json!({"IDS": [1]}))
         )))

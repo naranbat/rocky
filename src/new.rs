@@ -136,7 +136,7 @@ const FULL_CONTROL: &str = "
   each_tag:
     for_each: tasks.login.stdout.json.tags   # a list; ${} optional
     as: TAG                             # default ITEM
-    allow_failure: true                 # a failing `do` task skips to the next element instead of stopping the job
+    on_failure: next                    # a failing `do` task skips to the next element (default: stop the job)
     do:
       tag:
         cmd: [echo, \"tag ${TAG}\"]
@@ -148,7 +148,7 @@ const FULL_CONTROL: &str = "
         - {this: tasks.status, exists: false}   # not run yet: run `do` at least once
         - {this: tasks.status.stdout, ne: 200}
     max: 5                              # optional: fail if still true after 5 runs
-    allow_failure: false                # true: a failing `do` task skips to the next condition check
+    on_failure: stop                    # next: a failing `do` task skips to the next condition check
     do:
       status:                           # httpbin picks 200 or 503 at random
         cmd: [curl, -sS, -o, /dev/null, -w, '%{http_code}', 'https://httpbin.org/status/200,503']

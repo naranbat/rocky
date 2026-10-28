@@ -57,7 +57,7 @@ Every log line is one JSON object on **stdout**, with `job`, `time` (local time 
 
 | `event` | Other fields |
 |---|---|
-| `task` | `task` (the task's key), then `exit_code` or `error` (a timeout with `allow_failure`), `ms`, `ok`, and `allowed: true` when it failed with `allow_failure` |
+| `task` | `task` (the task's key), then `exit_code` or `error` (a timeout with `allow_failure`), `ms`, `ok`, and `allowed: true` when it failed with `allow_failure`, or inside a loop with `on_failure: next` |
 | `branch` | `task`, `arm` (`then` or `else`), `tasks` (how many entries the chosen arm has; nested tasks and loop iterations aren't counted) |
 | `switch` | `task`, `case` (the matching case's number, from 1, or `"default"`), `tasks` (how many entries the chosen case has) |
 | `for_each` | `task`, `var`, `items` (the list length) |

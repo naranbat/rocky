@@ -137,14 +137,14 @@ wait:                                # while: checked before each iteration
 each:                                # for_each: value must be a JSON list
   for_each: tasks.users.stdout.items
   as: USER                           # default ITEM
-  allow_failure: true                # a failing `do` task skips to the next element
+  on_failure: next                   # a failing `do` task skips to the next element (default: stop)
   do:
     ping: {cmd: [echo, '${USER.id}']}
 ```
 
 Conditions: `{this: PATH, OP: value}` with one or more of `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `contains`, `matches` (regex), `exists` (`true`/`false`, can't be combined). Combine with `all: [...]`, `any: [...]`, `not: cond`, or a bare list (= `all`). Numeric strings compare as numbers (`"200"` eq `200`).
 
-Branch, switch and loops have no `cmd` or `timeout`; branch and switch have no `allow_failure`. Nothing runs in parallel. Results set inside branches and loops stay available afterwards.
+Branch, switch and loops have no `cmd`, `timeout` or `allow_failure` (that's for cmd tasks); a loop uses `on_failure: next` to skip a failing iteration. Nothing runs in parallel. Results set inside branches and loops stay available afterwards.
 
 ## Schedules and `rocky run`
 

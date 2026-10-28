@@ -113,10 +113,11 @@ Each entry in `tasks` (and in `then`, `else`, `do`, each switch case and `defaul
 | `timeout` | cmd tasks | How long before the command is killed and the task fails: seconds (`300`) or a duration (`30s`, `5m`, `2h`). No default. |
 | `cwd`, `stdin`, `env`, `capture_stdout`, `stdout_file` | cmd tasks | Working directory, standard input, environment variables, and whether stdout is kept or written to a file. See [Cmd tasks](cmd-tasks.md#options). |
 | `retry` | cmd tasks | Run the command again until it succeeds or a condition holds. See [Retry](cmd-tasks.md#retry). |
-| `allow_failure` | cmd tasks, loops | `true` to continue when the task fails; on a loop, to skip to the next iteration when a `do` task fails. |
+| `allow_failure` | cmd tasks | `true` to continue the job when the task fails. |
+| `on_failure` | loops | `next` to skip to the next iteration when a `do` task fails; default `stop`. See [Loops](loops.md#behaviour). |
 | `if`, `then`, `else` | branches | A branch has no `cmd`, `timeout` or `allow_failure`. |
 | `switch`, `cases`, `default` | switches | Like a branch: no `cmd`, `timeout` or `allow_failure`, and no `if`, `then` or `else`. |
-| `for_each`, `as`, `do` | loops | A loop has no `cmd` or `timeout`, and no `if`, `then`, `else`, `switch`, `cases` or `default`. |
+| `for_each`, `as`, `do` | loops | A loop has no `cmd`, `timeout` or `allow_failure`, and no `if`, `then`, `else`, `switch`, `cases` or `default`. |
 
 The task's name is its key. It saves a cmd task's result as `tasks.<name>`, and labels the task in errors and log lines (see [labels](cli.md#errors-and-exit-codes)). It must be a [variable name](env.md#names) other than `tasks`, and two tasks in the same map can't share it. There is no `name` field.
 
@@ -150,7 +151,7 @@ A cmd task **fails** when its exit code isn't `0`. `curl` exits `0` for any HTTP
 
 - **Without `allow_failure`:** the job stops. `rocky exec` prints the failed task's result, then reports ``task `name` exited with code 3`` and exits `1`.
 - **With `allow_failure: true`:** the job continues. The result is still saved as `tasks.<name>`, so you can branch on `${tasks.x.exit_code}`.
-- **Inside a loop with `allow_failure: true`:** the rest of that iteration is skipped and the loop goes on with its next element or condition check (see [Loops](loops.md#behaviour)).
+- **Inside a loop with `on_failure: next`:** the rest of that iteration is skipped and the loop goes on with its next element or condition check (see [Loops](loops.md#behaviour)).
 
 `allow_failure: true` also lets the job continue after a **timeout** (a command that runs past its `timeout`). The task has no exit code, so its result is just the error, e.g. `tasks.<name>` is ``{"ok": false, "error": "command `curl` timed out after 5s"}``. To branch on any failure, a non-zero exit or a timeout alike, test `ok`: `if: {this: tasks.<name>.ok, eq: false}`.
 
@@ -170,7 +171,7 @@ The whole project, every job including nested branches and loops, is checked whe
 - `tasks`, `then`, `else`, `do` or `default` written as a list instead of a map, or two tasks with the same key in one map
 - a task without `cmd` that isn't a branch, switch, loop or task file
 - a job entry with both `file` and `tasks`, or with neither
-- `cwd`, `stdin`, `env`, `capture_stdout`, `stdout_file` or `retry` without `cmd`; both `stdout_file` and `capture_stdout`; `timeout` on a branch, switch or loop; `then`/`else` without `if`; `cases`/`default` without `switch`; `do`/`as` without `for_each`
+- `cwd`, `stdin`, `env`, `capture_stdout`, `stdout_file` or `retry` without `cmd`; both `stdout_file` and `capture_stdout`; `timeout` on a branch, switch or loop; `allow_failure` on a loop (use `on_failure: next`), or `on_failure` on anything but a loop; `then`/`else` without `if`; `cases`/`default` without `switch`; `do`/`as` without `for_each`
 - a missing task or job file, a task file with a `name` field, or a task file that uses itself, directly or through other files
 - a name that appears twice in `jobs`, a cmd task's `env`, or a switch's `cases`
 - a [variable name](env.md#names) in `as` that isn't uppercase (`A-Z`, `0-9`, `_`), or a task key that isn't an identifier or is `tasks`
