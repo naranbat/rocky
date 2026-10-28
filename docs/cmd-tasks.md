@@ -47,7 +47,7 @@ The common task field `allow_failure` is described in [Projects](projects.md#tas
 
 - `${...}` is substituted inside each list item. A value always stays **one** argument, however many spaces or quotes it contains, so it can't inject extra arguments or shell syntax.
 - Strings are inserted as-is. Numbers, objects and arrays are inserted as compact JSON.
-- For pipes, use [`pipe`](#pipes). For redirects or globbing, call a shell yourself: `cmd: [sh, -c, "ls *.json"]`. Don't put `${...}` inside the `sh -c` script, because the shell would interpret the value. Pass it as a positional argument instead (`$1`, `$2`, …; `_` fills `$0`): `cmd: [sh, -c, 'cat > "$1"', _, "${PATH_VAR}"]`.
+- For pipes, use [`pipe`](#pipes). For redirects or globbing, call a shell yourself: `cmd: [sh, -c, "ls *.json"]`. Don't put `${...}` inside the `sh -c` script, because the shell would interpret the value. Pass it as a positional argument instead (`$1`, `$2`, …; `_` fills `$0`): `cmd: [sh, -c, 'ls "$1"/*.json', _, "${DIR}"]`.
 - Variables are looked up in earlier results (loop variables and `tasks`), then job and project `values`, then the project `env_file`, then the environment. See [Env](env.md#lookup-order).
 
 ## Pipes
@@ -107,10 +107,11 @@ build:
 | `stdin` | empty | Written to the command's standard input, like `cmd < file`. See [`stdin`](#stdin). |
 | `env` | none | Map of name → value, added to the environment the command inherits (replacing a variable of the same name). `${...}` is substituted; a string is used as-is and any other value is written as compact JSON, as for `stdin`. A name can't appear twice. |
 | `capture_stdout` | `true` | `false` sends stdout to `/dev/null` instead of keeping it in memory, and the result's `stdout` is `null`. Use it for commands with large output you don't need. `stderr` and `exit_code` are still kept. |
+| `stdout_file` | none | Write stdout to this file instead of keeping it; the result's `stdout` is `null`. See [Reading and writing files](#reading-and-writing-files). Can't be combined with `capture_stdout`. |
 
 Example of `env`: [`examples/cmd-env.yaml`](../examples/cmd-env.yaml).
 
-`cwd`, `stdin`, `env`, `capture_stdout` and [`retry`](#retry) only work on cmd tasks; on any other task they are an error.
+`cwd`, `stdin`, `env`, `capture_stdout`, `stdout_file` and [`retry`](#retry) only work on cmd tasks; on any other task they are an error.
 
 ## Retry
 
@@ -148,13 +149,13 @@ check:                          # wait for a status instead of a successful exit
 
 ## Reading and writing files
 
-There is no separate file task; use a command. Add `cwd: .` so the path is relative to the file the task is written in, not your current directory.
+There is no separate file task. To write a file, send a command's output to it with `stdout_file`; to read one, use `cat`, with `cwd: .` so its path is relative to the file the task is written in, not your current directory.
 
 ```yaml
 save:
-  cmd: [sh, -c, 'cat > "$1"', _, "out/${DATE}.json"]     # the path is $1, never inside the script
+  cmd: [cat]
   stdin: ${tasks.fetch.stdout}                           # written as compact JSON
-  cwd: .
+  stdout_file: "out/${DATE}.json"                        # relative to this file
 
 load:
   cmd: [cat, "out/${DATE}.json"]                         # valid JSON stdout is parsed, so later
@@ -162,7 +163,9 @@ load:
 ```
 
 - A missing file makes `cat` exit non-zero, which fails the task unless `allow_failure: true`.
-- `cat > "$1"` replaces an existing file; use `cat >> "$1"` to append. The parent directory must already exist.
+- `stdout_file` is relative to the file the task is written in (not `cwd`), and `${...}` is substituted. The file is created, or replaced if it exists; to append, call a shell: `cmd: [sh, -c, 'cat >> "$1"', _, log.txt]`.
+- Its directory must already exist. A file that can't be created stops the job, even with `allow_failure`, like a missing `cwd`.
+- The output goes straight to the file, so it is never held in memory, and the result's `stdout` is `null`. With [`pipe`](#pipes), the last command's output is written. With [`retry`](#retry), each run replaces the file.
 
 ## Environment
 

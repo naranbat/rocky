@@ -47,9 +47,9 @@ jobs:
         cmd: [tr, a-z, A-Z]
         stdin: ${USER}                # the command's standard input
 
-      save:                           # the path is $1, never inside the script
-        cmd: [sh, -c, 'cat > "$1"', _, report.json]
-        cwd: .                        # relative to this file, not your current directory
+      save:
+        cmd: [cat]
+        stdout_file: report.json      # relative to this file, not your current directory
         stdin:                        # written as JSON
           user: ${tasks.shout.stdout}
           date: ${tasks.today.stdout}

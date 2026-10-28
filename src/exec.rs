@@ -4,7 +4,7 @@ use std::time::Instant;
 use serde::Serialize;
 use serde_json::{Map, Value, json};
 
-use crate::command::{self, CommandResult};
+use crate::command::{self, CommandResult, Stdout};
 use crate::condition::{self, Condition};
 use crate::error::Error;
 use crate::project::Project;
@@ -370,7 +370,7 @@ fn record(name: &str, result: &TaskResult, values: &mut Map<String, Value>) {
 }
 
 /// Runs `argv`, piped into `task`'s `pipe` stages, with `task`'s `stdin`, `env`, `cwd`,
-/// `timeout` and `capture_stdout`. With `verbose`, prints the command to stderr first.
+/// `timeout`, and `capture_stdout` or `stdout_file`. With `verbose`, prints the command to stderr first.
 async fn execute(
     argv: &[String],
     task: &Task,
@@ -397,13 +397,24 @@ async fn execute(
             rendered.insert(name.clone(), text);
         }
     }
+    let stdout = match &task.stdout_file {
+        Some(path) => {
+            let path = task.dir.join(substitute(&path.to_string_lossy())?);
+            let file = tokio::fs::File::create(&path)
+                .await
+                .map_err(|source| Error::Io { path, source })?;
+            Stdout::File(file.into_std().await)
+        }
+        None if task.capture_stdout == Some(false) => Stdout::Discard,
+        None => Stdout::Capture,
+    };
     let result = command::run(
         &stages,
         stdin.as_deref(),
         &rendered,
         cwd.as_deref(),
         task.timeout,
-        task.capture_stdout.unwrap_or(true),
+        stdout,
     )
     .await?;
     Ok(TaskResult::Cmd(result))
@@ -783,6 +794,39 @@ mod tests {
         let (name, err) = task_error(while_project(dir.path(), 0, Some(2), echo)).await;
         assert_eq!(name, "wait");
         assert_eq!(err.to_string(), "while: still true after 2 iterations");
+    }
+
+    #[tokio::test]
+    async fn stdout_file_gets_the_output_relative_to_the_task_file() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("out.txt"), "old contents, replaced\n").unwrap();
+        let outcome = exec(project_in(
+            dir.path(),
+            "values: {NAME: out}\n\
+             tasks:\n  save:\n    cmd: [echo, '{\"a\": 1}']\n    pipe: [[cat]]\n    stdout_file: '${NAME}.txt'\n",
+        ))
+        .await
+        .unwrap();
+        assert_eq!(stdout(&outcome), &Value::Null);
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("out.txt")).unwrap(),
+            "{\"a\": 1}\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn stdout_file_in_a_missing_directory_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let (name, err) = task_error(project_in(
+            dir.path(),
+            "tasks:\n  save:\n    cmd: [echo]\n    stdout_file: nope/out.txt\n    allow_failure: true\n",
+        ))
+        .await;
+        assert_eq!(name, "save");
+        assert!(
+            matches!(&err, Error::Io { path, .. } if path.ends_with("nope/out.txt")),
+            "{err}"
+        );
     }
 
     /// A job whose `count` task appends `x` to `acc` and prints `acc`'s length, with `fields`

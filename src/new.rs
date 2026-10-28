@@ -94,6 +94,7 @@ env:                                # added to the command's environment, read a
 cwd: .                              # relative to this file; ${VAR} works (default: your current directory)
 timeout: 30s                        # seconds (30) or a duration: 30s, 5m, 2h
 capture_stdout: true                # false sends stdout to /dev/null instead of keeping it in memory
+# stdout_file: out.txt              # or write stdout to this file, relative to this file
 retry:                              # optional: run again until it exits 0, at most `attempts` times
   attempts: 1
   delay: 1s                         # wait between runs

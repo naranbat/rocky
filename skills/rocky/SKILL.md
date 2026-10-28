@@ -80,19 +80,22 @@ jobs:
 | `cwd` | Working directory; relative to the YAML file. |
 | `timeout` | Seconds (`30`) or a duration (`30s`, `5m`, `2h`); the command (and its children) are killed and the task fails. |
 | `capture_stdout` | `false` discards stdout (result `stdout` is `null`). |
+| `stdout_file` | Write stdout to this file (created or replaced) instead; result `stdout` is `null`. Not with `capture_stdout`. |
 | `retry` | `{attempts: 5, delay: 2s, until: COND}`: run again until it exits 0 (or `until` holds), at most `attempts` times. Use it for polling instead of `while`. |
 | `allow_failure` | `true` keeps the job going after a non-zero exit or timeout. |
 
 Result, saved as `tasks.<key>`: `{exit_code, stdout, stderr}`. `stdout` is parsed as JSON when the whole output is valid JSON, otherwise text with trailing newlines trimmed. A timeout under `allow_failure` saves `{error: "..."}` instead; test it with `{this: tasks.x.error, exists: true}`.
 
-No shell is involved. For redirects or globs call one, and pass values as positional arguments, never inside the script:
+No shell is involved. To write a file, use `stdout_file` (relative to the YAML file; result `stdout` is `null`):
 
 ```yaml
 save:
-  cmd: [sh, -c, 'cat > "$1"', _, "out/${DATE}.json"]
+  cmd: [cat]
   stdin: ${tasks.fetch.stdout}
-  cwd: .
+  stdout_file: "out/${DATE}.json"
 ```
+
+For other redirects or globs call a shell, and pass values as positional arguments, never inside the script: `cmd: [sh, -c, 'ls "$1"/*.json', _, "${DIR}"]`.
 
 For HTTP use `curl -sS --fail-with-body` so 4xx/5xx exit non-zero; `--json '@-'` sends `stdin` as a JSON body.
 

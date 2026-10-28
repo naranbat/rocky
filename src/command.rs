@@ -10,6 +10,16 @@ use tokio::process::Command;
 use crate::error::Error;
 use crate::process_group;
 
+/// Where the last stage's stdout goes.
+pub enum Stdout {
+    /// Kept as the result's `stdout`.
+    Capture,
+    /// Sent to /dev/null; the result's `stdout` is `null`.
+    Discard,
+    /// Written to this file; the result's `stdout` is `null`.
+    File(std::fs::File),
+}
+
 /// A finished command with its output parts kept separate for independent use.
 #[derive(Debug, Serialize, PartialEq)]
 pub struct CommandResult {
@@ -24,15 +34,14 @@ pub struct CommandResult {
 /// stdout piped into the next one's stdin. Runs in `cwd` (default: the current directory)
 /// with `env` added to the inherited environment, writes `stdin` to the first stage when
 /// given, and waits for every stage to finish. After `timeout` seconds every stage is killed
-/// and the run fails. Without `capture_stdout`, the last stage's stdout goes to /dev/null and
-/// the result's `stdout` is `null`.
+/// and the run fails. The last stage's stdout goes where `stdout` says.
 pub async fn run(
     stages: &[Vec<String>],
     stdin: Option<&str>,
     env: &BTreeMap<String, String>,
     cwd: Option<&Path>,
     timeout: Option<u64>,
-    capture_stdout: bool,
+    stdout: Stdout,
 ) -> Result<CommandResult, Error> {
     let empty = || Error::InvalidTask("`cmd` is empty".to_string());
     let programs = stages
@@ -50,6 +59,12 @@ pub async fn run(
     } else {
         Stdio::null()
     };
+    let capture = matches!(stdout, Stdout::Capture);
+    let mut last_stdout: Stdio = match stdout {
+        Stdout::Capture => Stdio::piped(),
+        Stdout::Discard => Stdio::null(),
+        Stdout::File(file) => file.into(),
+    };
     for (index, argv) in stages.iter().enumerate() {
         let (program, arguments) = argv.split_first().ok_or_else(empty)?;
         let input = std::mem::replace(&mut next_stdin, Stdio::null());
@@ -58,10 +73,8 @@ pub async fn run(
                 std::io::pipe().map_err(|source| spawn_error(program, source))?;
             next_stdin = reader.into();
             writer.into()
-        } else if capture_stdout {
-            Stdio::piped()
         } else {
-            Stdio::null()
+            std::mem::replace(&mut last_stdout, Stdio::null())
         };
         let mut command = Command::new(program);
         command
@@ -129,7 +142,7 @@ pub async fn run(
             .rfind(|&code| code != 0)
             .unwrap_or(0),
         stdout: match outputs.last() {
-            Some(output) if capture_stdout => output_value(&output.stdout),
+            Some(output) if capture => output_value(&output.stdout),
             _ => Value::Null,
         },
         stderr: outputs
@@ -187,13 +200,29 @@ mod tests {
     /// Runs `args` with `stdin`, the inherited environment and cwd, no timeout, and stdout
     /// captured.
     async fn run_cmd(args: &[&str], stdin: Option<&str>) -> Result<CommandResult, Error> {
-        run(&[argv(args)], stdin, &BTreeMap::new(), None, None, true).await
+        run(
+            &[argv(args)],
+            stdin,
+            &BTreeMap::new(),
+            None,
+            None,
+            Stdout::Capture,
+        )
+        .await
     }
 
     /// Runs `stages` as a pipeline, like [`run_cmd`].
     async fn run_pipe(stages: &[&[&str]], stdin: Option<&str>) -> Result<CommandResult, Error> {
         let stages: Vec<_> = stages.iter().map(|stage| argv(stage)).collect();
-        run(&stages, stdin, &BTreeMap::new(), None, None, true).await
+        run(
+            &stages,
+            stdin,
+            &BTreeMap::new(),
+            None,
+            None,
+            Stdout::Capture,
+        )
+        .await
     }
 
     #[test]
@@ -239,7 +268,7 @@ mod tests {
             &BTreeMap::new(),
             None,
             None,
-            false,
+            Stdout::Discard,
         )
         .await
         .unwrap();
@@ -302,7 +331,7 @@ mod tests {
             &BTreeMap::new(),
             None,
             Some(1),
-            true,
+            Stdout::Capture,
         )
         .await
         .unwrap_err();
@@ -340,7 +369,7 @@ mod tests {
             &BTreeMap::new(),
             Some(Path::new("/rocky-no-such-dir")),
             None,
-            true,
+            Stdout::Capture,
         )
         .await
         .unwrap_err();
@@ -365,7 +394,7 @@ mod tests {
             &BTreeMap::new(),
             Some(dir.path()),
             None,
-            true,
+            Stdout::Capture,
         )
         .await
         .unwrap();
@@ -385,7 +414,7 @@ mod tests {
             &env,
             None,
             None,
-            true,
+            Stdout::Capture,
         )
         .await
         .unwrap();
@@ -470,9 +499,16 @@ mod tests {
         };
         let (first, second) = (stage("first"), stage("second"));
         let stages = [argv(&["sh", "-c", &first]), argv(&["sh", "-c", &second])];
-        let err = run(&stages, None, &BTreeMap::new(), None, Some(1), true)
-            .await
-            .unwrap_err();
+        let err = run(
+            &stages,
+            None,
+            &BTreeMap::new(),
+            None,
+            Some(1),
+            Stdout::Capture,
+        )
+        .await
+        .unwrap_err();
         assert!(
             matches!(err, Error::CommandTimeout { ref command, secs: 1 } if command == "sh"),
             "{err}"

@@ -47,6 +47,10 @@ pub struct Task {
     /// `false` sends a `cmd` command's stdout to /dev/null instead of keeping it in memory;
     /// the result's `stdout` is then `null`. Default `true`.
     pub capture_stdout: Option<bool>,
+    /// A file, relative to the file that declares this task, that a `cmd` command's stdout is
+    /// written to instead of being kept; the result's `stdout` is then `null`. `${VAR}` is
+    /// substituted.
+    pub stdout_file: Option<PathBuf>,
     /// Runs a `cmd` task again until it succeeds or its `until` condition holds.
     pub retry: Option<Retry>,
     /// On a `cmd` task, a non-zero exit or a timeout doesn't stop the job. On a loop, a failing
@@ -269,6 +273,7 @@ fn resolve_one(task: &mut Task, dir: &Path, stack: &mut Vec<PathBuf>) -> Result<
         ("capture_stdout", task.capture_stdout.is_some()),
         ("pipe", !task.pipe.is_empty()),
         ("retry", task.retry.is_some()),
+        ("stdout_file", task.stdout_file.is_some()),
     ] {
         if set && task.cmd.is_none() {
             return Err(Error::InvalidTask(format!(
@@ -484,6 +489,11 @@ fn resolve_leaf(task: &Task, name: &str) -> Result<(), Error> {
             return Err(Error::InvalidTask(format!("`{name}` must have `cmd`")));
         }
     }
+    if task.stdout_file.is_some() && task.capture_stdout.is_some() {
+        return Err(Error::InvalidTask(format!(
+            "`{name}` has both `stdout_file` and `capture_stdout`"
+        )));
+    }
     if let Some(retry) = &task.retry {
         if retry.attempts == 0 {
             return Err(Error::InvalidTask(format!(
@@ -560,6 +570,10 @@ mod tests {
             ("a: {}\n", "`a` must have `cmd`"),
             ("a:\n  cmd: []\n", "`a` has an empty `cmd`"),
             (
+                "a:\n  cmd: [echo]\n  stdout_file: out.txt\n  capture_stdout: false\n",
+                "`a` has both `stdout_file` and `capture_stdout`",
+            ),
+            (
                 "a:\n  cmd: [echo]\n  pipe: [[cat], []]\n",
                 "`a` has an empty stage in `pipe`",
             ),
@@ -578,6 +592,7 @@ mod tests {
             ("a:\n  capture_stdout: false\n", "capture_stdout"),
             ("a:\n  pipe: [[cat]]\n", "pipe"),
             ("a:\n  retry: {attempts: 2}\n", "retry"),
+            ("a:\n  stdout_file: out.txt\n", "stdout_file"),
         ] {
             let msg = invalid_task(yaml);
             assert!(
