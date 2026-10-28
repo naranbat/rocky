@@ -66,7 +66,7 @@ jobs:
 - Tasks are a **map**, never a list. The key is the name; there is no `name` field. Keys are identifiers (`user_id`), `tasks` is reserved, and keys are unique within one map.
 - Unknown keys anywhere are a load error.
 - `defaults: {timeout, cwd, env, retry}` fills those fields on every cmd task (nested ones and task files too) that doesn't set them; `env` merges by name. A default `cwd` is relative to the file the defaults are in. Use it instead of repeating `timeout`/`cwd: .`/`env` on each task.
-- Job file: `jobs: {report: jobs/report.yaml}`; the file holds `tasks`, `schedule`, `values`, `defaults`. Task file: `tasks: {login: tasks/login.yaml}`; the file holds one task, no `name`. Reuse it with different values: `tasks: {as_bob: {file: tasks/login.yaml, values: {USER: bob}}}` (only `file` and `values` there; the values win over job values while it runs).
+- Job file: `jobs: {report: jobs/report.yaml}`; the file holds `tasks`, `schedule`, `values`, `defaults`. Task file: `tasks: {login: tasks/login.yaml}`; the file holds one task, no `name`. Reuse it with different values: `tasks: {as_bob: {file: tasks/login.yaml, values: {USER: bob}}}` (only `file` and `values` there; the values win over job values while it runs, and unlike project/job values their `${...}` is expanded when the task starts, e.g. `USER: ${ITEM}`).
 - Reuse one job file as several jobs: `jobs: {news: {file: jobs/fetch.yaml, schedule: {every: 1h}, values: {TARGET: https://x}}}`. Only `file`, `schedule`, `values` are allowed there.
 - Relative paths (`cwd`, task and job files) resolve against the file they're written in; `env_file` and job file paths against the project file. Commands **without** `cwd` run in the current directory.
 

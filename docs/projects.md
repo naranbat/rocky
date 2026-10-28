@@ -237,7 +237,7 @@ cmd: [echo, 'hello ${WHO}']
 
 - Only `file` and `values` are allowed; everything else goes in the file. `values` only works next to `file`.
 - The values apply while that task runs, including tasks nested in it, and win over the job's and the project's. Afterwards the earlier values are back.
-- Like any `values`, names are uppercase and values are used as written: `${...}` inside them isn't expanded.
+- Names are uppercase. Unlike project and job values, `${...}` in them is expanded when the task starts, so they can pass a loop element or an earlier task's output into the file, e.g. `values: {USER: ${ITEM}}` or `values: {TOKEN: ${tasks.login.stdout.token}}`. A value that is exactly `${NAME}` keeps its JSON type, `$${` is a literal `${`, and an undefined variable fails the task.
 - A task file can itself be a `{file, values}` entry; the outer entry's values win over the inner one's.
 
 ### Reusing a job file

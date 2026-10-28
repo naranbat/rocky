@@ -244,8 +244,18 @@ pub async fn exec(
             }
         };
         if !task.values.is_empty() {
-            // Set for this task and the tasks it runs, then put back.
-            let previous = std::mem::take(&mut task.values)
+            // Expanded against the variables as they are now, then set for this task and the
+            // tasks it runs, and put back afterwards.
+            let mut scoped = std::mem::take(&mut task.values);
+            for value in scoped.values_mut() {
+                vars::substitute_value(value, &|var| lookup(var, &values, &env)).map_err(
+                    |source| Error::Task {
+                        name: name.clone(),
+                        source: Box::new(source),
+                    },
+                )?;
+            }
+            let previous = scoped
                 .into_iter()
                 .map(|(var, value)| (var.clone(), values.insert(var, value)))
                 .collect();
@@ -883,6 +893,41 @@ mod tests {
         .await;
         assert!(
             matches!(&err, Error::UndefinedVar(var) if var == "EXTRA"),
+            "{err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn task_file_values_expand_variables_when_the_task_starts() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("show.yaml"),
+            "cmd: [cat]\nstdin: {who: '${WHO}', n: '${N}', raw: '${RAW}'}\n",
+        )
+        .unwrap();
+        let outcome = exec(project_in(
+            dir.path(),
+            "values: {USERS: [{name: alice}, {name: bob}]}\n\
+             tasks:\n  count:\n    cmd: [echo, '3']\n\
+             \x20 each:\n    for_each: USERS\n    do:\n\
+             \x20     show:\n        file: show.yaml\n\
+             \x20       values: {WHO: 'hi ${ITEM.name}', N: '${tasks.count.stdout}', RAW: '$${ITEM}'}\n",
+        ))
+        .await
+        .unwrap();
+        assert_eq!(
+            stdout(&outcome),
+            &json!({"who": "hi bob", "n": 3, "raw": "${ITEM}"})
+        );
+
+        let (name, err) = task_error(project_in(
+            dir.path(),
+            "tasks:\n  show: {file: show.yaml, values: {WHO: '${NOPE_V}', N: 1, RAW: x}}\n",
+        ))
+        .await;
+        assert_eq!(name, "show");
+        assert!(
+            matches!(&err, Error::UndefinedVar(var) if var == "NOPE_V"),
             "{err}"
         );
     }
