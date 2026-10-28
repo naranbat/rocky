@@ -93,7 +93,7 @@ A non-zero exit code fails the task unless `allow_failure: true`. A command that
 ```yaml
 build:
   cmd: [make, release]
-  timeout: 300            # seconds
+  timeout: 5m             # or 300 (seconds)
   cwd: ../app             # relative to the file this task is in
   stdin: ${tasks.notes.stdout}
   env:
@@ -102,7 +102,7 @@ build:
 
 | Field | Default | Meaning |
 |---|---|---|
-| `timeout` | none | Seconds before the command is killed. The task then fails with ``command `make` timed out after 300s``. Processes the command started itself (e.g. under `sh -c`) are killed too. |
+| `timeout` | none | How long before the command is killed: a number of seconds (`300`) or a duration like the [schedules'](schedules.md#every-and-delay) (`30s`, `5m`, `2h`). The task then fails with ``command `make` timed out after 300s``. Processes the command started itself (e.g. under `sh -c`) are killed too. |
 | `cwd` | your current directory | Directory to run in. `${...}` is substituted first; a relative result is resolved against the directory of the file the task is written in. A missing directory fails the task with `` `cwd` <path> is not a directory ``, even with `allow_failure`. |
 | `stdin` | empty | Written to the command's standard input, like `cmd < file`. See [`stdin`](#stdin). |
 | `env` | none | Map of name → value, added to the environment the command inherits (replacing a variable of the same name). `${...}` is substituted; a string is used as-is and any other value is written as compact JSON, as for `stdin`. A name can't appear twice. |

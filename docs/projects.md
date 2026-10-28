@@ -74,7 +74,7 @@ Each entry in `tasks` (and in `then`, `else`, `do`, each switch case and `defaul
 | Field | Applies to | Notes |
 |---|---|---|
 | `cmd` | cmd tasks | Required, and must not be empty. |
-| `timeout` | cmd tasks | Seconds before the command is killed and the task fails. No default. |
+| `timeout` | cmd tasks | How long before the command is killed and the task fails: seconds (`300`) or a duration (`30s`, `5m`, `2h`). No default. |
 | `cwd`, `stdin`, `env`, `capture_stdout` | cmd tasks | Working directory, standard input, environment variables, and whether stdout is kept. See [Cmd tasks](cmd-tasks.md#options). |
 | `allow_failure` | cmd tasks, loops | `true` to continue when the task fails; on a loop, to skip to the next iteration when a `do` task fails. |
 | `if`, `then`, `else` | branches | A branch has no `cmd`, `timeout` or `allow_failure`. |

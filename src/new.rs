@@ -92,7 +92,7 @@ stdin: ${USER}                      # standard input; a non-string is written as
 env:                                # added to the command's environment, read as $GREETING; a non-string as compact JSON
   GREETING: hello
 cwd: .                              # relative to this file; ${VAR} works (default: your current directory)
-timeout: 5                          # seconds
+timeout: 30s                        # seconds (30) or a duration: 30s, 5m, 2h
 capture_stdout: true                # false sends stdout to /dev/null instead of keeping it in memory
 allow_failure: false                # true continues after a non-zero exit or a timeout
 ";

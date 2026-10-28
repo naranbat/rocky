@@ -5,4 +5,4 @@ tasks:
 
   whoami:
     cmd: [curl, -sS, --fail-with-body, -H, 'Authorization: Bearer ${tasks.login.stdout.json.token}', '${BASE}/headers']
-    timeout: 10                      # seconds
+    timeout: 10s                     # or 10 (seconds), 5m, 2h

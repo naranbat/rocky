@@ -8,7 +8,7 @@ use serde_json::Value;
 
 use crate::condition::Condition;
 use crate::error::Error;
-use crate::{project, var_name, vars};
+use crate::{project, schedule, var_name, vars};
 
 /// One entry of a job's `tasks`: a cmd task, a branch, a switch, or a loop.
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -27,7 +27,9 @@ pub struct Task {
     /// into the first one's stdin, and so on.
     #[serde(default)]
     pub pipe: Vec<Vec<String>>,
-    /// Seconds before the task's command is killed and the task fails.
+    /// Seconds before the task's command is killed and the task fails: a number, or a
+    /// duration such as `30s` or `5m`.
+    #[serde(default, deserialize_with = "seconds")]
     pub timeout: Option<u64>,
     /// Directory a `cmd` task runs in, relative to the file that declares this task;
     /// default: the current directory. `${VAR}` is substituted.
@@ -83,6 +85,31 @@ pub struct Task {
 pub struct Case {
     pub value: Value,
     pub body: Vec<Task>,
+}
+
+/// Reads whole seconds, written as a number or as a duration such as `30s`, `5m` or `2h`.
+fn seconds<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<u64>, D::Error> {
+    struct SecondsVisitor;
+
+    impl Visitor<'_> for SecondsVisitor {
+        type Value = u64;
+
+        fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            f.write_str("seconds, or a duration like `30s`, `5m` or `2h`")
+        }
+
+        fn visit_u64<E: de::Error>(self, secs: u64) -> Result<u64, E> {
+            Ok(secs)
+        }
+
+        fn visit_str<E: de::Error>(self, text: &str) -> Result<u64, E> {
+            schedule::parse_duration(text)
+                .map(|duration| duration.as_secs())
+                .map_err(E::custom)
+        }
+    }
+
+    deserializer.deserialize_any(SecondsVisitor).map(Some)
 }
 
 /// Reads a switch's `cases`: a map of value to the tasks to run, keeping its order.
@@ -544,6 +571,20 @@ mod tests {
                 msg.contains("`a` is a") && msg.contains("`timeout`"),
                 "{yaml}: {msg}"
             );
+        }
+    }
+
+    #[test]
+    fn timeout_takes_seconds_or_a_duration() {
+        for (timeout, secs) in [("5", 5), ("2s", 2), ("2m", 120), ("1h", 3600)] {
+            let tasks =
+                resolve_here(&format!("s:\n  cmd: [echo]\n  timeout: {timeout}\n")).unwrap();
+            assert_eq!(tasks[0].timeout, Some(secs), "{timeout}");
+        }
+        for timeout in ["5 min", "-1", "1.5"] {
+            let err =
+                parse_named(&format!("s:\n  cmd: [echo]\n  timeout: {timeout}\n")).unwrap_err();
+            assert!(err.to_string().contains("timeout"), "{timeout}: {err}");
         }
     }
 

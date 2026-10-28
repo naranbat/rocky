@@ -78,7 +78,7 @@ jobs:
 | `stdin` | Standard input. A string as-is; any other value as compact JSON. Default: empty. |
 | `env` | Map of extra environment variables for the command. |
 | `cwd` | Working directory; relative to the YAML file. |
-| `timeout` | Whole seconds; the command (and its children) are killed and the task fails. |
+| `timeout` | Seconds (`30`) or a duration (`30s`, `5m`, `2h`); the command (and its children) are killed and the task fails. |
 | `capture_stdout` | `false` discards stdout (result `stdout` is `null`). |
 | `allow_failure` | `true` keeps the job going after a non-zero exit or timeout. |
 
