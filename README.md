@@ -104,5 +104,5 @@ All pages are in [`docs/`](docs/README.md).
 
 - Unix only: commands run in their own process group, which needs Unix signals.
 - `timeout` takes one whole unit: no fractions (`1.5m`), combined units (`1h30m`) or milliseconds.
-- `tasks.NAME...` dot paths can't address keys that contain `.`.
+- Dot paths can't step into a key that contains `.` (e.g. `{"user.id": 7}` in a task's stdout).
 - Ctrl-C, SIGTERM, SIGHUP (closing the terminal) and SIGQUIT stop `rocky` and the commands it runs; `kill -9` can't be caught, so it leaves running commands behind.
