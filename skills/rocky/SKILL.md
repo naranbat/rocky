@@ -166,7 +166,7 @@ rocky run project.yaml --socket /tmp/rocky.sock   # also accept requests; no sch
 rocky trigger /tmp/rocky.sock report              # queue a run of `report`
 ```
 
-`run` writes one JSON log line per event to stdout and to `logs/YYYY-MM-DD.log` in the current directory. The project is re-read on each run; schedules only at startup. To keep it running in the background, see the systemd/launchd notes in rocky's `docs/service.md`.
+`run` writes one JSON log line per event to stdout and to `.rocky/logs/YYYY-MM-DD.log` in the current directory. The project is re-read on each run; schedules only at startup. To keep it running in the background, see the systemd/launchd notes in rocky's `docs/service.md`.
 
 ## Errors and exit codes
 

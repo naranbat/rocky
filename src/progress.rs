@@ -1,5 +1,5 @@
 //! Formats `run`'s log lines: one JSON object per line on stdout, also appended to
-//! `logs/<date>.log` in the current directory.
+//! `.rocky/logs/<date>.log` in the current directory.
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -12,7 +12,7 @@ use serde_json::{Map, Value, json};
 use crate::exec::TaskResult;
 
 /// Prints `event` as one JSON line, prefixed with the job name and the current time,
-/// and appends it to `logs/<date>.log`. A failed log file write is reported on stderr; a
+/// and appends it to `.rocky/logs/<date>.log`. A failed log file write is reported on stderr; a
 /// closed stdout (`run | head`) is ignored, so the log file still gets every line.
 pub async fn emit(job: &str, event: Value) {
     let now = Zoned::now();
@@ -28,9 +28,10 @@ pub async fn emit(job: &str, event: Value) {
     let line = Value::Object(line).to_string();
     let _ = writeln!(std::io::stdout(), "{line}");
     let date = now.strftime("%Y-%m-%d").to_string();
-    let written = tokio::task::spawn_blocking(move || append(Path::new("logs"), &date, &line))
-        .await
-        .unwrap_or_else(|err| Err(std::io::Error::other(err)));
+    let written =
+        tokio::task::spawn_blocking(move || append(Path::new(".rocky/logs"), &date, &line))
+            .await
+            .unwrap_or_else(|err| Err(std::io::Error::other(err)));
     if let Err(err) = written {
         eprintln!("cannot write log file: {err}");
     }

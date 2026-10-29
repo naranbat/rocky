@@ -366,14 +366,20 @@ fn run_runs_at_job_once_and_exits() {
     assert_eq!(lines[1]["failed_task"], Value::Null);
     assert_eq!(lines[1]["reason"], Value::Null);
     let date = &lines[0]["time"].as_str().unwrap()[..10];
-    let log = std::fs::read_to_string(dir.path().join("logs").join(format!("{date}.log"))).unwrap();
+    let log = std::fs::read_to_string(
+        dir.path()
+            .join(".rocky")
+            .join("logs")
+            .join(format!("{date}.log")),
+    )
+    .unwrap();
     assert_eq!(log, String::from_utf8_lossy(&output.stdout));
 }
 
 #[test]
 fn run_reports_unwritable_log_file_and_keeps_printing() {
     let dir = tempfile::tempdir().unwrap();
-    write(dir.path(), "logs", "not a directory");
+    write(dir.path(), ".rocky", "not a directory");
     let at = at_in(500);
     let output = run_yaml(
         dir.path(),
@@ -445,7 +451,7 @@ fn run_keeps_logging_when_stdout_is_closed() {
     drop(child.stdout.take());
     let out = wait_with_deadline(child);
     assert!(out.status.success(), "{}", stderr(&out));
-    let logs: Vec<_> = std::fs::read_dir(dir.path().join("logs"))
+    let logs: Vec<_> = std::fs::read_dir(dir.path().join(".rocky").join("logs"))
         .unwrap()
         .collect();
     let log = std::fs::read_to_string(logs[0].as_ref().unwrap().path()).unwrap();
