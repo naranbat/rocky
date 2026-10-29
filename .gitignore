@@ -27,3 +27,7 @@
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# ---------- Rocky ----------
+# `rocky run` log files
+.rocky/
