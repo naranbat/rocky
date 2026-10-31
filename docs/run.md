@@ -111,6 +111,8 @@ jobs:
 - **Loops:** a job that triggers itself without a condition never stops.
 - A trigger has no other fields, and its job must be in the project's `jobs`; both are checked when the project loads.
 
+Example: [`examples/trigger.yaml`](../examples/trigger.yaml), whose `check` job triggers `alert` when the disk is nearly full and `report` every time.
+
 ## Triggering jobs over a socket
 
 `rocky run <project> --socket <PATH>` also listens on a Unix domain socket at `PATH`. A client can then run **any** job of the project, scheduled or not. With `--socket`, no job needs a `schedule`.
