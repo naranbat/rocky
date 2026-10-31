@@ -377,6 +377,79 @@ fn run_runs_at_job_once_and_exits() {
 }
 
 #[test]
+fn exec_runs_triggered_jobs_after_the_job() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = exec_yaml(
+        dir.path(),
+        "jobs:\n\
+         \x20 w:\n    tasks:\n      t: {trigger: b}\n      last: {cmd: [echo, w]}\n\
+         \x20 b:\n    tasks:\n      mark: {cmd: [touch, b-ran], cwd: .}\n      t: {trigger: c}\n\
+         \x20 c:\n    tasks:\n      mark: {cmd: [touch, c-ran], cwd: .}\n",
+    );
+    assert_eq!(stdout_json(&out)["stdout"], "w");
+    assert!(dir.path().join("b-ran").exists());
+    assert!(dir.path().join("c-ran").exists());
+}
+
+#[test]
+fn exec_fails_when_a_triggered_job_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = exec_yaml(
+        dir.path(),
+        "jobs:\n\
+         \x20 w:\n    tasks:\n      t: {trigger: b}\n\
+         \x20 b:\n    tasks:\n      bad: {cmd: [sh, -c, 'exit 3']}\n",
+    );
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "null");
+    assert_stderr_contains(&out, "triggered job `b`: task `bad` exited with code 3");
+}
+
+#[test]
+fn validate_rejects_a_trigger_of_an_unknown_job() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = write(
+        dir.path(),
+        "project.yaml",
+        "jobs:\n  w:\n    tasks:\n      t: {trigger: nope}\n",
+    );
+    let out = validate(&file, dir.path());
+    assert_eq!(out.status.code(), Some(1));
+    assert_stderr_contains(&out, "no job `nope` (available: `w`)");
+}
+
+/// `run` exits only after the triggered job has run, though it has no schedule.
+#[test]
+fn run_runs_triggered_job_and_exits() {
+    let dir = tempfile::tempdir().unwrap();
+    let at = at_in(500);
+    let output = run_yaml(
+        dir.path(),
+        &format!(
+            "jobs:\n\
+             \x20 hello:\n    schedule:\n      at: \"{at}\"\n    tasks:\n      t: {{trigger: slow}}\n\
+             \x20 slow:\n    tasks:\n      nap:\n        cmd: [sleep, '1']\n"
+        ),
+    );
+    assert!(output.status.success(), "{}", stderr(&output));
+    let lines: Vec<(Value, Value)> = stdout_lines(&output)
+        .into_iter()
+        .map(|line| (line["job"].clone(), line["event"].clone()))
+        .collect();
+    let line = |job: &str, event: &str| (json!(job), json!(event));
+    for expected in [
+        line("hello", "trigger"),
+        line("hello", "done"),
+        line("slow", "triggered"),
+        line("slow", "task"),
+        line("slow", "done"),
+    ] {
+        assert!(lines.contains(&expected), "{expected:?} in {lines:?}");
+    }
+    assert_eq!(lines.last(), Some(&line("slow", "done")), "{lines:?}");
+}
+
+#[test]
 fn run_reports_unwritable_log_file_and_keeps_printing() {
     let dir = tempfile::tempdir().unwrap();
     write(dir.path(), ".rocky", "not a directory");

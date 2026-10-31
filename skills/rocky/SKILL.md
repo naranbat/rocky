@@ -61,7 +61,7 @@ jobs:
 |---|---|
 | project | `jobs` (required), `values`, `env_file` (only here; relative to the project file), `defaults` |
 | job | `tasks` (required, non-empty map), `schedule`, `values` (win over project values), `defaults` (win over project defaults) |
-| task | exactly one kind: cmd (`cmd`), branch (`if`), switch (`switch`), loop (`for_each` or `while`), or a task file: a path, or `{file: path, values: {...}}` |
+| task | exactly one kind: cmd (`cmd`), branch (`if`), switch (`switch`), loop (`for_each` or `while`), trigger (`trigger: JOB`, queues a run of another job and goes on; no other fields), or a task file: a path, or `{file: path, values: {...}}` |
 
 - Tasks are a **map**, never a list. The key is the name; there is no `name` field. Keys are identifiers (`user_id`), `tasks` is reserved, and keys are unique within one map.
 - Unknown keys anywhere are a load error.

@@ -17,5 +17,6 @@ pub mod run;
 pub mod schedule;
 pub mod socket;
 pub mod task;
+pub mod trigger;
 pub mod var_name;
 pub mod vars;

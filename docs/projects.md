@@ -103,6 +103,7 @@ Each entry in `tasks` (and in `then`, `else`, `do`, each switch case and `defaul
 | Branch | `if`, `then`, `else` | [Conditions](conditions.md) |
 | Switch | `switch`, `cases`, `default` | [Conditions](conditions.md#switch) |
 | Loop | `for_each`, `as`, `do` | [Loops](loops.md) |
+| Trigger | `trigger:` a job name | [Run](run.md#triggering-jobs-from-a-task) |
 | Task file | a string: the path of a task file, or `{file, values}` | [Job and task files](#job-and-task-files) |
 
 ## Task fields
@@ -118,6 +119,7 @@ Each entry in `tasks` (and in `then`, `else`, `do`, each switch case and `defaul
 | `if`, `then`, `else` | branches | A branch has no `cmd`, `timeout` or `allow_failure`. |
 | `switch`, `cases`, `default` | switches | Like a branch: no `cmd`, `timeout` or `allow_failure`, and no `if`, `then` or `else`. |
 | `for_each`, `as`, `do` | loops | A loop has no `cmd`, `timeout` or `allow_failure`, and no `if`, `then`, `else`, `switch`, `cases` or `default`. |
+| `trigger` | triggers | The name of a job of the project to queue a run of. A trigger has no other fields. See [Triggering jobs from a task](run.md#triggering-jobs-from-a-task). |
 
 The task's name is its key. It saves a cmd task's result as `tasks.<name>`, and labels the task in errors and log lines (see [labels](cli.md#errors-and-exit-codes)). It must be a [variable name](env.md#names) other than `tasks`, and two tasks in the same map can't share it. There is no `name` field.
 
@@ -169,7 +171,8 @@ The whole project, every job including nested branches and loops, is checked whe
 
 - no `jobs`, an empty `tasks`, an empty `cmd`, `do`, `cases`, or `then` *and* `else`
 - `tasks`, `then`, `else`, `do` or `default` written as a list instead of a map, or two tasks with the same key in one map
-- a task without `cmd` that isn't a branch, switch, loop or task file
+- a task without `cmd` that isn't a branch, switch, loop, trigger or task file
+- a trigger with any other field, or whose job isn't in the project's `jobs`
 - a job entry with both `file` and `tasks`, or with neither
 - `cwd`, `stdin`, `env`, `capture_stdout`, `stdout_file` or `retry` without `cmd`; both `stdout_file` and `capture_stdout`; `timeout` on a branch, switch or loop; `allow_failure` on a loop (use `on_failure: next`), or `on_failure` on anything but a loop; `then`/`else` without `if`; `cases`/`default` without `switch`; `do`/`as` without `for_each`
 - a missing task or job file, a task file with a `name` field, or a task file that uses itself, directly or through other files

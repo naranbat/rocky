@@ -66,7 +66,8 @@ Every log line is one JSON object on **stdout**, with `job`, `time` (local time 
 | `error` | `error`: why the run stopped, e.g. an undefined variable, a project that became invalid, or a crash |
 | `stopped` | `error`: why the job's schedule stopped |
 | `skipped` | `reason`: why the job won't run, e.g. its `at` time has passed |
-| `triggered` | — (a client of the [socket](#triggering-jobs-over-a-socket) asked for a run; the run's own lines follow once it starts) |
+| `trigger` | `task`, `target`: a [`trigger` task](#triggering-jobs-from-a-task) queued a run of the job `target` |
+| `triggered` | — (a client of the [socket](#triggering-jobs-over-a-socket) or a [`trigger` task](#triggering-jobs-from-a-task) asked for a run; the run's own lines follow once it starts) |
 
 ```json
 {"job":"poll","time":"2026-10-09T09:30:00+09:00","event":"error","error":"task `get` failed: variable `TOKEN` is not defined (checked tasks, loop items, values, env_file, environment)"}
@@ -80,7 +81,35 @@ A task that ends in an error gets no `task` line; the `error` line names it. See
 - **No overlap:** a job never overlaps itself. If a run takes longer than its interval, the missed runs are skipped. A run [triggered over the socket](#triggering-jobs-over-a-socket) while the job is running waits for that run to finish, and so does a scheduled run that comes due during a triggered one.
 - **Live edits:** the project and its job and task files are re-read on every run, so edits to tasks and the env file apply from the next run. Schedules are read only at startup.
 - **Failures don't stop the job:** after a run that failed, errored or crashed, the job keeps its schedule and the other jobs are unaffected. If a job's schedule itself can't be computed, that job stops with a `stopped` line, and the other jobs keep running.
-- **Exit:** with `--socket`, `run` runs until stopped. Without it, `run` exits once no job has runs left: every scheduled job is an `at` job that has already run or was skipped, or has stopped after a `stopped` error.
+- **Exit:** with `--socket`, `run` runs until stopped. Without it, `run` exits once no job has runs left: every scheduled job is an `at` job that has already run or was skipped, or has stopped after a `stopped` error, and no run a [`trigger` task](#triggering-jobs-from-a-task) queued is waiting or still going.
+
+## Triggering jobs from a task
+
+A task with `trigger` queues a run of another job of the project, scheduled or not, and the job goes on with its next task without waiting. It can go anywhere a task can, so a branch can trigger a job only when something happened:
+
+```yaml
+jobs:
+  backup:
+    schedule: {daily: "03:00"}
+    tasks:
+      dump:
+        cmd: [pg_dump, -f, backup.sql, app]
+        allow_failure: true
+      check:
+        if: {this: tasks.dump.ok, eq: false}
+        then:
+          alert: {trigger: notify}   # queue a run of `notify`
+  notify:
+    tasks:
+      send:
+        cmd: [curl, -sS, --fail-with-body, -d, 'backup failed', https://example.com/alert]
+```
+
+- **In `run`:** the queued run starts right away, like one [triggered over the socket](#triggering-jobs-over-a-socket): it logs a `triggered` line, then its own lines, and it waits for any run of that job already going. The triggering job logs a `trigger` line. No `--socket` is needed.
+- **In `rocky exec`:** the queued jobs run after the job, one at a time in the order they were triggered, together with any jobs they trigger. stdout is still the job's own result. See [`rocky exec`](cli.md#rocky-exec-project-job).
+- **Results:** a trigger saves nothing as `tasks.<name>` and can't fail; the triggered job's results stay in its own run.
+- **Loops:** a job that triggers itself without a condition never stops.
+- A trigger has no other fields, and its job must be in the project's `jobs`; both are checked when the project loads.
 
 ## Triggering jobs over a socket
 

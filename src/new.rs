@@ -156,6 +156,10 @@ const FULL_CONTROL: &str = "
 
   # A task file: one task kept in its own file, relative to this file.
   # notify: tasks/notify.yaml
+
+  # A trigger: queues a run of another job of the project and goes on without waiting
+  # (`exec` runs it after this job). Nothing is saved as tasks.NAME.
+  # report: {trigger: report}
 ";
 
 /// How much a starter file shows.

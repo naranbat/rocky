@@ -10,7 +10,7 @@ use crate::condition::Condition;
 use crate::error::Error;
 use crate::{project, schedule, var_name, vars};
 
-/// One entry of a job's `tasks`: a cmd task, a branch, a switch, or a loop.
+/// One entry of a job's `tasks`: a cmd task, a branch, a switch, a loop, or a trigger.
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Task {
@@ -96,6 +96,8 @@ pub struct Task {
     pub cases: Vec<Case>,
     #[serde(default, deserialize_with = "named")]
     pub default: Vec<Task>,
+    /// Makes this a trigger: queues a run of this job.
+    pub trigger: Option<String>,
 }
 
 /// A loop's `on_failure`.
@@ -296,6 +298,7 @@ impl Task {
             || self.old_max.is_some()
             || !self.body.is_empty()
             || self.has_switch_fields()
+            || self.trigger.is_some()
     }
 
     fn has_task_fields(&self) -> bool {
@@ -368,6 +371,9 @@ fn resolve_one(task: &mut Task, dir: &Path, stack: &mut Vec<PathBuf>) -> Result<
         return Err(Error::InvalidTask(format!(
             "`{name}`: `max` is now `attempts`"
         )));
+    }
+    if task.trigger.is_some() {
+        return resolve_trigger(task, &name);
     }
     if task.for_each.is_some() {
         return resolve_loop(task, &name, dir, stack);
@@ -573,6 +579,20 @@ fn resolve_switch(
         resolve_all(&mut case.body, dir, stack)?;
     }
     resolve_all(&mut task.default, dir, stack)
+}
+
+/// Checks a trigger, which has no other fields. Whether its job exists is checked once the
+/// whole project is loaded.
+fn resolve_trigger(task: &mut Task, name: &str) -> Result<(), Error> {
+    let job = task.trigger.take();
+    let has_others = task.has_fields_besides_values();
+    task.trigger = job;
+    if has_others {
+        return Err(Error::InvalidTask(format!(
+            "`{name}` is a trigger (`trigger`) and cannot have other fields"
+        )));
+    }
+    Ok(())
 }
 
 /// Checks a `cmd` task.
@@ -1029,6 +1049,30 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.to_string().contains("duplicate case `1`"), "{err}");
+    }
+
+    #[test]
+    fn triggers_take_no_other_fields() {
+        let tasks = resolve_here("t:\n  trigger: report\n").unwrap();
+        assert_eq!(tasks[0].trigger.as_deref(), Some("report"));
+        for yaml in [
+            "t:\n  trigger: report\n  timeout: 5\n",
+            "t:\n  trigger: report\n  allow_failure: true\n",
+            "t:\n  trigger: report\n  if: {this: X, eq: 1}\n  then: {a: {cmd: [echo]}}\n",
+            "t:\n  trigger: report\n  for_each: X\n  do: {a: {cmd: [echo]}}\n",
+            "t:\n  trigger: report\n  on_failure: next\n",
+        ] {
+            let msg = invalid_task(yaml);
+            assert!(
+                msg.contains("`t` is a trigger (`trigger`) and cannot have other fields"),
+                "{yaml}: {msg}"
+            );
+        }
+        let msg = invalid_task("t:\n  trigger: report\n  stdin: x\n");
+        assert!(msg.contains("only works with `cmd`"), "{msg}");
+        let msg =
+            invalid_task("b:\n  if: {this: X, eq: 1}\n  then: {t: {trigger: r, cmd: [echo]}}\n");
+        assert!(msg.contains("`t` is a trigger"), "{msg}");
     }
 
     #[test]

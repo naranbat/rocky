@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 use nix::sys::signal::Signal;
+use rocky::trigger::Trigger;
 use rocky::{error, exec, new, process_group, project, run, socket};
 use tokio::signal::unix::{SignalKind, signal};
 
@@ -75,12 +76,29 @@ enum NewKind {
 async fn main() -> anyhow::Result<()> {
     match Cli::parse().command {
         Command::Exec { file, job, verbose } => {
+            let (trigger, mut queue) = Trigger::channel();
+            let project = project::load(&file)?;
             let outcome =
-                until_stopped(exec::exec(project::load(&file)?, &job, false, verbose)).await?;
+                until_stopped(exec::exec(project, &job, false, verbose, &trigger)).await?;
+            drop(trigger);
             println!("{}", serde_json::to_string_pretty(&outcome.result)?);
-            if let Some(task) = &outcome.failed_task {
-                let reason = outcome.reason().unwrap_or_default();
-                anyhow::bail!("task `{task}` {reason}");
+            let failed = until_stopped(async {
+                let mut failed = failure(&outcome);
+                // Jobs that `trigger` tasks queued, one at a time, and those they queue in turn.
+                while let Some(queued) = queue.recv().await {
+                    let project = project::load(&file)?;
+                    let outcome =
+                        exec::exec(project, &queued.job, false, verbose, &queued.trigger).await?;
+                    if failed.is_none() {
+                        failed = failure(&outcome)
+                            .map(|failure| format!("triggered job `{}`: {failure}", queued.job));
+                    }
+                }
+                Ok(failed)
+            })
+            .await?;
+            if let Some(failure) = failed {
+                anyhow::bail!(failure);
             }
         }
         Command::Run { file, socket } => until_stopped(run::run(&file, socket.as_deref())).await?,
@@ -106,6 +124,13 @@ async fn main() -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+/// Why `outcome`'s job failed, as `task `name` reason`, if it did.
+fn failure(outcome: &exec::Outcome) -> Option<String> {
+    let task = outcome.failed_task.as_ref()?;
+    let reason = outcome.reason().unwrap_or_default();
+    Some(format!("task `{task}` {reason}"))
 }
 
 /// Runs `work` until it ends, or until Ctrl-C, SIGTERM, SIGHUP (the terminal closed) or

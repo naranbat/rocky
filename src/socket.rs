@@ -14,6 +14,7 @@ use tokio::net::{UnixListener, UnixStream};
 
 use crate::error::Error;
 use crate::job_lock::JobLocks;
+use crate::trigger::Trigger;
 use crate::{progress, project, run};
 
 #[derive(Deserialize)]
@@ -71,28 +72,34 @@ pub async fn send(socket: &Path, job: &str) -> Result<(), Error> {
 }
 
 /// Serves clients of `listener` until accepting a connection fails. `project` is the
-/// project file that triggered runs load.
+/// project file that triggered runs load; their `trigger` tasks queue runs on `trigger`.
 pub async fn serve(
     listener: UnixListener,
     socket: &Path,
     project: &Path,
     locks: JobLocks,
+    trigger: Trigger,
 ) -> Result<(), Error> {
     loop {
         let (stream, _) = listener.accept().await.map_err(|source| Error::Socket {
             path: socket.to_path_buf(),
             source,
         })?;
-        tokio::spawn(client(stream, project.to_path_buf(), locks.clone()));
+        tokio::spawn(client(
+            stream,
+            project.to_path_buf(),
+            locks.clone(),
+            trigger.clone(),
+        ));
     }
 }
 
 /// Answers each request line until the client hangs up.
-async fn client(stream: UnixStream, project: PathBuf, locks: JobLocks) {
+async fn client(stream: UnixStream, project: PathBuf, locks: JobLocks, trigger: Trigger) {
     let (read, mut write) = stream.into_split();
     let mut lines = BufReader::new(read).lines();
     while let Ok(Some(line)) = lines.next_line().await {
-        let reply = trigger(&line, &project, &locks).await;
+        let reply = request(&line, &project, &locks, &trigger).await;
         if write
             .write_all(format!("{reply}\n").as_bytes())
             .await
@@ -104,7 +111,7 @@ async fn client(stream: UnixStream, project: PathBuf, locks: JobLocks) {
 }
 
 /// Checks that the request names a job of the project, then queues a run of it.
-async fn trigger(line: &str, project: &Path, locks: &JobLocks) -> Value {
+async fn request(line: &str, project: &Path, locks: &JobLocks, trigger: &Trigger) -> Value {
     let job = match serde_json::from_str::<Request>(line) {
         Ok(request) => request.job,
         Err(err) => return json!({"error": format!("invalid request: {err}")}),
@@ -119,7 +126,7 @@ async fn trigger(line: &str, project: &Path, locks: &JobLocks) -> Value {
         return json!({"error": err.chain()});
     }
     progress::emit(&job, json!({"event": "triggered"})).await;
-    let (path, locks) = (project.to_path_buf(), locks.clone());
-    tokio::spawn(async move { run::run_once(&path, &job, &locks).await });
+    let (path, locks, trigger) = (project.to_path_buf(), locks.clone(), trigger.clone());
+    tokio::spawn(async move { run::run_once(&path, &job, &locks, &trigger).await });
     json!({"ok": true})
 }

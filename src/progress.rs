@@ -83,6 +83,11 @@ pub fn repeat(name: &str, iteration: u64, holds: bool) -> Value {
     json!({"event": "while", "task": name, "iteration": iteration, "holds": holds})
 }
 
+/// A `trigger` task queued a run of `job`, its `target` (`job` is the line's own job).
+pub fn trigger(name: &str, job: &str) -> Value {
+    json!({"event": "trigger", "task": name, "target": job})
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -146,6 +151,10 @@ mod tests {
         assert_eq!(
             repeat("wait", 2, true),
             json!({"event": "while", "task": "wait", "iteration": 2, "holds": true})
+        );
+        assert_eq!(
+            trigger("notify", "report"),
+            json!({"event": "trigger", "task": "notify", "target": "report"})
         );
     }
 }

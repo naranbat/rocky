@@ -28,6 +28,8 @@ $ rocky exec project.yaml deploy
 Error: no job `deploy` (available: `login`, `report`)
 ```
 
+Jobs that [`trigger` tasks](run.md#triggering-jobs-from-a-task) queue run after the job, one at a time in the order they were triggered, together with any jobs they trigger. They run even when the job failed. Only the job's own result is printed. If a triggered job fails, `exec` exits `1` with ``Error: triggered job `report`: task `send` exited with code 22``.
+
 `--verbose` (or `-v`) prints each command to stderr just before it runs, with `${VAR}`s filled in, so values from the `env_file` (secrets included) show. Pipe stages are joined with `|`, and an argument with spaces or shell characters is single-quoted:
 
 ```
@@ -99,6 +101,7 @@ add it to a project:
 |---|---|---|---|
 | Success | last task's result, or `null` if no cmd task ran (`validate`: ``<PROJECT> is valid (jobs: …)``) | — | `0` |
 | A task fails (non-zero exit) without `allow_failure` | that task's result | ``Error: task `name` exited with code 3`` | `1` |
+| `exec`: a triggered job's task fails | the job's own result | ``Error: triggered job `x`: task `name` exited with code 3`` | `1` |
 | Any other task error | — | ``Error: task `name` failed`` plus `Caused by:` lines, e.g. ``variable `NAME` is not defined (checked tasks, loop items, values, env_file, environment)``, ``failed to start command `x` `` or ``command `x` timed out after 5s`` | `1` |
 | Invalid file (bad YAML, unknown field, invalid task, condition or schedule) | — | the load error; nothing runs | `1` |
 | `exec` or `run` stopped with Ctrl-C (SIGINT), SIGTERM, SIGHUP or SIGQUIT | — | — | 128 + the signal number (`130`, `143`, `129`, `131`); running commands, and the processes they started, are killed |

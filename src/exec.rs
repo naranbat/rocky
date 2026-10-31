@@ -10,6 +10,7 @@ use crate::condition::{self, Condition};
 use crate::error::Error;
 use crate::project::Project;
 use crate::task::{OnFailure, Task};
+use crate::trigger::Trigger;
 use crate::{env_file, extract, progress, vars};
 
 /// What one task produced: a finished command, or (with `allow_failure`, its own or an
@@ -175,6 +176,7 @@ fn queued(tasks: Vec<Task>) -> impl DoubleEndedIterator<Item = Work> {
 /// `default`, run in its place; a loop's `do` tasks run once per list element, with the
 /// element bound to its `as` variable, or, for a `while` loop, as long as its condition holds.
 /// A failing task inside a loop with `allow_failure` skips the rest of that iteration.
+/// A `trigger` task queues a run of its job on `trigger` and goes on.
 /// The job's `values` (the project's merged in at load) are read as `${NAME}`.
 /// With `log`, one JSON line per task, branch or switch decision, loop, and `while` check is
 /// printed to stdout. With `verbose`, each command is printed to stderr before it runs.
@@ -183,6 +185,7 @@ pub async fn exec(
     job: &str,
     log: bool,
     verbose: bool,
+    trigger: &Trigger,
 ) -> Result<Outcome, Error> {
     let tasks = project.take(job)?;
     let env: Map<String, Value> = match project.env_file.clone() {
@@ -270,6 +273,14 @@ pub async fn exec(
             name: name.clone(),
             source: Box::new(source),
         };
+
+        if let Some(target) = task.trigger.take() {
+            trigger.send(&target);
+            if log {
+                progress::emit(job, progress::trigger(&name, &target)).await;
+            }
+            continue;
+        }
 
         if let Some(condition) = task.condition.take() {
             let taken = condition
@@ -527,7 +538,7 @@ mod tests {
     }
 
     async fn exec(project: Project) -> Result<Outcome, Error> {
-        super::exec(project, "w", false, false).await
+        super::exec(project, "w", false, false, &Trigger::channel().0).await
     }
 
     /// The failing task's name and its error, for a run that must fail in a task.
@@ -604,6 +615,24 @@ mod tests {
         let outcome = exec(project).await.unwrap();
         assert!(outcome.result.is_none());
         assert_eq!(outcome.failed_task, None);
+    }
+
+    #[tokio::test]
+    async fn trigger_queues_its_job_and_goes_on() {
+        let (trigger, mut queue) = Trigger::channel();
+        let project = project(
+            "tasks:\n  a:\n    cmd: [echo, a]\n  r:\n    if: {this: tasks.a.ok, eq: true}\n\
+             \x20   then: {t: {trigger: report}}\n",
+        );
+        let outcome = super::exec(project, "w", false, false, &trigger)
+            .await
+            .unwrap();
+        assert_eq!(stdout(&outcome), &json!("a"));
+        drop(trigger);
+        let queued = queue.recv().await.unwrap();
+        assert_eq!(queued.job, "report");
+        drop(queued);
+        assert!(queue.recv().await.is_none());
     }
 
     /// Both runs wait for a 1s timeout, so they run concurrently.

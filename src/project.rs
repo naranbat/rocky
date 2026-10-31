@@ -199,10 +199,42 @@ pub fn load(path: &Path) -> Result<Project, Error> {
         })?;
         jobs.insert(name, job);
     }
-    Ok(Project {
+    let project = Project {
         env_file: raw.env_file.map(|p| dir.join(p)),
         jobs,
-    })
+    };
+    for (name, job) in &project.jobs {
+        check_triggers(&job.tasks, &project).map_err(|source| Error::Job {
+            name: name.clone(),
+            source: Box::new(source),
+        })?;
+    }
+    Ok(project)
+}
+
+/// Checks that every `trigger` in `tasks`, nested ones included, names a job of `project`.
+fn check_triggers(tasks: &[Task], project: &Project) -> Result<(), Error> {
+    for task in tasks {
+        if let Some(job) = &task.trigger
+            && !project.jobs.contains_key(job)
+        {
+            return Err(Error::Task {
+                name: task.name.clone(),
+                source: Box::new(Error::UnknownJob {
+                    name: job.clone(),
+                    available: project.job_names(),
+                }),
+            });
+        }
+        check_triggers(&task.then, project)?;
+        check_triggers(&task.otherwise, project)?;
+        check_triggers(&task.body, project)?;
+        for case in &task.cases {
+            check_triggers(&case.body, project)?;
+        }
+        check_triggers(&task.default, project)?;
+    }
+    Ok(())
 }
 
 /// Reads a job file if `source` names one, applies the entry's `schedule` and `values` over
@@ -398,6 +430,26 @@ mod tests {
         assert!(
             matches!(&err, Error::Job { source, .. } if matches!(**source, Error::Io { .. })),
             "{err}"
+        );
+    }
+
+    #[test]
+    fn triggers_must_name_a_job_of_the_project() {
+        let dir = tempfile::tempdir().unwrap();
+        load_in(
+            dir.path(),
+            "jobs:\n  a: {tasks: {t: {trigger: b}}}\n  b: {tasks: {e: {cmd: [echo]}}}\n",
+        )
+        .unwrap();
+        let err = load_in(
+            dir.path(),
+            "jobs:\n  a:\n    tasks:\n      l:\n        for_each: X\n        do:\n\
+             \x20         r: {if: {this: X, eq: 1}, then: {t: {trigger: nope}}}\n",
+        )
+        .unwrap_err();
+        assert_eq!(
+            err.chain(),
+            "job `a`: task `t` failed: no job `nope` (available: `a`)"
         );
     }
 
