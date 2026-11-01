@@ -7,6 +7,7 @@ rocky exec <PROJECT> <JOB>
 rocky exec <PROJECT> <JOB> --verbose
 rocky run <PROJECT>
 rocky run <PROJECT> --socket <PATH>
+rocky run <PROJECT> --service <NAME>
 rocky trigger <SOCKET> <JOB>
 rocky validate <PROJECT>
 rocky new project <PATH>
@@ -42,6 +43,8 @@ $ rocky exec project.yaml login --verbose > result.json
 Runs every job of the project that has a [`schedule`](schedules.md), until stopped with Ctrl-C, SIGTERM, SIGHUP or SIGQUIT, or until only finished `at` schedules are left. Each run writes [JSON log lines](run.md#output) to stdout. See [Run](run.md).
 
 `--socket <PATH>` also listens on a Unix domain socket, so clients can run any job by sending `{"job": "NAME"}`. With it, no job needs a `schedule` and `run` runs until stopped. See [Triggering jobs over a socket](run.md#triggering-jobs-over-a-socket).
+
+`--service <NAME>` prefixes the log file names with `NAME`: `.rocky/logs/NAME-YYYY-MM-DD.log`, so services sharing a working directory keep separate files. See [Output](run.md#output).
 
 ## `rocky trigger <SOCKET> <JOB>`
 

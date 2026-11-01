@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 use nix::sys::signal::Signal;
 use rocky::trigger::Trigger;
-use rocky::{error, exec, new, process_group, project, run, socket};
+use rocky::{error, exec, new, process_group, progress, project, run, socket};
 use tokio::signal::unix::{SignalKind, signal};
 
 #[derive(Parser)]
@@ -30,12 +30,15 @@ enum Command {
     },
     /// Run a project's scheduled jobs.
     ///
-    /// Runs until stopped, or until only finished `at` schedules are left. Prints one JSON line per task, branch, switch, loop and run, also appended to `.rocky/logs/<date>.log`.
+    /// Runs until stopped, or until only finished `at` schedules are left. Prints one JSON line per task, branch, switch, loop and run, also appended to `.rocky/logs/<date>.log` (`<service>-<date>.log` with `--service`).
     Run {
         file: PathBuf,
         /// Also run any job of the project when a client of this Unix socket sends `{"job": "NAME"}`.
         #[arg(long)]
         socket: Option<PathBuf>,
+        /// Prefix log file names with this name: `.rocky/logs/<NAME>-<date>.log`.
+        #[arg(long)]
+        service: Option<String>,
     },
     /// Ask a `rocky run --socket` to run one job.
     ///
@@ -101,7 +104,16 @@ async fn main() -> anyhow::Result<()> {
                 anyhow::bail!(failure);
             }
         }
-        Command::Run { file, socket } => until_stopped(run::run(&file, socket.as_deref())).await?,
+        Command::Run {
+            file,
+            socket,
+            service,
+        } => {
+            if let Some(name) = service {
+                progress::set_service(name);
+            }
+            until_stopped(run::run(&file, socket.as_deref())).await?
+        }
         Command::Trigger { socket, job } => {
             socket::send(&socket, &job).await?;
             println!("queued `{job}`");

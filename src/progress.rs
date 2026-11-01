@@ -1,9 +1,10 @@
 //! Formats `run`'s log lines: one JSON object per line on stdout, also appended to
-//! `.rocky/logs/<date>.log` in the current directory.
+//! `.rocky/logs/<date>.log` (or `<service>-<date>.log`) in the current directory.
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::Path;
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use jiff::Zoned;
@@ -11,8 +12,16 @@ use serde_json::{Map, Value, json};
 
 use crate::exec::TaskResult;
 
+/// The `run --service` name that prefixes log file names, set once at startup.
+static SERVICE: OnceLock<String> = OnceLock::new();
+
+/// Prefixes every later log file name with `name`: `<name>-<date>.log`.
+pub fn set_service(name: String) {
+    let _ = SERVICE.set(name);
+}
+
 /// Prints `event` as one JSON line, prefixed with the job name and the current time,
-/// and appends it to `.rocky/logs/<date>.log`. A failed log file write is reported on stderr; a
+/// and appends it to `.rocky/logs/<date>.log` (`<service>-<date>.log` with a service set). A failed log file write is reported on stderr; a
 /// closed stdout (`run | head`) is ignored, so the log file still gets every line.
 pub async fn emit(job: &str, event: Value) {
     let now = Zoned::now();
@@ -27,9 +36,12 @@ pub async fn emit(job: &str, event: Value) {
     }
     let line = Value::Object(line).to_string();
     let _ = writeln!(std::io::stdout(), "{line}");
-    let date = now.strftime("%Y-%m-%d").to_string();
+    let name = file_stem(
+        SERVICE.get().map(String::as_str),
+        &now.strftime("%Y-%m-%d").to_string(),
+    );
     let written =
-        tokio::task::spawn_blocking(move || append(Path::new(".rocky/logs"), &date, &line))
+        tokio::task::spawn_blocking(move || append(Path::new(".rocky/logs"), &name, &line))
             .await
             .unwrap_or_else(|err| Err(std::io::Error::other(err)));
     if let Err(err) = written {
@@ -37,14 +49,22 @@ pub async fn emit(job: &str, event: Value) {
     }
 }
 
-/// Appends `line` to `<dir>/<date>.log` in one write, so lines from concurrent jobs
+/// The log file name without `.log`: `<date>`, or `<service>-<date>` with a service.
+fn file_stem(service: Option<&str>, date: &str) -> String {
+    match service {
+        Some(service) => format!("{service}-{date}"),
+        None => date.to_string(),
+    }
+}
+
+/// Appends `line` to `<dir>/<name>.log` in one write, so lines from concurrent jobs
 /// stay whole.
-fn append(dir: &Path, date: &str, line: &str) -> std::io::Result<()> {
+fn append(dir: &Path, name: &str, line: &str) -> std::io::Result<()> {
     fs::create_dir_all(dir)?;
     let mut file = OpenOptions::new()
         .create(true)
         .append(true)
-        .open(dir.join(format!("{date}.log")))?;
+        .open(dir.join(format!("{name}.log")))?;
     file.write_all(format!("{line}\n").as_bytes())
 }
 
@@ -124,6 +144,12 @@ mod tests {
         append(&logs, "2026-10-11", "b").unwrap();
         let text = fs::read_to_string(logs.join("2026-10-11.log")).unwrap();
         assert_eq!(text, "a\nb\n");
+    }
+
+    #[test]
+    fn prefixes_file_name_with_service() {
+        assert_eq!(file_stem(None, "2026-10-11"), "2026-10-11");
+        assert_eq!(file_stem(Some("web"), "2026-10-11"), "web-2026-10-11");
     }
 
     #[test]
