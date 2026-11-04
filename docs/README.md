@@ -20,6 +20,7 @@ One page per feature. For installing and a first run, see the [project README](.
 | Page | What it covers |
 |---|---|
 | [Env](env.md) | `${NAME}` substitution, `.env` files, typed values, dot paths, and lookup order |
+| [Writing YAML](yaml.md) | Quoting rules, editor schema, command arguments and common YAML pitfalls |
 
 ## Control flow
 

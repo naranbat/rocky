@@ -48,7 +48,7 @@ Examples: [`httpbin.yaml`](../examples/httpbin.yaml) (jobs `login`, `mixed`, `co
 | `values` | Map of uppercase name → fixed value (any YAML value: string, number, boolean, list or object), read as `${NAME}` by every job. See [Env](env.md#values). |
 | `env_file` | A `.env` file shared by all jobs, relative to the project file. See [Env](env.md#env-file). |
 | `defaults` | Fields every cmd task in every job gets unless it sets them. See [Defaults](#defaults). |
-| `jobs` | Required, at least one. Map of job name → job, → the path of a job file, or → a job file with its own `schedule` and `values` (see [Reusing a job file](#reusing-a-job-file)). |
+| `jobs` | Required, at least one. Map of job name → an inline job, a job-file path, or a job file with its own `schedule` and `values` (see [Reusing a job file](#reusing-a-job-file)). |
 
 ## Job fields
 
@@ -57,7 +57,7 @@ Examples: [`httpbin.yaml`](../examples/httpbin.yaml) (jobs `login`, `mixed`, `co
 | `schedule` | Optional. When `rocky run` runs this job. See [Schedules](schedules.md). `exec` checks it but doesn't run it. |
 | `values` | Map of uppercase name → fixed value, read as `${NAME}` by this job's tasks; wins over a project value of the same name. See [Env](env.md#values). |
 | `defaults` | Fields this job's cmd tasks get unless they set them; win over the project's. See [Defaults](#defaults). |
-| `tasks` | Required, and must not be empty. Map of task name → task, → the path of a task file, or → a task file with its own `values`. Tasks run in the order they are written. |
+| `tasks` | Required, and must not be empty. Map of task name → an inline task, a task-file path, or a task file with its own `with` inputs. Tasks run in the order they are written. |
 
 ## Defaults
 
@@ -99,26 +99,29 @@ Each entry in `tasks` (and in `then`, `else`, `do`, each switch case and `defaul
 
 | Kind | Keys | Page |
 |---|---|---|
-| Command | `cmd:` | [Cmd tasks](cmd-tasks.md) |
+| Command | `cmd`, optionally `pipe` | [Cmd tasks](cmd-tasks.md) |
 | Branch | `if`, `then`, `else` | [Conditions](conditions.md) |
 | Switch | `switch`, `cases`, `default` | [Conditions](conditions.md#switch) |
-| Loop | `for_each`, `as`, `do` | [Loops](loops.md) |
+| For-each loop | `for_each`, `as`, `do`, `on_failure` | [Loops](loops.md) |
+| While loop | `while`, `attempts`, `do`, `on_failure` | [Conditions](conditions.md#while) |
 | Trigger | `trigger:` a job name | [Run](run.md#triggering-jobs-from-a-task) |
-| Task file | a string: the path of a task file, or `{file, values}` | [Job and task files](#job-and-task-files) |
+| Task file | a string: the path of a task file, or `{file, with}` | [Job and task files](#job-and-task-files) |
 
 ## Task fields
 
 | Field | Applies to | Notes |
 |---|---|---|
 | `cmd` | cmd tasks | Required, and must not be empty. |
-| `timeout` | cmd tasks | How long before the command is killed and the task fails: seconds (`300`) or a duration (`30s`, `5m`, `2h`). No default. |
+| `pipe` | cmd tasks | Optional further commands connected to `cmd` by pipes. See [Pipes](cmd-tasks.md#pipes). |
+| `timeout` | cmd tasks | How long before the command is killed and the task fails: `30s`, `5m` or `2h`. No default. |
 | `cwd`, `stdin`, `env`, `capture_stdout`, `stdout_file` | cmd tasks | Working directory, standard input, environment variables, and whether stdout is kept or written to a file. See [Cmd tasks](cmd-tasks.md#options). |
 | `retry` | cmd tasks | Run the command again until it succeeds or a condition holds. See [Retry](cmd-tasks.md#retry). |
 | `allow_failure` | cmd tasks | `true` to continue the job when the task fails. |
 | `on_failure` | loops | `next` to skip to the next iteration when a `do` task fails; default `stop`. See [Loops](loops.md#behaviour). |
 | `if`, `then`, `else` | branches | A branch has no `cmd`, `timeout` or `allow_failure`. |
 | `switch`, `cases`, `default` | switches | Like a branch: no `cmd`, `timeout` or `allow_failure`, and no `if`, `then` or `else`. |
-| `for_each`, `as`, `do` | loops | A loop has no `cmd`, `timeout` or `allow_failure`, and no `if`, `then`, `else`, `switch`, `cases` or `default`. |
+| `for_each`, `as`, `do` | for-each loops | Runs `do` once per list item. A loop has no `cmd`, `timeout` or `allow_failure`. |
+| `while`, `attempts`, `do` | while loops | Runs `do` while a condition holds; `attempts` optionally limits iterations. A loop has no `cmd`, `timeout` or `allow_failure`. |
 | `trigger` | triggers | The name of a job of the project to queue a run of. A trigger has no other fields. See [Triggering jobs from a task](run.md#triggering-jobs-from-a-task). |
 
 The task's name is its key. It saves a cmd task's result as `tasks.<name>`, and labels the task in errors and log lines (see [labels](cli.md#errors-and-exit-codes)). It must be a [variable name](env.md#names) other than `tasks`, and two tasks in the same map can't share it. There is no `name` field.
@@ -174,9 +177,9 @@ The whole project, every job including nested branches and loops, is checked whe
 - a task without `cmd` that isn't a branch, switch, loop, trigger or task file
 - a trigger with any other field, or whose job isn't in the project's `jobs`
 - a job entry with both `file` and `tasks`, or with neither
-- `cwd`, `stdin`, `env`, `capture_stdout`, `stdout_file` or `retry` without `cmd`; both `stdout_file` and `capture_stdout`; `timeout` on a branch, switch or loop; `allow_failure` on a loop (use `on_failure: next`), or `on_failure` on anything but a loop; `then`/`else` without `if`; `cases`/`default` without `switch`; `do`/`as` without `for_each`
+- `pipe`, `cwd`, `stdin`, `env`, `capture_stdout`, `stdout_file` or `retry` without `cmd`; both `stdout_file` and `capture_stdout`; `timeout` on a branch, switch or loop; `allow_failure` on a loop (use `on_failure: next`), or `on_failure` on anything but a loop; `then`/`else` without `if`; `cases`/`default` without `switch`; `do` without `for_each` or `while`; `as` without `for_each`; `attempts` without `while`
 - a missing task or job file, a task file with a `name` field, or a task file that uses itself, directly or through other files
-- a task entry with `file` and any field but `values`, or `values` without `file`
+- a task entry with `file` and any field but `with`, or `with` without `file`
 - a name that appears twice in `jobs`, a cmd task's `env`, or a switch's `cases`
 - a [variable name](env.md#names) in `as` that isn't uppercase (`A-Z`, `0-9`, `_`), or a task key that isn't an identifier or is `tasks`
 - an invalid [condition](conditions.md) or [schedule](schedules.md)
@@ -216,21 +219,21 @@ cmd: [curl, -sS, --fail-with-body, https://httpbin.org/anything/login]
 ```
 
 - A task file holds one task, without a `name`: the key that points at it names it, so one file can be used under several names. It can use other task files, inside a branch or loop too, but not itself, directly or through other files.
-- A task file entry is a path, or `{file: path, values: {...}}` to give the file [values of its own](#reusing-a-task-file). Everything else goes in the file. To change another field for one use, write the task inline.
+- A task file entry is a path, or `{file: path, with: {...}}` to give the file [inputs of its own](#reusing-a-task-file). Everything else goes in the file. To change another field for one use, write the task inline.
 - A job file has the job fields `schedule`, `values`, `defaults` and `tasks`. The project keeps `env_file`. To run one job file with different values or schedules, see below.
 
 Example: [`imports.yaml`](../examples/imports.yaml), whose jobs all come from [`jobs/`](../examples/jobs/) and share its env file.
 
 ### Reusing a task file
 
-A task entry can name its file under `file`, with `values` that the file reads as `${NAME}`, so one file can be used with different values:
+A task entry can name its file under `file`, with `with` inputs that the file reads as `${NAME}`, so one file can be used with different inputs:
 
 ```yaml
 tasks:
-  alice: {file: tasks/greet.yaml, values: {WHO: alice}}
+  alice: {file: tasks/greet.yaml, with: {WHO: alice}}
   bob:
     file: tasks/greet.yaml
-    values:
+    with:
       WHO: bob
   anyone: tasks/greet.yaml       # WHO from the job's or project's values
 
@@ -238,10 +241,10 @@ tasks:
 cmd: [echo, 'hello ${WHO}']
 ```
 
-- Only `file` and `values` are allowed; everything else goes in the file. `values` only works next to `file`.
-- The values apply while that task runs, including tasks nested in it, and win over the job's and the project's. Afterwards the earlier values are back.
-- Names are uppercase. Unlike project and job values, `${...}` in them is expanded when the task starts, so they can pass a loop element or an earlier task's output into the file, e.g. `values: {USER: ${ITEM}}` or `values: {TOKEN: ${tasks.login.stdout.token}}`. A value that is exactly `${NAME}` keeps its JSON type, `$${` is a literal `${`, and an undefined variable fails the task.
-- A task file can itself be a `{file, values}` entry; the outer entry's values win over the inner one's.
+- Only `file` and `with` are allowed; everything else goes in the file. `with` only works next to `file`.
+- The inputs apply while that task runs, including tasks nested in it, and win over the job's and the project's values. Afterwards the earlier values are back.
+- Names are uppercase. `${...}` in an input is expanded when the task starts, so it can pass a loop element or an earlier task's output into the file, e.g. `with: {USER: '${ITEM}'}` or `with: {TOKEN: '${tasks.login.stdout.token}'}`. A value that is exactly `${NAME}` keeps its JSON type, `$${` is a literal `${`, and an undefined variable fails the task. Quote `${...}` inside a flow map (`{...}`); see [Writing YAML](yaml.md#quoting).
+- A task file can itself be a `{file, with}` entry; the outer entry's inputs win over the inner one's.
 
 ### Reusing a job file
 

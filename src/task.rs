@@ -21,19 +21,19 @@ pub struct Task {
     /// the entry's value when it is a string, or its `file`.
     #[serde(rename = "file")]
     pub r#use: Option<PathBuf>,
-    /// Next to `file`: values for `${NAME}` while that task runs, winning over the job's and
-    /// the project's.
-    #[serde(default, deserialize_with = "project::unique")]
-    pub values: BTreeMap<String, Value>,
+    /// Next to `file`: inputs for `${NAME}` while that task runs, winning over the job's and
+    /// the project's values.
+    #[serde(default, rename = "with", deserialize_with = "project::unique")]
+    pub inputs: BTreeMap<String, Value>,
     /// Program and arguments, run directly without a shell; `${VAR}` is substituted per element.
+    #[serde(default, deserialize_with = "command")]
     pub cmd: Option<Vec<String>>,
     /// Further programs, each with its arguments, run like `cmd`: `cmd`'s stdout is piped
     /// into the first one's stdin, and so on.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "pipeline")]
     pub pipe: Vec<Vec<String>>,
-    /// Seconds before the task's command is killed and the task fails: a number, or a
-    /// duration such as `30s` or `5m`.
-    #[serde(default, deserialize_with = "seconds")]
+    /// Duration before the task's command is killed and the task fails, such as `30s` or `5m`.
+    #[serde(default, deserialize_with = "duration")]
     pub timeout: Option<u64>,
     /// Directory a `cmd` task runs in, relative to the file that declares this task;
     /// default: the current directory. `${VAR}` is substituted.
@@ -117,7 +117,7 @@ pub enum OnFailure {
 pub struct Retry {
     /// The most runs, the first one included.
     pub attempts: u64,
-    #[serde(default, deserialize_with = "seconds")]
+    #[serde(default, deserialize_with = "duration")]
     pub delay: Option<u64>,
     pub until: Option<Condition>,
 }
@@ -143,19 +143,42 @@ pub struct Case {
     pub body: Vec<Task>,
 }
 
-/// Reads whole seconds, written as a number or as a duration such as `30s`, `5m` or `2h`.
-pub(crate) fn seconds<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<u64>, D::Error> {
-    struct SecondsVisitor;
+/// Reads an optional command while rejecting YAML scalars that serde would coerce to strings.
+fn command<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<Vec<String>>, D::Error> {
+    Option::<Vec<Value>>::deserialize(deserializer)?
+        .map(strings)
+        .transpose()
+}
 
-    impl Visitor<'_> for SecondsVisitor {
+/// Reads pipe stages while rejecting YAML scalars that serde would coerce to strings.
+fn pipeline<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<Vec<String>>, D::Error> {
+    Vec::<Vec<Value>>::deserialize(deserializer)?
+        .into_iter()
+        .map(strings)
+        .collect()
+}
+
+fn strings<E: de::Error>(values: Vec<Value>) -> Result<Vec<String>, E> {
+    values
+        .into_iter()
+        .map(|value| match value {
+            Value::String(value) => Ok(value),
+            _ => Err(E::custom("command arguments must be strings")),
+        })
+        .collect()
+}
+
+/// Reads a duration such as `30s`, `5m` or `2h` as whole seconds.
+pub(crate) fn duration<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<u64>, D::Error> {
+    struct DurationVisitor;
+
+    impl Visitor<'_> for DurationVisitor {
         type Value = u64;
 
         fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
-            f.write_str("seconds, or a duration like `30s`, `5m` or `2h`")
-        }
-
-        fn visit_u64<E: de::Error>(self, secs: u64) -> Result<u64, E> {
-            Ok(secs)
+            f.write_str("a duration like `30s`, `5m` or `2h`")
         }
 
         fn visit_str<E: de::Error>(self, text: &str) -> Result<u64, E> {
@@ -165,7 +188,7 @@ pub(crate) fn seconds<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Opti
         }
     }
 
-    deserializer.deserialize_any(SecondsVisitor).map(Some)
+    deserializer.deserialize_str(DurationVisitor).map(Some)
 }
 
 /// Reads a switch's `cases`: a map of value to the tasks to run, keeping its order.
@@ -275,8 +298,8 @@ impl Task {
         self.switch.is_some() || !self.cases.is_empty() || !self.default.is_empty()
     }
 
-    /// Whether any field other than `values` is set, on an entry that has `file`.
-    fn has_fields_besides_values(&self) -> bool {
+    /// Whether any field other than `with` is set, on an entry that has `file`.
+    fn has_fields_besides_inputs(&self) -> bool {
         self.cmd.is_some()
             || !self.pipe.is_empty()
             || self.timeout.is_some()
@@ -328,26 +351,26 @@ fn resolve_one(task: &mut Task, dir: &Path, stack: &mut Vec<PathBuf>) -> Result<
         )));
     }
     if let Some(path) = task.r#use.take() {
-        if task.has_fields_besides_values() {
+        if task.has_fields_besides_inputs() {
             return Err(Error::InvalidTask(format!(
-                "`{name}` has `file`, so its other fields go in that file; only `values` can be next to it"
+                "`{name}` has `file`, so its other fields go in that file; only `with` can be next to it"
             )));
         }
-        if let Some(var) = task.values.keys().find(|var| !var_name::is_valid_var(var)) {
+        if let Some(var) = task.inputs.keys().find(|var| !var_name::is_valid_var(var)) {
             return Err(Error::InvalidTask(format!(
-                "`{name}`: `values` name `{var}` {}",
+                "`{name}`: `with` name `{var}` {}",
                 var_name::VAR_RULE
             )));
         }
-        let values = std::mem::take(&mut task.values);
+        let inputs = std::mem::take(&mut task.inputs);
         resolve_use(task, path, dir, stack)?;
         // Over those of a `file` entry the loaded file may itself be.
-        task.values.extend(values);
+        task.inputs.extend(inputs);
         return Ok(());
     }
-    if !task.values.is_empty() {
+    if !task.inputs.is_empty() {
         return Err(Error::InvalidTask(format!(
-            "`{name}` has `values`, which only works next to `file`"
+            "`{name}` has `with`, which only works next to `file`"
         )));
     }
     for (field, set) in [
@@ -585,7 +608,7 @@ fn resolve_switch(
 /// whole project is loaded.
 fn resolve_trigger(task: &mut Task, name: &str) -> Result<(), Error> {
     let job = task.trigger.take();
-    let has_others = task.has_fields_besides_values();
+    let has_others = task.has_fields_besides_inputs();
     task.trigger = job;
     if has_others {
         return Err(Error::InvalidTask(format!(
@@ -696,6 +719,17 @@ mod tests {
             let msg = invalid_task(yaml);
             assert!(msg.contains(expected), "{yaml}: {msg}");
         }
+        for yaml in [
+            "a: {cmd: [sleep, 5]}\n",
+            "a: {cmd: [echo], pipe: [[head, 5]]}\n",
+        ] {
+            let err = parse_named(yaml).unwrap_err();
+            assert!(
+                err.to_string()
+                    .contains("command arguments must be strings"),
+                "{yaml}: {err}"
+            );
+        }
     }
 
     #[test]
@@ -719,10 +753,10 @@ mod tests {
 
     #[test]
     fn timeout_works_on_cmd_tasks_but_not_branches_or_loops() {
-        resolve_here("s:\n  cmd: [echo]\n  timeout: 5\n").unwrap();
+        resolve_here("s:\n  cmd: [echo]\n  timeout: 5s\n").unwrap();
         for yaml in [
-            "a:\n  if: {this: X, eq: 1}\n  then: {b: {cmd: [echo]}}\n  timeout: 1\n",
-            "a:\n  for_each: X\n  do: {b: {cmd: [echo]}}\n  timeout: 1\n",
+            "a:\n  if: {this: X, eq: 1}\n  then: {b: {cmd: [echo]}}\n  timeout: 1s\n",
+            "a:\n  for_each: X\n  do: {b: {cmd: [echo]}}\n  timeout: 1s\n",
         ] {
             let msg = invalid_task(yaml);
             assert!(
@@ -733,13 +767,13 @@ mod tests {
     }
 
     #[test]
-    fn timeout_takes_seconds_or_a_duration() {
-        for (timeout, secs) in [("5", 5), ("2s", 2), ("2m", 120), ("1h", 3600)] {
+    fn timeout_takes_a_duration() {
+        for (timeout, secs) in [("5s", 5), ("2m", 120), ("1h", 3600)] {
             let tasks =
                 resolve_here(&format!("s:\n  cmd: [echo]\n  timeout: {timeout}\n")).unwrap();
             assert_eq!(tasks[0].timeout, Some(secs), "{timeout}");
         }
-        for timeout in ["5 min", "-1", "1.5"] {
+        for timeout in ["5", "5 min", "-1", "1.5"] {
             let err =
                 parse_named(&format!("s:\n  cmd: [echo]\n  timeout: {timeout}\n")).unwrap_err();
             assert!(err.to_string().contains("timeout"), "{timeout}: {err}");
@@ -779,6 +813,10 @@ mod tests {
             (
                 "a:\n  cmd: [echo]\n  retry: {attempts: 2, delay: soon}\n",
                 "is not a duration",
+            ),
+            (
+                "a:\n  cmd: [echo]\n  retry: {attempts: 2, delay: 2}\n",
+                "a duration",
             ),
         ] {
             let err = parse_named(yaml).unwrap_err();
@@ -871,7 +909,7 @@ mod tests {
         let no_loop = "`l` has `do`/`attempts` but no `for_each` or `while`";
         for (yaml, expected) in [
             (format!("l:\n  for_each: X\n{body}  cmd: [echo]\n"), a_loop),
-            (format!("l:\n  for_each: X\n{body}  timeout: 1\n"), a_loop),
+            (format!("l:\n  for_each: X\n{body}  timeout: 1s\n"), a_loop),
             (
                 format!("l:\n  for_each: X\n{body}  if: {{this: X, eq: 1}}\n"),
                 a_loop,
@@ -908,7 +946,7 @@ mod tests {
         let a_while = "`w` is a loop (`while`) and cannot have";
         for (yaml, expected) in [
             (format!("w:\n{cond}{body}  cmd: [echo]\n"), a_while),
-            (format!("w:\n{cond}{body}  timeout: 1\n"), a_while),
+            (format!("w:\n{cond}{body}  timeout: 1s\n"), a_while),
             (
                 format!("w:\n{cond}{body}  if: {{this: X, eq: 1}}\n"),
                 a_while,
@@ -1056,7 +1094,7 @@ mod tests {
         let tasks = resolve_here("t:\n  trigger: report\n").unwrap();
         assert_eq!(tasks[0].trigger.as_deref(), Some("report"));
         for yaml in [
-            "t:\n  trigger: report\n  timeout: 5\n",
+            "t:\n  trigger: report\n  timeout: 5s\n",
             "t:\n  trigger: report\n  allow_failure: true\n",
             "t:\n  trigger: report\n  if: {this: X, eq: 1}\n  then: {a: {cmd: [echo]}}\n",
             "t:\n  trigger: report\n  for_each: X\n  do: {a: {cmd: [echo]}}\n",
@@ -1124,29 +1162,29 @@ mod tests {
     }
 
     #[test]
-    fn task_file_entries_take_values() {
+    fn task_file_entries_take_inputs() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("greet.yaml"), "cmd: [echo, '${WHO}']\n").unwrap();
         std::fs::write(
             dir.path().join("wrap.yaml"),
-            "file: greet.yaml\nvalues: {WHO: inner, KEEP: inner}\n",
+            "file: greet.yaml\nwith: {WHO: inner, KEEP: inner}\n",
         )
         .unwrap();
         let tasks = resolve_in(
             dir.path(),
-            "a: {file: greet.yaml, values: {WHO: a}}\nb: {file: greet.yaml}\n\
-             c: {file: wrap.yaml, values: {WHO: outer}}\n",
+            "a: {file: greet.yaml, with: {WHO: a}}\nb: {file: greet.yaml}\n\
+             c: {file: wrap.yaml, with: {WHO: outer}}\n",
         )
         .unwrap();
-        let values = |task: &Task| serde_json::to_value(&task.values).unwrap();
+        let inputs = |task: &Task| serde_json::to_value(&task.inputs).unwrap();
         assert_eq!(
             tasks[0].cmd.as_deref(),
             Some(&["echo".to_string(), "${WHO}".to_string()][..])
         );
-        assert_eq!(values(&tasks[0]), serde_json::json!({"WHO": "a"}));
-        assert!(tasks[1].values.is_empty());
+        assert_eq!(inputs(&tasks[0]), serde_json::json!({"WHO": "a"}));
+        assert!(tasks[1].inputs.is_empty());
         assert_eq!(
-            values(&tasks[2]),
+            inputs(&tasks[2]),
             serde_json::json!({"WHO": "outer", "KEEP": "inner"})
         );
 
@@ -1156,16 +1194,16 @@ mod tests {
                 "`a` has `file`, so its other fields go in that file",
             ),
             (
-                "a: {file: greet.yaml, timeout: 5}\n",
+                "a: {file: greet.yaml, timeout: 5s}\n",
                 "`a` has `file`, so its other fields go in that file",
             ),
             (
-                "a: {cmd: [echo], values: {X: 1}}\n",
-                "`a` has `values`, which only works next to `file`",
+                "a: {cmd: [echo], with: {X: 1}}\n",
+                "`a` has `with`, which only works next to `file`",
             ),
             (
-                "a: {file: greet.yaml, values: {who: 1}}\n",
-                "`a`: `values` name `who`",
+                "a: {file: greet.yaml, with: {who: 1}}\n",
+                "`a`: `with` name `who`",
             ),
         ] {
             match resolve_in(dir.path(), yaml) {
@@ -1173,6 +1211,8 @@ mod tests {
                 other => panic!("{yaml}: expected an invalid task, got {other:?}"),
             }
         }
+        let err = parse_named("a: {file: greet.yaml, values: {WHO: a}}\n").unwrap_err();
+        assert!(err.to_string().contains("unknown field `values`"), "{err}");
     }
 
     #[test]

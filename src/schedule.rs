@@ -99,11 +99,17 @@ struct RawSchedule {
     delay: Option<String>,
     hourly: Option<i8>,
     daily: Option<String>,
-    weekly: Option<Vec<String>>,
-    time: Option<String>,
+    weekly: Option<RawWeekly>,
     at: Option<String>,
     #[serde(default)]
     run_on_start: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawWeekly {
+    days: Vec<String>,
+    time: String,
 }
 
 impl TryFrom<RawSchedule> for Schedule {
@@ -117,15 +123,11 @@ impl TryFrom<RawSchedule> for Schedule {
             hourly,
             daily,
             weekly,
-            time,
             at,
             run_on_start,
         } = raw;
         if delay.is_some() && every.is_none() {
             return Err(invalid("`delay` only works with `every`".to_string()));
-        }
-        if time.is_some() && weekly.is_none() {
-            return Err(invalid("`time` only works with `weekly`".to_string()));
         }
         if run_on_start && every.is_some() {
             return Err(invalid(
@@ -161,22 +163,18 @@ impl TryFrom<RawSchedule> for Schedule {
             }
             (None, None, Some(daily), None, None) => Clock::Daily(parse_time("daily", daily)?),
             (None, None, None, Some(weekly), None) => {
-                if weekly.is_empty() {
+                if weekly.days.is_empty() {
                     return Err(invalid("`weekly` needs at least one day".to_string()));
                 }
                 let days = weekly
+                    .days
                     .iter()
                     .map(|day| parse_day(day))
                     .collect::<Result<_, _>>()
                     .map_err(invalid)?;
-                let Some(time) = time else {
-                    return Err(invalid(
-                        "`weekly` needs a `time` like \"09:30\"".to_string(),
-                    ));
-                };
                 Clock::Weekly {
                     days,
-                    time: parse_time("time", time)?,
+                    time: parse_time("weekly.time", weekly.time)?,
                 }
             }
             (None, None, None, None, Some(datetime)) => {
@@ -274,22 +272,17 @@ mod tests {
             ("{}\n", "exactly one"),
             ("run_on_start: false\n", "exactly one"),
             (
-                "daily: \"09:30\"\nweekly: [mon]\ntime: \"09:30\"\n",
+                "daily: \"09:30\"\nweekly: {days: [mon], time: \"09:30\"}\n",
                 "exactly one",
             ),
+            ("weekly: {days: [], time: \"09:30\"}\n", "at least one day"),
             (
-                "daily: \"09:30\"\ntime: \"09:30\"\n",
-                "only works with `weekly`",
-            ),
-            ("weekly: [mon]\n", "needs a `time`"),
-            ("weekly: []\ntime: \"09:30\"\n", "at least one day"),
-            (
-                "weekly: [monday]\ntime: \"09:30\"\n",
+                "weekly: {days: [monday], time: \"09:30\"}\n",
                 "`monday` is not a day",
             ),
             (
-                "weekly: [mon]\ntime: \"9am\"\n",
-                "`time: 9am` must be a time",
+                "weekly: {days: [mon], time: \"9am\"}\n",
+                "`weekly.time: 9am` must be a time",
             ),
             (
                 "every: 5m\nrun_on_start: true\n",
@@ -307,6 +300,7 @@ mod tests {
             assert!(err.contains(expected), "{yaml}: {err}");
         }
         assert!(parse("monthly: 1\n").is_err());
+        assert!(parse("weekly: [mon]\ntime: \"09:30\"\n").is_err());
     }
 
     #[test]
@@ -391,7 +385,10 @@ mod tests {
         for (yaml, expected) in [
             ("daily: \"09:30\"\n", false),
             ("daily: \"09:30\"\nrun_on_start: true\n", true),
-            ("weekly: [mon]\ntime: \"09:30\"\nrun_on_start: true\n", true),
+            (
+                "weekly: {days: [mon], time: \"09:30\"}\nrun_on_start: true\n",
+                true,
+            ),
         ] {
             assert!(
                 matches!(parse(yaml).unwrap(), Schedule::Clock { run_on_start, .. } if run_on_start == expected),
@@ -411,7 +408,7 @@ mod tests {
     #[test]
     fn weekly_picks_next_listed_day() {
         // 2026-10-09 is a Friday.
-        let weekly = "weekly: [mon, fri]\ntime: \"09:30\"\n";
+        let weekly = "weekly: {days: [mon, fri], time: \"09:30\"}\n";
         assert_eq!(
             next(weekly, "2026-10-09T08:00:00[UTC]"),
             Some(zoned("2026-10-09T09:30:00[UTC]"))
@@ -422,7 +419,7 @@ mod tests {
         );
         assert_eq!(
             next(
-                "weekly: [fri]\ntime: \"09:30\"\n",
+                "weekly: {days: [fri], time: \"09:30\"}\n",
                 "2026-10-09T10:00:00[UTC]"
             ),
             Some(zoned("2026-10-16T09:30:00[UTC]"))

@@ -86,7 +86,7 @@ impl Outcome {
 }
 
 /// Queued work: a task to run with its label, a loop's remaining items, a `while` loop's
-/// next condition check, or the values to put back once a task file entry's `values` end.
+/// next condition check, or the values to put back once a task file entry's `with` inputs end.
 enum Work {
     Task { task: Box<Task>, name: String },
     Loop(Box<Loop>),
@@ -246,10 +246,10 @@ pub async fn exec(
                 continue;
             }
         };
-        if !task.values.is_empty() {
+        if !task.inputs.is_empty() {
             // Expanded against the variables as they are now, then set for this task and the
             // tasks it runs, and put back afterwards.
-            let mut scoped = std::mem::take(&mut task.values);
+            let mut scoped = std::mem::take(&mut task.inputs);
             for value in scoped.values_mut() {
                 vars::substitute_value(value, &|var| lookup(var, &values, &env)).map_err(
                     |source| Error::Task {
@@ -639,13 +639,13 @@ mod tests {
     #[tokio::test]
     async fn timeout_fails_unless_allowed_then_exists_sees_the_error() {
         let allowed = "tasks:\n\
-                       \x20 slow:\n    cmd: [sleep, '5']\n    timeout: 1\n    allow_failure: true\n\
+                       \x20 slow:\n    cmd: [sleep, '5']\n    timeout: 1s\n    allow_failure: true\n\
                        \x20 check:\n    if: {this: tasks.slow.error, exists: true}\n\
                        \x20   then: {errored: {cmd: [echo, '${tasks.slow.error}']}}\n    else: {ok: {cmd: [echo, ok]}}\n";
         let (allowed, failed) = tokio::join!(
             exec(project(allowed)),
             exec(project(
-                "tasks:\n  slow:\n    cmd: [sleep, '5']\n    timeout: 1\n"
+                "tasks:\n  slow:\n    cmd: [sleep, '5']\n    timeout: 1s\n"
             )),
         );
         let outcome = allowed.unwrap();
@@ -900,14 +900,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn task_file_values_apply_only_while_it_runs() {
+    async fn task_file_inputs_apply_only_while_it_runs() {
         let dir = tempfile::tempdir().unwrap();
         task_files(dir.path());
         let outcome = exec(project_in(
             dir.path(),
             "values: {WHO: job}\n\
-             tasks:\n  a: {file: say.yaml, values: {WHO: a}}\n  plain: say.yaml\n\
-             \x20 b: {file: say.yaml, values: {WHO: b, EXTRA: x}}\n  again: say.yaml\n\
+             tasks:\n  a: {file: say.yaml, with: {WHO: a}}\n  plain: say.yaml\n\
+             \x20 b: {file: say.yaml, with: {WHO: b, EXTRA: x}}\n  again: say.yaml\n\
              \x20 print:\n    cmd: [cat, acc]\n    cwd: .\n",
         ))
         .await
@@ -916,7 +916,7 @@ mod tests {
 
         let (_, err) = task_error(project_in(
             dir.path(),
-            "tasks:\n  b: {file: say.yaml, values: {WHO: b, EXTRA: x}}\n\
+            "tasks:\n  b: {file: say.yaml, with: {WHO: b, EXTRA: x}}\n\
              \x20 after:\n    cmd: [echo, '${EXTRA}']\n",
         ))
         .await;
@@ -927,7 +927,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn task_file_values_expand_variables_when_the_task_starts() {
+    async fn task_file_inputs_expand_variables_when_the_task_starts() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
             dir.path().join("show.yaml"),
@@ -940,7 +940,7 @@ mod tests {
              tasks:\n  count:\n    cmd: [echo, '3']\n\
              \x20 each:\n    for_each: USERS\n    do:\n\
              \x20     show:\n        file: show.yaml\n\
-             \x20       values: {WHO: 'hi ${ITEM.name}', N: '${tasks.count.stdout}', RAW: '$${ITEM}'}\n",
+             \x20       with: {WHO: 'hi ${ITEM.name}', N: '${tasks.count.stdout}', RAW: '$${ITEM}'}\n",
         ))
         .await
         .unwrap();
@@ -951,7 +951,7 @@ mod tests {
 
         let (name, err) = task_error(project_in(
             dir.path(),
-            "tasks:\n  show: {file: show.yaml, values: {WHO: '${NOPE_V}', N: 1, RAW: x}}\n",
+            "tasks:\n  show: {file: show.yaml, with: {WHO: '${NOPE_V}', N: 1, RAW: x}}\n",
         ))
         .await;
         assert_eq!(name, "show");
@@ -962,14 +962,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn task_file_values_are_put_back_when_a_loop_skips_an_iteration() {
+    async fn task_file_inputs_are_put_back_when_a_loop_skips_an_iteration() {
         let dir = tempfile::tempdir().unwrap();
         task_files(dir.path());
         let outcome = exec(project_in(
             dir.path(),
             "values: {WHO: job, IDS: [1, 2]}\n\
              tasks:\n  each:\n    for_each: IDS\n    on_failure: next\n    do:\n\
-             \x20     check: {file: fail.yaml, values: {WHO: b}}\n\
+             \x20     check: {file: fail.yaml, with: {WHO: b}}\n\
              \x20 print:\n    cmd: [echo, '${WHO}']\n",
         ))
         .await
@@ -1196,7 +1196,7 @@ mod tests {
         let outcome = exec(project(&format!(
             "{}\
              \x20 each:\n    for_each: tasks.seed.stdout.IDS\n    on_failure: next\n    do:\n\
-             \x20     slow:\n        cmd: [sleep, '5']\n        timeout: 1\n\
+             \x20     slow:\n        cmd: [sleep, '5']\n        timeout: 1s\n\
              \x20 print:\n    cmd: [echo, '${{tasks.slow.error}}']\n",
             seed(json!({"IDS": [1]}))
         )))

@@ -38,8 +38,8 @@ Example: the `mixed` job in [`examples/httpbin.yaml`](../examples/httpbin.yaml).
 
 | Field | Notes |
 |---|---|
-| `cmd` | A non-empty list: the program, then its arguments. A single string such as `cmd: "ls -la"` is rejected; write `[ls, -la]`. |
-| `pipe` | Optional. A list of further commands, each written like `cmd`, connected by pipes. See [Pipes](#pipes). |
+| `cmd` | A non-empty list of strings: the program, then its arguments. A single string such as `cmd: "ls -la"` is rejected; write `[ls, -la]`. Quote numeric arguments: write `[sleep, "5"]`, not `[sleep, 5]`. |
+| `pipe` | Optional. A list of further commands, each written like `cmd` as a non-empty list of strings, connected by pipes. See [Pipes](#pipes). |
 
 The common task field `allow_failure` is described in [Projects](projects.md#task-fields).
 
@@ -94,7 +94,7 @@ A non-zero exit code fails the task unless `allow_failure: true`. A command that
 ```yaml
 build:
   cmd: [make, release]
-  timeout: 5m             # or 300 (seconds)
+  timeout: 5m
   cwd: ../app             # relative to the file this task is in
   stdin: ${tasks.notes.stdout}
   env:
@@ -103,7 +103,7 @@ build:
 
 | Field | Default | Meaning |
 |---|---|---|
-| `timeout` | none | How long before the command is killed: a number of seconds (`300`) or a duration like the [schedules'](schedules.md#every-and-delay) (`30s`, `5m`, `2h`). The task then fails with ``command `make` timed out after 300s``. Processes the command started itself (e.g. under `sh -c`) are killed too. |
+| `timeout` | none | How long before the command is killed: a duration like the [schedules'](schedules.md#every-and-delay) (`30s`, `5m`, `2h`). The task then fails with ``command `make` timed out after 5m``. Processes the command started itself (e.g. under `sh -c`) are killed too. |
 | `cwd` | your current directory | Directory to run in. `${...}` is substituted first; a relative result is resolved against the directory of the file the task is written in. A missing directory fails the task with `` `cwd` <path> is not a directory ``, even with `allow_failure`. |
 | `stdin` | empty | Written to the command's standard input, like `cmd < file`. See [`stdin`](#stdin). |
 | `env` | none | Map of name → value, added to the environment the command inherits (replacing a variable of the same name). `${...}` is substituted; a string is used as-is and any other value is written as compact JSON, as for `stdin`. A name can't appear twice. |
@@ -112,7 +112,7 @@ build:
 
 Example of `env`: [`examples/cmd-env.yaml`](../examples/cmd-env.yaml).
 
-`cwd`, `stdin`, `env`, `capture_stdout`, `stdout_file` and [`retry`](#retry) only work on cmd tasks; on any other task they are an error.
+`pipe`, `cwd`, `stdin`, `env`, `capture_stdout`, `stdout_file` and [`retry`](#retry) only work on cmd tasks; on any other task they are an error.
 
 ## Retry
 
@@ -124,7 +124,7 @@ fetch:
   timeout: 10s
   retry:
     attempts: 5                 # the most runs, the first one included
-    delay: 2s                   # optional: wait between runs, seconds or a duration
+    delay: 2s                   # optional: wait between runs
 
 check:                          # wait for a status instead of a successful exit
   cmd: [curl, -sS, -o, /dev/null, -w, '%{http_code}', '${BASE}/health']
@@ -137,7 +137,7 @@ check:                          # wait for a status instead of a successful exit
 | Field | Notes |
 |---|---|
 | `attempts` | Required, at least 1. The most times the command runs. |
-| `delay` | Optional. How long to wait before each run after the first: seconds (`2`) or a duration (`2s`, `1m`). Default: no wait. |
+| `delay` | Optional. How long to wait before each run after the first: `2s`, `1m` or `1h`. Default: no wait. |
 | `until` | Optional. A [condition](conditions.md#condition-shape), checked after each run. Without it, a run is enough when it exits `0`. |
 
 - Each run is saved as `tasks.<name>` before `until` is checked, so `until` reads the run that just finished.

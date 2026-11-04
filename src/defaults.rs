@@ -13,7 +13,7 @@ use crate::task::{self, Retry, Task};
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Defaults {
-    #[serde(default, deserialize_with = "task::seconds")]
+    #[serde(default, deserialize_with = "task::duration")]
     pub timeout: Option<u64>,
     /// Relative to `dir`.
     pub cwd: Option<PathBuf>,

@@ -600,9 +600,9 @@ mod tests {
         let mut project = load_in(
             dir.path(),
             "defaults:\n  timeout: 30s\n  env: {A: project, B: project}\n  retry: {attempts: 2}\n\
-             jobs:\n  w:\n    defaults:\n      timeout: 5\n      env: {B: job, C: job}\n    tasks:\n\
+             jobs:\n  w:\n    defaults:\n      timeout: 5s\n      env: {B: job, C: job}\n    tasks:\n\
              \x20     plain: {cmd: [echo]}\n\
-             \x20     own: {cmd: [echo], timeout: 1, env: {C: task}, retry: {attempts: 9}}\n\
+             \x20     own: {cmd: [echo], timeout: 1s, env: {C: task}, retry: {attempts: 9}}\n\
              \x20     branch:\n        if: {this: X, eq: 1}\n        then: {nested: {cmd: [echo]}}\n",
         )
         .unwrap();
@@ -674,6 +674,7 @@ mod tests {
         for (yaml, expected) in [
             (format!("defaults: {{allow_failure: true}}\n{job}"), "unknown field `allow_failure`"),
             (format!("defaults: {{timeout: soon}}\n{job}"), "is not a duration"),
+            (format!("defaults: {{timeout: 30}}\n{job}"), "a duration"),
             (
                 format!("defaults: {{retry: {{attempts: 0}}}}\n{job}"),
                 "`defaults`: `retry` needs `attempts` of at least 1",
@@ -684,7 +685,7 @@ mod tests {
                 "`defaults`: `retry` needs `attempts` of at least 1",
             ),
             (
-                "jobs:\n  w: {file: j.yaml, defaults: {timeout: 1}}\n".to_string(),
+                "jobs:\n  w: {file: j.yaml, defaults: {timeout: 1s}}\n".to_string(),
                 "can't have `defaults`",
             ),
         ] {

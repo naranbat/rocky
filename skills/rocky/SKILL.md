@@ -61,12 +61,12 @@ jobs:
 |---|---|
 | project | `jobs` (required), `values`, `env_file` (only here; relative to the project file), `defaults` |
 | job | `tasks` (required, non-empty map), `schedule`, `values` (win over project values), `defaults` (win over project defaults) |
-| task | exactly one kind: cmd (`cmd`), branch (`if`), switch (`switch`), loop (`for_each` or `while`), trigger (`trigger: JOB`, queues a run of another job and goes on; no other fields), or a task file: a path, or `{file: path, values: {...}}` |
+| task | exactly one kind: cmd (`cmd`), branch (`if`), switch (`switch`), loop (`for_each` or `while`), trigger (`trigger: JOB`, queues a run of another job and goes on; no other fields), or a task file: a path, or `{file: path, with: {...}}` |
 
 - Tasks are a **map**, never a list. The key is the name; there is no `name` field. Keys are identifiers (`user_id`), `tasks` is reserved, and keys are unique within one map.
 - Unknown keys anywhere are a load error.
 - `defaults: {timeout, cwd, env, retry}` fills those fields on every cmd task (nested ones and task files too) that doesn't set them; `env` merges by name. A default `cwd` is relative to the file the defaults are in. Use it instead of repeating `timeout`/`cwd: .`/`env` on each task.
-- Job file: `jobs: {report: jobs/report.yaml}`; the file holds `tasks`, `schedule`, `values`, `defaults`. Task file: `tasks: {login: tasks/login.yaml}`; the file holds one task, no `name`. Reuse it with different values: `tasks: {as_bob: {file: tasks/login.yaml, values: {USER: bob}}}` (only `file` and `values` there; the values win over job values while it runs, and unlike project/job values their `${...}` is expanded when the task starts, e.g. `USER: ${ITEM}`).
+- Job file: `jobs: {report: jobs/report.yaml}`; the file holds `tasks`, `schedule`, `values`, `defaults`. Task file: `tasks: {login: tasks/login.yaml}`; the file holds one task, no `name`. Reuse it with different inputs: `tasks: {as_bob: {file: tasks/login.yaml, with: {USER: bob}}}`. Only `file` and `with` are allowed there; the inputs win over job values while the file runs and their `${...}` is expanded when the task starts, e.g. `with: {USER: '${ITEM}'}`.
 - Reuse one job file as several jobs: `jobs: {news: {file: jobs/fetch.yaml, schedule: {every: 1h}, values: {TARGET: https://x}}}`. Only `file`, `schedule`, `values` are allowed there.
 - Relative paths (`cwd`, task and job files) resolve against the file they're written in; `env_file` and job file paths against the project file. Commands **without** `cwd` run in the current directory.
 
@@ -79,7 +79,7 @@ jobs:
 | `stdin` | Standard input. A string as-is; any other value as compact JSON. Default: empty. |
 | `env` | Map of extra environment variables for the command. |
 | `cwd` | Working directory; relative to the YAML file. |
-| `timeout` | Seconds (`30`) or a duration (`30s`, `5m`, `2h`); the command (and its children) are killed and the task fails. |
+| `timeout` | A duration (`30s`, `5m`, `2h`); the command (and its children) are killed and the task fails. |
 | `capture_stdout` | `false` discards stdout (result `stdout` is `null`). |
 | `stdout_file` | Write stdout to this file (created or replaced) instead; result `stdout` is `null`. Not with `capture_stdout`. |
 | `retry` | `{attempts: 5, delay: 2s, until: COND}`: run again until it exits 0 (or `until` holds), at most `attempts` times. Use it for polling instead of `while`. |
@@ -104,9 +104,10 @@ For HTTP use `curl -sS --fail-with-body` so 4xx/5xx exit non-zero; `--json '@-'`
 
 - `${NAME}` or a dot path `${tasks.login.stdout.user.id}`, `${ITEMS.0.id}` (numeric segment = array index).
 - Expanded in `cmd`/`pipe` arguments, `cwd`, strings in `stdin` and `env` values, and condition operator values (except `matches`). Each `${...}` stays one argument.
-- Lookup order: loop variables and `tasks.*` → job `values` → project `values` → `env_file` → process environment. Undefined fails the task.
-- `env_file` lines are `KEY=value` strings, for secrets. They only fill `${...}`; a command sees one in its environment only if listed under `env`: `env: {TOKEN: ${API_TOKEN}}`.
-- A `stdin` field that is exactly `${NAME}` keeps its JSON type (number, list, object); anywhere else values render as text.
+- Lookup order: loop variables and `tasks.*` → task-file `with` inputs → job `values` → project `values` → `env_file` → process environment. Undefined fails the task.
+- `env_file` lines are `KEY=value` strings, for secrets. They only fill `${...}`; a command sees one in its environment only if listed under `env`: `env: {TOKEN: '${API_TOKEN}'}`.
+- A `stdin` field, condition operand or task-file `with` input that is exactly `${NAME}` keeps its JSON type (number, list, object); anywhere else values render as text.
+- Quote `${...}` inside flow collections (`{...}` or `[...]`), quote numeric command arguments, and quote times, dates and strings containing YAML punctuation.
 - `$${` is a literal `${`. In `sh -c` scripts reading a variable from `env`, write `$NAME`.
 - `values` names and `as` names must be uppercase (`A-Z`, `0-9`, `_`).
 
@@ -155,7 +156,7 @@ A job's `schedule` has exactly one of:
 | `every` (+ optional `delay`) | `{every: 5m, delay: 10s}`; units `s`, `m`, `h` only (`90m`, not `1h30m`) |
 | `hourly` | `{hourly: 15}` (minute 0-59) |
 | `daily` | `{daily: "09:30"}`, quoted |
-| `weekly` + `time` | `{weekly: [mon, fri], time: "09:30"}` |
+| `weekly` | `{weekly: {days: [mon, fri], time: "09:30"}}` |
 | `at` | `{at: "2027-10-10T09:30:00"}`, local time, no `Z` |
 
 `run_on_start: true` (not with `every`) also runs once at startup. Times are local.

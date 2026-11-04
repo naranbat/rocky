@@ -91,6 +91,7 @@ All pages are in [`docs/`](docs/README.md).
   - [Cmd tasks](docs/cmd-tasks.md): running programs, pipes, `stdin`, reading and writing files
 - **Data between tasks**
   - [Env](docs/env.md): `${NAME}` substitution and env files
+  - [Writing YAML](docs/yaml.md): quoting rules, editor schema and common YAML pitfalls
 - **Control flow**
   - [Conditions](docs/conditions.md): `if` / `then` / `else`, `switch`, `while`
   - [Loops](docs/loops.md): `for_each` / `as` / `do`
@@ -103,6 +104,6 @@ All pages are in [`docs/`](docs/README.md).
 ## Limitations
 
 - Unix only: commands run in their own process group, which needs Unix signals.
-- `timeout` takes one whole unit: no fractions (`1.5m`), combined units (`1h30m`) or milliseconds.
+- Durations take one whole unit: no fractions (`1.5m`), combined units (`1h30m`) or milliseconds.
 - Dot paths can't step into a key that contains `.` (e.g. `{"user.id": 7}` in a task's stdout).
 - Ctrl-C, SIGTERM, SIGHUP (closing the terminal) and SIGQUIT stop `rocky` and the commands it runs; `kill -9` can't be caught, so it leaves running commands behind.

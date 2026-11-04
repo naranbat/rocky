@@ -24,7 +24,7 @@ $ rocky run project.yaml | jq -c '{event, task, arm, ok}'
 | `error` | the run stopped with an error |
 | `stopped` | a job's schedule stopped; `error` says why |
 
-A task that ends in an error (an undefined variable, a network error) gets no `task` line; the `error` line names it. With `allow_failure`, a timeout or network error instead gives a `task` line with `ok: false` and `error`. All fields are listed in [Run](run.md#output).
+A task that can't start or finish as a command result (for example, an undefined variable or a missing program) gets no `task` line; the `error` line names it. A program-reported failure, such as `curl` exiting non-zero after a DNS or connection error, does get a `task` line with `ok: false` and its `exit_code`. With `allow_failure`, the job continues after that result; an allowed timeout instead has an `error` field. All fields are listed in [Run](run.md#output).
 
 ## No dry run
 

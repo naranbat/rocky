@@ -29,7 +29,7 @@ tasks:
 
 const TASK_HEADER: &str = "\
 # One task in its own file. Add it to a job's `tasks`: `name: path/to/this.yaml`.
-# To give it values of its own: `name: {file: path/to/this.yaml, values: {USER: bob}}`.
+# To give it inputs of its own: `name: {file: path/to/this.yaml, with: {USER: bob}}`.
 ";
 
 const CMD_TASK: &str = "\
@@ -64,7 +64,7 @@ jobs:
 const FULL_SCHEDULE: &str = "\
 # When `rocky run` runs this job; `exec` checks it but doesn't run it. Exactly one of `every` (30s, 5m, 2h;
 # optional `delay` before the first run), `hourly` (a minute, 0-59), `daily` (\"09:30\"),
-# `weekly` ([mon, fri] with `time: \"09:30\"`) or `at` (\"2027-10-10T09:30:00\"), in local time.
+# `weekly` (`{days: [mon, fri], time: \"09:30\"}`) or `at` (\"2027-10-10T09:30:00\"), in local time.
 # All but `every` take `run_on_start: true` to also run once when `run` starts; on its own,
 # `run_on_start: true` runs the job once when `run` starts.
 schedule:
@@ -87,7 +87,7 @@ stdin:                              # written as JSON
   user: ${USER}
   token: demo-token
   tags: [admin, beta]
-timeout: 10
+timeout: 10s
 ";
 
 const FULL_CMD_TASK: &str = "\
@@ -98,7 +98,7 @@ stdin: ${USER}                      # standard input; a non-string is written as
 env:                                # added to the command's environment, read as $GREETING; a non-string as compact JSON
   GREETING: hello
 cwd: .                              # relative to this file; ${VAR} works (default: your current directory)
-timeout: 30s                        # seconds (30) or a duration: 30s, 5m, 2h
+timeout: 30s                        # a duration: 30s, 5m, 2h
 capture_stdout: true                # false sends stdout to /dev/null instead of keeping it in memory
 # stdout_file: out.txt              # or write stdout to this file, relative to this file
 retry:                              # optional: run again until it exits 0, at most `attempts` times

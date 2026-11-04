@@ -92,7 +92,7 @@ jobs:
     tasks:
       ping:
         cmd: [curl, -sS, --fail-with-body, '${BASE}/delay/3']   # httpbin waits 3s before answering
-        timeout: 1                    # set to 5 to take the `else` branch
+        timeout: 1s                   # set to 5s to take the `else` branch
         allow_failure: true
 
       report:
