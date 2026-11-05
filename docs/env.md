@@ -46,7 +46,7 @@ jobs:
 
 Example: [`examples/values.yaml`](../examples/values.yaml).
 
-- `values` can go at the top level of a project and in a job, inline or in a job file. Tasks nested in branches, switches and loops, and task files, see their job's values. A [task file entry](projects.md#reusing-a-task-file) can instead set runtime inputs under `with` for that file while it runs.
+- `values` can go at the top level of a project and in a job, inline or in a job file. Tasks nested in loops, and task files, see their job's values. A [task file entry](projects.md#reusing-a-task-file) can instead set runtime inputs under `with` for that file while it runs.
 - A value can be a string, number, boolean, list or object, and keeps its JSON type (see [typed values](#typed-values)). Use a dot path to read inside one: `${SITE.name}`.
 - Project and job values are used as written: `${...}` inside a value is not expanded. A [task file entry's](projects.md#reusing-a-task-file) `with` inputs are expanded when that task starts.
 - A job value with the same name as a project value replaces it for that job. A job entry that [reuses a job file](projects.md#reusing-a-job-file) can set `values` too; they replace the file's.
@@ -79,13 +79,13 @@ Only at the top level of a project, with a path relative to the project file. It
 | Expanded | Not expanded |
 |---|---|
 | each [`cmd`](cmd-tasks.md) argument | `stdin` keys, `env` names |
-| a cmd task's `cwd` | schedules, `matches` patterns, switch `cases` keys |
+| a cmd task's `cwd` | schedules, `matches` patterns |
 | any string inside a cmd task's `stdin` | |
 | any string inside a cmd task's [`env`](cmd-tasks.md#options) values | |
 | any string inside a [task file entry's](projects.md#reusing-a-task-file) `with` inputs, when the task starts | project and job `values` |
 | condition operator values other than `matches` | |
 
-A [condition](conditions.md)'s `this`, a `switch` and [`for_each`](loops.md) name one variable rather than expand text, so `tasks.x.stdout` and `${tasks.x.stdout}` mean the same there. Anything else, such as `a${X}`, fails when the project loads.
+A [condition](conditions.md)'s `this` and [`for_each`](loops.md) name one variable rather than expand text, so `tasks.x.stdout` and `${tasks.x.stdout}` mean the same there. Anything else, such as `a${X}`, fails when the project loads.
 
 An undefined variable fails the task: ``variable `NAME` is not defined (checked tasks, loop items, values, env_file, environment)``.
 
@@ -104,7 +104,7 @@ These only fill in `${...}`. A command doesn't see env file values in its enviro
 
 ## Lookup order
 
-First match wins, for every kind of task, and for conditions, `switch` and `for_each`:
+First match wins, for every kind of task, and for conditions and `for_each`:
 
 1. loop variables and `tasks.NAME...`
 2. the `with` inputs of a [task file entry](projects.md#reusing-a-task-file), while that task runs

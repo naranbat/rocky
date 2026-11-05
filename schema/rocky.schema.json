@@ -63,6 +63,7 @@
         "schedule": { "$ref": "#/$defs/schedule" },
         "values": { "$ref": "#/$defs/variables" },
         "defaults": { "$ref": "#/$defs/defaults" },
+        "when": { "$ref": "#/$defs/condition" },
         "tasks": { "$ref": "#/$defs/nonEmptyTaskMap" }
       }
     },
@@ -173,8 +174,6 @@
         { "type": "string", "description": "Path to a task file." },
         { "$ref": "#/$defs/taskFile" },
         { "$ref": "#/$defs/cmdTask" },
-        { "$ref": "#/$defs/branchTask" },
-        { "$ref": "#/$defs/switchTask" },
         { "$ref": "#/$defs/forEachTask" },
         { "$ref": "#/$defs/whileTask" },
         { "$ref": "#/$defs/triggerTask" }
@@ -186,7 +185,8 @@
       "required": ["file"],
       "properties": {
         "file": { "type": "string" },
-        "with": { "$ref": "#/$defs/variables" }
+        "with": { "$ref": "#/$defs/variables" },
+        "when": { "$ref": "#/$defs/condition" }
       }
     },
     "command": {
@@ -211,7 +211,8 @@
         "capture_stdout": { "type": "boolean" },
         "stdout_file": { "type": "string" },
         "retry": { "$ref": "#/$defs/retry" },
-        "allow_failure": { "type": "boolean" }
+        "allow_failure": { "type": "boolean" },
+        "when": { "$ref": "#/$defs/condition" }
       },
       "not": {
         "required": ["capture_stdout", "stdout_file"]
@@ -227,34 +228,6 @@
         "until": { "$ref": "#/$defs/condition" }
       }
     },
-    "branchTask": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["if"],
-      "properties": {
-        "if": { "$ref": "#/$defs/condition" },
-        "then": { "$ref": "#/$defs/taskMap" },
-        "else": { "$ref": "#/$defs/taskMap" }
-      },
-      "anyOf": [
-        { "required": ["then"] },
-        { "required": ["else"] }
-      ]
-    },
-    "switchTask": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["switch", "cases"],
-      "properties": {
-        "switch": { "type": "string" },
-        "cases": {
-          "type": "object",
-          "minProperties": 1,
-          "additionalProperties": { "$ref": "#/$defs/nonEmptyTaskMap" }
-        },
-        "default": { "$ref": "#/$defs/taskMap" }
-      }
-    },
     "forEachTask": {
       "type": "object",
       "additionalProperties": false,
@@ -263,7 +236,8 @@
         "for_each": { "type": "string" },
         "as": { "type": "string", "pattern": "^[A-Z_][A-Z0-9_]*$" },
         "do": { "$ref": "#/$defs/nonEmptyTaskMap" },
-        "on_failure": { "enum": ["stop", "next"] }
+        "on_failure": { "enum": ["stop", "next"] },
+        "when": { "$ref": "#/$defs/condition" }
       }
     },
     "whileTask": {
@@ -274,7 +248,8 @@
         "while": { "$ref": "#/$defs/condition" },
         "attempts": { "type": "integer", "minimum": 1 },
         "do": { "$ref": "#/$defs/nonEmptyTaskMap" },
-        "on_failure": { "enum": ["stop", "next"] }
+        "on_failure": { "enum": ["stop", "next"] },
+        "when": { "$ref": "#/$defs/condition" }
       }
     },
     "triggerTask": {
@@ -282,7 +257,8 @@
       "additionalProperties": false,
       "required": ["trigger"],
       "properties": {
-        "trigger": { "type": "string" }
+        "trigger": { "type": "string" },
+        "when": { "$ref": "#/$defs/condition" }
       }
     },
     "condition": {

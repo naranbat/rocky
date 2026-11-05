@@ -1,6 +1,6 @@
 ---
 name: rocky
-description: Write, validate and run rocky projects, YAML files of jobs whose tasks run commands in order, pass output between tasks, branch, loop, and run on schedules. Use when the user wants to automate repeatable work with rocky, edits a rocky project, job or task YAML file, or runs `rocky exec`, `rocky run`, `rocky trigger`, `rocky validate` or `rocky new`.
+description: Write, validate and run rocky projects, YAML files of jobs whose tasks run commands in order, pass output between tasks, run tasks conditionally, loop, and run on schedules. Use when the user wants to automate repeatable work with rocky, edits a rocky project, job or task YAML file, or runs `rocky exec`, `rocky run`, `rocky trigger`, `rocky validate` or `rocky new`.
 ---
 
 # rocky
@@ -48,11 +48,9 @@ jobs:
         do:
           notify:
             cmd: [echo, 'hi ${USER.name} on ${tasks.today.stdout}']
-      check:
-        if: {this: tasks.notify.exit_code, eq: 0}
-        then:
-          ok:
-            cmd: [echo, done]
+      ok:
+        when: {this: tasks.notify.exit_code, eq: 0}
+        cmd: [echo, done]
 ```
 
 ## Projects, jobs, tasks
@@ -60,13 +58,13 @@ jobs:
 | Level | Fields |
 |---|---|
 | project | `jobs` (required), `values`, `env_file` (only here; relative to the project file), `defaults` |
-| job | `tasks` (required, non-empty map), `schedule`, `values` (win over project values), `defaults` (win over project defaults) |
-| task | exactly one kind: cmd (`cmd`), branch (`if`), switch (`switch`), loop (`for_each` or `while`), trigger (`trigger: JOB`, queues a run of another job and goes on; no other fields), or a task file: a path, or `{file: path, with: {...}}` |
+| job | `tasks` (required, non-empty map), `schedule`, `values` (win over project values), `defaults` (win over project defaults), `when` (skip the whole job unless it holds) |
+| task | exactly one kind: cmd (`cmd`), loop (`for_each` or `while`), trigger (`trigger: JOB`, queues a run of another job and goes on; no other fields but `when`), or a task file: a path, or `{file: path, with: {...}, when: ...}`. Any task can have `when`. There is no `if`/`then`/`else` or `switch`. |
 
 - Tasks are a **map**, never a list. The key is the name; there is no `name` field. Keys are identifiers (`user_id`), `tasks` is reserved, and keys are unique within one map.
 - Unknown keys anywhere are a load error.
 - `defaults: {timeout, cwd, env, retry}` fills those fields on every cmd task (nested ones and task files too) that doesn't set them; `env` merges by name. A default `cwd` is relative to the file the defaults are in. Use it instead of repeating `timeout`/`cwd: .`/`env` on each task.
-- Job file: `jobs: {report: jobs/report.yaml}`; the file holds `tasks`, `schedule`, `values`, `defaults`. Task file: `tasks: {login: tasks/login.yaml}`; the file holds one task, no `name`. Reuse it with different inputs: `tasks: {as_bob: {file: tasks/login.yaml, with: {USER: bob}}}`. Only `file` and `with` are allowed there; the inputs win over job values while the file runs and their `${...}` is expanded when the task starts, e.g. `with: {USER: '${ITEM}'}`.
+- Job file: `jobs: {report: jobs/report.yaml}`; the file holds `tasks`, `schedule`, `values`, `defaults`. Task file: `tasks: {login: tasks/login.yaml}`; the file holds one task, no `name`. Reuse it with different inputs: `tasks: {as_bob: {file: tasks/login.yaml, with: {USER: bob}}}`. Only `file`, `with` and `when` are allowed there; the inputs win over job values while the file runs and their `${...}` is expanded when the task starts, e.g. `with: {USER: '${ITEM}'}`.
 - Reuse one job file as several jobs: `jobs: {news: {file: jobs/fetch.yaml, schedule: {every: 1h}, values: {TARGET: https://x}}}`. Only `file`, `schedule`, `values` are allowed there.
 - Relative paths (`cwd`, task and job files) resolve against the file they're written in; `env_file` and job file paths against the project file. Commands **without** `cwd` run in the current directory.
 
@@ -113,20 +111,15 @@ For HTTP use `curl -sS --fail-with-body` so 4xx/5xx exit non-zero; `--json '@-'`
 
 ## Control flow
 
-`if`/`while` (`this:`), `switch` and `for_each` name one variable: `tasks.x.stdout` and `${tasks.x.stdout}` are the same (inside `{...}`, quote the `${}` form).
+`when`/`while` (`this:`) and `for_each` name one variable: `tasks.x.stdout` and `${tasks.x.stdout}` are the same (inside `{...}`, quote the `${}` form).
 
 ```yaml
-route:                               # branch
-  if: {this: tasks.stats.stdout.count, gt: 10}
-  then: {big: {cmd: [echo, big]}}
-  else: {small: {cmd: [echo, small]}}
-
-status:                              # switch: first matching case, compared like `eq`
-  switch: tasks.check.stdout
-  cases:
-    200: {up: {cmd: [echo, up]}}
-    503: {down: {cmd: [echo, down]}}
-  default: {other: {cmd: [echo, other]}}
+big:                                 # when: runs only if it holds, else is skipped
+  when: {this: tasks.stats.stdout.count, gt: 10}
+  cmd: [echo, big]
+small:                               # no else: write the opposite condition
+  when: {this: tasks.stats.stdout.count, lte: 10}
+  cmd: [echo, small]
 
 wait:                                # while: checked before each iteration
   while: {this: tasks.check.stdout, ne: 200}
@@ -145,7 +138,7 @@ each:                                # for_each: value must be a JSON list
 
 Conditions: `{this: PATH, OP: value}` with one or more of `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `contains`, `matches` (regex), `exists` (`true`/`false`, can't be combined). Combine with `all: [...]`, `any: [...]`, `not: cond`, or a bare list (= `all`). Numeric strings compare as numbers (`"200"` eq `200`).
 
-Branch, switch and loops have no `cmd`, `timeout` or `allow_failure` (that's for cmd tasks); a loop uses `on_failure: next` to skip a failing iteration. Nothing runs in parallel. Results set inside branches and loops stay available afterwards.
+Loops have no `cmd`, `timeout` or `allow_failure` (that's for cmd tasks); a loop uses `on_failure: next` to skip a failing iteration. A skipped task saves no result, so `tasks.NAME` stays undefined (test with `exists`). Nothing runs in parallel. Results set inside loops stay available afterwards.
 
 ## Schedules and `rocky run`
 

@@ -253,12 +253,12 @@ fn invalid_condition_fails_at_load_before_any_task() {
         dir.path(),
         "jobs:\n  w:\n    tasks:\n\
          \x20     first:\n        cmd: [touch, ran]\n        cwd: .\n\
-         \x20     route:\n        if: {this: tasks.first.exit_code, gt: ten}\n        then: {again: {cmd: [echo]}}\n",
+         \x20     again:\n        when: {this: tasks.first.exit_code, gt: ten}\n        cmd: [echo]\n",
     );
     assert_eq!(out.status.code(), Some(1));
     let err = stderr(&out);
     assert!(
-        err.contains("invalid task: `route`: invalid condition: `gt` needs a number"),
+        err.contains("invalid task: `again`: invalid condition: `gt` needs a number"),
         "{err}"
     );
     assert!(!err.contains("failed"), "{err}");
@@ -284,7 +284,7 @@ fn job_prints_failing_task_result() {
 
 /// Run from another directory, so the env file must be found next to the project.
 #[test]
-fn cmd_output_branch_and_env_file() {
+fn cmd_output_when_and_env_file() {
     let dir = tempfile::tempdir().unwrap();
     let file = write(
         dir.path(),
@@ -292,7 +292,8 @@ fn cmd_output_branch_and_env_file() {
         "env_file: .env\n\
          jobs:\n  w:\n    tasks:\n\
          \x20     count:\n        cmd: [echo, '{\"n\": 5}']\n\
-         \x20     size:\n        if: {this: tasks.count.stdout.n, gt: 3}\n        then: {big: {cmd: [echo, '${GREETING} ${USER_NAME} n=${tasks.count.stdout.n}']}}\n        else: {small: {cmd: [echo, small]}}\n",
+         \x20     big:\n        when: {this: tasks.count.stdout.n, gt: 3}\n        cmd: [echo, '${GREETING} ${USER_NAME} n=${tasks.count.stdout.n}']\n\
+         \x20     small:\n        when: {this: tasks.count.stdout.n, lte: 3}\n        cmd: [echo, small]\n",
     );
     write(dir.path(), ".env", "GREETING=hello\nUSER_NAME=alice\n");
     let other_cwd = tempfile::tempdir().unwrap();
@@ -329,7 +330,7 @@ fn job_tasks_read_earlier_results_via_args_and_stdin() {
          \x20     fetch:\n        cmd: [echo, '{\"token\": \"t1\", \"users\": [\"a\", \"b\", \"c\"]}']\n\
          \x20     count:\n        cmd: [wc, -c]\n        stdin: ${tasks.fetch.stdout.users}\n\
          \x20     report:\n        cmd: [cat]\n        stdin:\n          token: Bearer ${tasks.fetch.stdout.token}\n          users: ${tasks.fetch.stdout.users}\n          bytes: ${tasks.count.stdout}\n          prev_exit: ${tasks.fetch.exit_code}\n\
-         \x20     check:\n        if: {this: tasks.report.stdout.bytes, eq: 13}\n        then:\n          print:\n            cmd: [echo, 'reported ${tasks.report.stdout}']\n",
+         \x20     print:\n        when: {this: tasks.report.stdout.bytes, eq: 13}\n        cmd: [echo, 'reported ${tasks.report.stdout}']\n",
     );
     assert_eq!(
         stdout_json(&out)["stdout"],
@@ -557,15 +558,13 @@ fn run_on_start_and_the_at_run_log_control_flow() {
         &format!(
             "jobs:\n\
              \x20 hello:\n    schedule:\n      at: \"{at}\"\n      run_on_start: true\n    values: {{N: 1}}\n    tasks:\n\
-             \x20     check:\n        if: {{this: N, eq: 1}}\n        then: {{hi: {{cmd: [echo, hi]}}}}\n\
-             \x20     route:\n        switch: N\n        cases: {{1: {{one: {{cmd: [echo, one]}}}}}}\n\
+             \x20     hi:\n        when: {{this: N, eq: 1}}\n        cmd: [echo, hi]\n\
+             \x20     bye:\n        when: {{this: N, eq: 2}}\n        cmd: [echo, bye]\n\
              \x20     list:\n        cmd: [echo, '[1]']\n\
              \x20     each:\n        for_each: tasks.list.stdout\n        do: {{print: {{cmd: [echo, '${{ITEM}}']}}}}\n"
         ),
     );
-    let run = [
-        "branch", "task", "switch", "task", "task", "for_each", "task", "done",
-    ];
+    let run = ["task", "skip", "task", "for_each", "task", "done"];
     assert_eq!(events(&output), [run, run].concat());
 }
 
@@ -578,6 +577,18 @@ fn run_on_start_alone_runs_once_and_exits() {
     );
     assert!(output.status.success(), "{}", stderr(&output));
     assert_eq!(events(&output), ["task", "done"]);
+}
+
+#[test]
+fn run_logs_a_job_skipped_by_its_when() {
+    let dir = tempfile::tempdir().unwrap();
+    let output = run_yaml(
+        dir.path(),
+        "jobs:\n  hello:\n    schedule: {run_on_start: true}\n    values: {N: 2}\n    when: {this: N, eq: 1}\n\
+         \x20   tasks:\n      greet:\n        cmd: [echo, hi]\n",
+    );
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(events(&output), ["skip", "done"]);
 }
 
 #[test]
@@ -747,7 +758,7 @@ fn validate_reports_the_load_error() {
     let file = write(
         dir.path(),
         "project.yaml",
-        "jobs:\n  w:\n    tasks:\n      t:\n        if: {this: X, matches: '('}\n        then: {touch: {cmd: [touch, ran]}}\n",
+        "jobs:\n  w:\n    tasks:\n      touch:\n        when: {this: X, matches: '('}\n        cmd: [touch, ran]\n",
     );
     let out = validate(&file, dir.path());
     assert_eq!(out.status.code(), Some(1));

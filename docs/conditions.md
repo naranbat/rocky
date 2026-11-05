@@ -1,48 +1,47 @@
 # Conditions
 
-A task with `if` is a branch. If the condition holds, its `then` tasks run; otherwise its `else` tasks run. Either map may be left out, but not both. The job then continues with the task after the branch.
+Any job or task can have `when`, a condition. If the condition holds, it runs; if not, it is skipped and the job goes on with the next task. Without `when`, it always runs. There are no `if`/`then`/`else` or `switch` blocks: each task carries its own condition, so to run several tasks under the same condition, give each one that `when`.
 
 ```yaml
 tasks:
   A:
     cmd: [curl, -sS, --fail-with-body, '${BASE}/stats']
-  route:
-    if: { this: tasks.A.stdout.count, gt: 10 }
-    then:
-      B:
-        cmd: [curl, -sS, --fail-with-body, -X, POST, '${BASE}/big']
-    else:
-      warn:                                   # else-if: nest a branch
-        if:                                   # a list: every condition must hold
-          - { this: tasks.A.stdout.message, contains: warning }
-          - not: { this: tasks.A.stdout.message, matches: "^ignore" }
-        then:
-          C:
-            cmd: [curl, -sS, --fail-with-body, -X, POST, '${BASE}/warn']
-  D:                                          # always runs after the branch
+  B:
+    when: { this: tasks.A.stdout.count, gt: 10 }
+    cmd: [curl, -sS, --fail-with-body, -X, POST, '${BASE}/big']
+  C:
+    when:                                     # a list: every condition must hold
+      - { this: tasks.A.stdout.count, lte: 10 }
+      - { this: tasks.A.stdout.message, contains: warning }
+      - not: { this: tasks.A.stdout.message, matches: "^ignore" }
+    cmd: [curl, -sS, --fail-with-body, -X, POST, '${BASE}/warn']
+  D:                                          # no `when`: always runs
     cmd: [curl, -sS, --fail-with-body, '${BASE}/done']
 ```
 
-Example: the `conditional` job in [`examples/httpbin.yaml`](../examples/httpbin.yaml). Run it as is for the `then` branch, or set `COUNT` to `5` in [`examples/httpbin.env`](../examples/httpbin.env) for the `else` branch.
+Example: the `conditional` job in [`examples/httpbin.yaml`](../examples/httpbin.yaml). Run it as is to run `big`, or set `COUNT` to `5` in [`examples/httpbin.env`](../examples/httpbin.env) to run `warn` instead.
 
-## Branch fields
+## Where `when` goes
 
-| Field | Notes |
-|---|---|
-| `if` | The condition. |
-| `then` | Tasks to run when it is true. |
-| `else` | Tasks to run when it is false. |
+| On | Checked | When false |
+|---|---|---|
+| a job | before its first task, against `values`, the `env_file` and the environment (no `tasks.*` yet) | no task runs; `exec` prints `null` |
+| a cmd task | when the job reaches the task | the task doesn't run |
+| a `for_each` or `while` loop | once, when the job reaches the loop | the whole loop is skipped |
+| a `trigger` task | when the job reaches it | the job isn't queued |
+| a [task file entry](projects.md#reusing-a-task-file) | when the job reaches it, with the entry's `with` inputs set | the task doesn't run |
 
-Like every task, a branch is named by its key, which labels it in errors and `run`'s log lines; a branch has no result to save.
-
-A branch can't also have `cmd`, `timeout` or `allow_failure`.
+- **A skipped task has no result.** `tasks.NAME` stays undefined (or keeps the result of an earlier task with that name), so test it with `exists`: `when: {this: tasks.B, exists: false}` runs a task only if `B` was skipped.
+- **Task files:** `when` can sit next to `file` and `with`. If the task file has its own `when`, both must hold; the entry's is checked first. The file's `when` can read the entry's `with` inputs.
+- **Job files:** put `when` in the job file. A `jobs` entry with `file` can't have it.
+- With `run`, a skipped task writes a `skip` line with its `task`; a skipped job writes a `skip` line without one, then its `done` line.
 
 ## Condition shape
 
 A condition is either `this` with **one or more** operators, or exactly one of `all`, `any`, `not`, or a list.
 
 - **Several operators** must all hold, checked in the table's order and stopping at the first false: `{this: X, gt: 1, lt: 10}` is a range. `exists` can't be combined with other operators.
-- **A list** is shorthand for `all`: `if: [{this: A, eq: 1}, {this: B, eq: 2}]` is `if: {all: [...]}`. It works anywhere a condition does, including inside `all`, `any` and `not`.
+- **A list** is shorthand for `all`: `when: [{this: A, eq: 1}, {this: B, eq: 2}]` is `when: {all: [...]}`. It works anywhere a condition does, including inside `all`, `any` and `not`.
 
 `this` names the variable or dot path to test, with or without `${}`: `this: tasks.login.exit_code` or `this: ${tasks.login.exit_code}`. Inside `{...}`, quote a `${}` so YAML doesn't end the map at its `}`: `{this: '${tasks.login.exit_code}', eq: 0}`.
 
@@ -66,38 +65,6 @@ Values from env files and the environment are strings, which is why numeric stri
 ## Behaviour
 
 - Operator values other than `matches` may use `${...}`, expanded when the condition runs, to compare two variables: `{this: ID, gt: "${LAST_ID}"}`. A value that is exactly `"${NAME}"` keeps its JSON type; `$${` is a literal `${`. If a number operator's value doesn't expand to a number, the task fails with ``condition: `gt` needs a number, got ...``. `matches` is fixed.
-- Tasks inside `then`/`else` are named by their keys and can contain further branches and [loops](loops.md). Their results are available to later tasks.
-- If the chosen map is empty (only `then` given and the condition is false), nothing runs and the job continues.
-
-## Switch
-
-A task with `switch` compares one variable against each key of `cases`, in order, and runs the tasks of the first case that matches. If none matches, its `default` tasks run. The job then continues with the task after the switch.
-
-```yaml
-tasks:
-  check:
-    cmd: [curl, -sS, -o, /dev/null, -w, '%{http_code}', '${BASE}/health']   # prints the status code
-  route:
-    switch: tasks.check.stdout                # a variable or dot path; ${} optional
-    cases:                                    # value: tasks to run
-      200:
-        healthy:
-          cmd: [echo, healthy]
-      503:
-        down:
-          cmd: [echo, down]
-    default:                                  # optional
-      unexpected:
-        cmd: [echo, unexpected]
-```
-
-| Field | Notes |
-|---|---|
-| `switch` | Required. The variable to compare, looked up like a condition's [`this`](#variable-lookup). An undefined variable fails the task. |
-| `cases` | Required, non-empty. A map of value → tasks, tried in order. Each value is compared with the [`eq`](#condition-shape) rules, so `200` matches `"200"`; it's fixed (`${...}` isn't expanded). The exact same key can't appear twice; keys that are only equal by these rules (`200` and `"200"`) both load, and only the first can match. Each case needs at least one task. |
-| `default` | Optional. The tasks to run when no case matches. Without it, nothing runs. |
-
-A switch can't also have `cmd`, `timeout`, `allow_failure`, `if`, `then` or `else`. Tasks inside a case or `default` behave like those inside `then`/`else`.
 
 ## While
 
@@ -121,12 +88,12 @@ To run one command again until it succeeds or a condition holds, [`retry`](cmd-t
 
 | Field | Notes |
 |---|---|
-| `while` | Required. A [condition](#condition-shape), evaluated like `if`'s. An undefined variable fails the task, except with `exists`. |
+| `while` | Required. A [condition](#condition-shape), evaluated like `when`'s. An undefined variable fails the task, except with `exists`. |
 | `attempts` | Optional, at least 1. The most times `do` may run, like [`retry`](cmd-tasks.md#retry)'s `attempts`. If the condition still holds after that many runs, the task fails with ``while: still true after N attempts``. Without it, the loop has no limit. It used to be called `max`, which now fails to load with `` `max` is now `attempts` ``. |
 | `do` | Required, non-empty. The tasks to run on each iteration. |
 | `on_failure` | Optional, `stop` (the default) or `next`. With `next`, a failing `do` task skips the rest of that iteration; the condition is checked again next. A skipped iteration counts toward `attempts`. |
 
-A `while` loop can't also have `cmd`, `timeout`, `allow_failure`, `if`, `then`, `else`, `switch`, `cases`, `default`, `for_each` or `as`. Like [`for_each`](loops.md#behaviour), results set inside `do` stay available after the loop, a failing task stops the job unless a loop around it has `on_failure: next`, and nothing pauses between iterations unless a `do` task does (`sleep`).
+A `while` loop can't also have `cmd`, `timeout`, `allow_failure`, `for_each` or `as`. Like [`for_each`](loops.md#behaviour), results set inside `do` stay available after the loop, a failing task stops the job unless a loop around it has `on_failure: next`, and nothing pauses between iterations unless a `do` task does (`sleep`).
 
 ## Errors
 
@@ -138,3 +105,5 @@ Error: job `w`
 Caused by:
     invalid task: `route`: invalid condition: `gt` needs a number, got "ten"
 ```
+
+A task that still uses the removed `if`/`then`/`else` or `switch`/`cases`/`default` fails as ``invalid YAML in <file>`` with ``unknown field `if` `` (or `switch`); move the condition to `when` on each task it should gate.

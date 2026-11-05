@@ -49,8 +49,7 @@ impl Defaults {
         self
     }
 
-    /// Fills in the `cmd` tasks in `tasks`, including those nested in branches, switches and
-    /// loops.
+    /// Fills in the `cmd` tasks in `tasks`, including those nested in loops.
     pub fn apply(&self, tasks: &mut [Task]) {
         for task in tasks {
             if task.cmd.is_some() {
@@ -66,13 +65,7 @@ impl Defaults {
                     task.retry.clone_from(&self.retry);
                 }
             }
-            self.apply(&mut task.then);
-            self.apply(&mut task.otherwise);
             self.apply(&mut task.body);
-            self.apply(&mut task.default);
-            for case in &mut task.cases {
-                self.apply(&mut case.body);
-            }
         }
     }
 }

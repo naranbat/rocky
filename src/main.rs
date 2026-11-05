@@ -30,7 +30,7 @@ enum Command {
     },
     /// Run a project's scheduled jobs.
     ///
-    /// Runs until stopped, or until only finished `at` schedules are left. Prints one JSON line per task, branch, switch, loop and run, also appended to `.rocky/logs/<date>.log` (`<service>-<date>.log` with `--service`).
+    /// Runs until stopped, or until only finished `at` schedules are left. Prints one JSON line per task, skip, loop and run, also appended to `.rocky/logs/<date>.log` (`<service>-<date>.log` with `--service`).
     Run {
         file: PathBuf,
         /// Also run any job of the project when a client of this Unix socket sends `{"job": "NAME"}`.

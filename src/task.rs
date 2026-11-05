@@ -10,11 +10,11 @@ use crate::condition::Condition;
 use crate::error::Error;
 use crate::{project, schedule, var_name, vars};
 
-/// One entry of a job's `tasks`: a cmd task, a branch, a switch, a loop, or a trigger.
+/// One entry of a job's `tasks`: a cmd task, a loop, or a trigger, each with an optional `when`.
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Task {
-    /// Its key in the enclosing `tasks`, `then`, `else`, `do` or `default` map.
+    /// Its key in the enclosing `tasks` or `do` map.
     #[serde(skip)]
     pub name: String,
     /// A task YAML file, relative to the file that declares this task, used in its place:
@@ -66,13 +66,8 @@ pub struct Task {
     /// On a loop, what a failing `do` task does: stop the job (the default), or skip the rest of
     /// that iteration.
     pub on_failure: Option<OnFailure>,
-    /// Makes this a branch: runs `then` if the condition holds, else `else`.
-    #[serde(rename = "if")]
-    pub condition: Option<Condition>,
-    #[serde(default, deserialize_with = "named")]
-    pub then: Vec<Task>,
-    #[serde(default, rename = "else", deserialize_with = "named")]
-    pub otherwise: Vec<Task>,
+    /// The task runs only if this condition holds when it is reached; otherwise it is skipped.
+    pub when: Option<Condition>,
     /// Makes this a loop: runs `do` once per element of this list variable.
     #[serde(default, deserialize_with = "vars::var_path")]
     pub for_each: Option<String>,
@@ -89,13 +84,6 @@ pub struct Task {
     pub old_max: Option<Value>,
     #[serde(default, rename = "do", deserialize_with = "named")]
     pub body: Vec<Task>,
-    /// Makes this a switch: runs the first case whose key equals this variable, else `default`.
-    #[serde(default, deserialize_with = "vars::var_path")]
-    pub switch: Option<String>,
-    #[serde(default, deserialize_with = "cases")]
-    pub cases: Vec<Case>,
-    #[serde(default, deserialize_with = "named")]
-    pub default: Vec<Task>,
     /// Makes this a trigger: queues a run of this job.
     pub trigger: Option<String>,
 }
@@ -134,13 +122,6 @@ impl Retry {
             None => Ok(()),
         }
     }
-}
-
-/// One `cases` entry of a switch: tasks to run when the variable equals its key.
-#[derive(Clone, Debug)]
-pub struct Case {
-    pub value: Value,
-    pub body: Vec<Task>,
 }
 
 /// Reads an optional command while rejecting YAML scalars that serde would coerce to strings.
@@ -189,42 +170,6 @@ pub(crate) fn duration<'de, D: Deserializer<'de>>(
     }
 
     deserializer.deserialize_str(DurationVisitor).map(Some)
-}
-
-/// Reads a switch's `cases`: a map of value to the tasks to run, keeping its order.
-fn cases<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<Case>, D::Error> {
-    struct CasesVisitor;
-
-    /// A case's tasks, read like any other map of named tasks.
-    struct Body(Vec<Task>);
-
-    impl<'de> Deserialize<'de> for Body {
-        fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-            named(deserializer).map(Body)
-        }
-    }
-
-    impl<'de> Visitor<'de> for CasesVisitor {
-        type Value = Vec<Case>;
-
-        fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
-            f.write_str("a map of value to a map of tasks")
-        }
-
-        fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Vec<Case>, A::Error> {
-            let mut cases = Vec::new();
-            while let Some(value) = map.next_key::<Value>()? {
-                if cases.iter().any(|case: &Case| case.value == value) {
-                    return Err(de::Error::custom(format!("duplicate case `{value}`")));
-                }
-                let Body(body) = map.next_value()?;
-                cases.push(Case { value, body });
-            }
-            Ok(cases)
-        }
-    }
-
-    deserializer.deserialize_map(CasesVisitor)
 }
 
 /// Reads a map of task name to task, or to the path of a task file, keeping its order.
@@ -294,11 +239,7 @@ impl<'de> Deserialize<'de> for Source {
 }
 
 impl Task {
-    fn has_switch_fields(&self) -> bool {
-        self.switch.is_some() || !self.cases.is_empty() || !self.default.is_empty()
-    }
-
-    /// Whether any field other than `with` is set, on an entry that has `file`.
+    /// Whether any field other than `with` and `when` is set, on an entry that has `file`.
     fn has_fields_besides_inputs(&self) -> bool {
         self.cmd.is_some()
             || !self.pipe.is_empty()
@@ -311,25 +252,17 @@ impl Task {
             || self.retry.is_some()
             || self.allow_failure
             || self.on_failure.is_some()
-            || self.condition.is_some()
-            || !self.then.is_empty()
-            || !self.otherwise.is_empty()
             || self.for_each.is_some()
             || self.item_var.is_some()
             || self.repeat.is_some()
             || self.attempts.is_some()
             || self.old_max.is_some()
             || !self.body.is_empty()
-            || self.has_switch_fields()
             || self.trigger.is_some()
-    }
-
-    fn has_task_fields(&self) -> bool {
-        self.cmd.is_some() || self.timeout.is_some() || self.allow_failure
     }
 }
 
-/// Validates tasks (recursively through branches and loops) and resolves their paths against `dir`.
+/// Validates tasks (recursively through loops) and resolves their paths against `dir`.
 pub fn resolve(tasks: &mut [Task], dir: &Path) -> Result<(), Error> {
     resolve_all(tasks, dir, &mut Vec::new())
 }
@@ -350,10 +283,15 @@ fn resolve_one(task: &mut Task, dir: &Path, stack: &mut Vec<PathBuf>) -> Result<
             var_name::RULE
         )));
     }
+    if let Some(condition) = &task.when {
+        condition
+            .validate()
+            .map_err(|source| Error::InvalidTask(format!("`{name}`: {source}")))?;
+    }
     if let Some(path) = task.r#use.take() {
         if task.has_fields_besides_inputs() {
             return Err(Error::InvalidTask(format!(
-                "`{name}` has `file`, so its other fields go in that file; only `with` can be next to it"
+                "`{name}` has `file`, so its other fields go in that file; only `with` and `when` can be next to it"
             )));
         }
         if let Some(var) = task.inputs.keys().find(|var| !var_name::is_valid_var(var)) {
@@ -419,26 +357,11 @@ fn resolve_one(task: &mut Task, dir: &Path, stack: &mut Vec<PathBuf>) -> Result<
             "`{name}` has `on_failure`, which only works on loops (`for_each`, `while`)"
         )));
     }
-    if task.switch.is_some() {
-        return resolve_switch(task, &name, dir, stack);
-    }
-    if !task.cases.is_empty() || !task.default.is_empty() {
-        return Err(Error::InvalidTask(format!(
-            "`{name}` has `cases`/`default` but no `switch`"
-        )));
-    }
-    if task.condition.is_some() {
-        return resolve_branch(task, &name, dir, stack);
-    }
-    if !task.then.is_empty() || !task.otherwise.is_empty() {
-        return Err(Error::InvalidTask(format!(
-            "`{name}` has `then`/`else` but no `if`"
-        )));
-    }
     resolve_leaf(task, &name)
 }
 
-/// Replaces `task` with the task file at `path`, named by `task`'s key.
+/// Replaces `task` with the task file at `path`, named by `task`'s key. The entry's `when`
+/// and the file's own must both hold, the entry's checked first.
 fn resolve_use(
     task: &mut Task,
     path: PathBuf,
@@ -459,6 +382,10 @@ fn resolve_use(
     }
     let mut loaded: Task = project::read_yaml(&path)?;
     loaded.name = std::mem::take(&mut task.name);
+    loaded.when = match (task.when.take(), loaded.when.take()) {
+        (Some(entry), Some(own)) => Some(Condition::all(vec![entry, own])),
+        (entry, own) => entry.or(own),
+    };
     let file_dir = path.parent().unwrap_or(Path::new(""));
     stack.push(canonical);
     resolve_one(&mut loaded, file_dir, stack)?;
@@ -480,15 +407,11 @@ fn resolve_loop(
     }
     if task.cmd.is_some()
         || task.timeout.is_some()
-        || task.condition.is_some()
-        || !task.then.is_empty()
-        || !task.otherwise.is_empty()
-        || task.has_switch_fields()
         || task.repeat.is_some()
         || task.attempts.is_some()
     {
         return Err(Error::InvalidTask(format!(
-            "`{name}` is a loop (`for_each`) and cannot have `cmd`, `timeout`, `if`, `then`, `else`, `switch`, `cases`, `default`, `while` or `attempts`"
+            "`{name}` is a loop (`for_each`) and cannot have `cmd`, `timeout`, `while` or `attempts`"
         )));
     }
     if task.body.is_empty() {
@@ -518,15 +441,9 @@ fn resolve_while(
             "`{name}` is a loop (`while`): `allow_failure` only works on cmd tasks; use `on_failure: next` to skip to the next iteration when a `do` task fails"
         )));
     }
-    if task.cmd.is_some()
-        || task.timeout.is_some()
-        || task.condition.is_some()
-        || !task.then.is_empty()
-        || !task.otherwise.is_empty()
-        || task.has_switch_fields()
-    {
+    if task.cmd.is_some() || task.timeout.is_some() {
         return Err(Error::InvalidTask(format!(
-            "`{name}` is a loop (`while`) and cannot have `cmd`, `timeout`, `if`, `then`, `else`, `switch`, `cases` or `default`"
+            "`{name}` is a loop (`while`) and cannot have `cmd` or `timeout`"
         )));
     }
     if task.body.is_empty() {
@@ -545,63 +462,6 @@ fn resolve_while(
             .map_err(|source| Error::InvalidTask(format!("`{name}`: {source}")))?;
     }
     resolve_all(&mut task.body, dir, stack)
-}
-
-fn resolve_branch(
-    task: &mut Task,
-    name: &str,
-    dir: &Path,
-    stack: &mut Vec<PathBuf>,
-) -> Result<(), Error> {
-    if task.has_task_fields() {
-        return Err(Error::InvalidTask(format!(
-            "`{name}` is a branch (`if`) and cannot have `cmd`, `timeout` or `allow_failure`"
-        )));
-    }
-    if task.then.is_empty() && task.otherwise.is_empty() {
-        return Err(Error::InvalidTask(format!(
-            "`{name}` needs a non-empty `then` or `else`"
-        )));
-    }
-    if let Some(condition) = &task.condition {
-        condition
-            .validate()
-            .map_err(|source| Error::InvalidTask(format!("`{name}`: {source}")))?;
-    }
-    resolve_all(&mut task.then, dir, stack)?;
-    resolve_all(&mut task.otherwise, dir, stack)
-}
-
-fn resolve_switch(
-    task: &mut Task,
-    name: &str,
-    dir: &Path,
-    stack: &mut Vec<PathBuf>,
-) -> Result<(), Error> {
-    if task.has_task_fields()
-        || task.condition.is_some()
-        || !task.then.is_empty()
-        || !task.otherwise.is_empty()
-    {
-        return Err(Error::InvalidTask(format!(
-            "`{name}` is a switch (`switch`) and cannot have `cmd`, `timeout`, `allow_failure`, `if`, `then` or `else`"
-        )));
-    }
-    if task.cases.is_empty() {
-        return Err(Error::InvalidTask(format!(
-            "`{name}` needs a non-empty `cases`"
-        )));
-    }
-    for case in &mut task.cases {
-        if case.body.is_empty() {
-            return Err(Error::InvalidTask(format!(
-                "`{name}` case {} needs at least one task",
-                case.value
-            )));
-        }
-        resolve_all(&mut case.body, dir, stack)?;
-    }
-    resolve_all(&mut task.default, dir, stack)
 }
 
 /// Checks a trigger, which has no other fields. Whether its job exists is checked once the
@@ -752,11 +612,11 @@ mod tests {
     }
 
     #[test]
-    fn timeout_works_on_cmd_tasks_but_not_branches_or_loops() {
+    fn timeout_works_on_cmd_tasks_but_not_loops() {
         resolve_here("s:\n  cmd: [echo]\n  timeout: 5s\n").unwrap();
         for yaml in [
-            "a:\n  if: {this: X, eq: 1}\n  then: {b: {cmd: [echo]}}\n  timeout: 1s\n",
             "a:\n  for_each: X\n  do: {b: {cmd: [echo]}}\n  timeout: 1s\n",
+            "a:\n  while: {this: X, eq: 1}\n  do: {b: {cmd: [echo]}}\n  timeout: 1s\n",
         ] {
             let msg = invalid_task(yaml);
             assert!(
@@ -868,37 +728,34 @@ mod tests {
     }
 
     #[test]
-    fn resolves_paths_inside_nested_branches_and_loops() {
-        let dir = Path::new("/project");
-        let tasks = resolve_in(
-            dir,
-            "r:\n  if: {this: X, gt: 1}\n  then:\n    a:\n      cmd: [a]\n      cwd: a\n  else:\n\
-             \x20   l:\n      for_each: IDS\n      do:\n        b:\n          cmd: [b]\n          cwd: b\n",
+    fn when_works_on_every_kind_of_task() {
+        let tasks = resolve_here(
+            "a:\n  when: {this: X, eq: 1}\n  cmd: [echo]\n\
+             l:\n  when: [{this: X, eq: 1}]\n  for_each: X\n  do: {b: {cmd: [echo]}}\n\
+             w:\n  when: {this: X, eq: 1}\n  while: {this: X, eq: 1}\n  do: {c: {cmd: [echo]}}\n\
+             t:\n  when: {this: X, eq: 1}\n  trigger: report\n",
         )
         .unwrap();
-        assert_eq!(tasks[0].then[0].dir, dir);
-        assert_eq!(tasks[0].otherwise[0].body[0].dir, dir);
+        assert!(tasks.iter().all(|task| task.when.is_some()));
     }
 
     #[test]
-    fn rejects_mixed_branch_and_task_fields() {
-        let branch = "`r` is a branch (`if`) and cannot have";
-        for (yaml, expected) in [
+    fn if_and_switch_are_unknown_fields() {
+        for (yaml, field) in [
             (
-                "r:\n  if: {this: X, gt: 1}\n  then: {a: {cmd: [echo]}}\n  cmd: [echo]\n",
-                branch,
+                "r:\n  if: {this: X, gt: 1}\n  then: {a: {cmd: [echo]}}\n",
+                "if",
             ),
             (
-                "r:\n  if: {this: X, gt: 1}\n",
-                "`r` needs a non-empty `then` or `else`",
-            ),
-            (
-                "r:\n  cmd: [echo]\n  then: {b: {cmd: [echo]}}\n",
-                "`r` has `then`/`else` but no `if`",
+                "s:\n  switch: X\n  cases: {1: {a: {cmd: [echo]}}}\n",
+                "switch",
             ),
         ] {
-            let msg = invalid_task(yaml);
-            assert!(msg.contains(expected), "{yaml}: {msg}");
+            let err = parse_named(yaml).unwrap_err().to_string();
+            assert!(
+                err.contains(&format!("unknown field `{field}`")) && err.contains("`when`"),
+                "{yaml}: {err}"
+            );
         }
     }
 
@@ -910,10 +767,6 @@ mod tests {
         for (yaml, expected) in [
             (format!("l:\n  for_each: X\n{body}  cmd: [echo]\n"), a_loop),
             (format!("l:\n  for_each: X\n{body}  timeout: 1s\n"), a_loop),
-            (
-                format!("l:\n  for_each: X\n{body}  if: {{this: X, eq: 1}}\n"),
-                a_loop,
-            ),
             (
                 "l:\n  for_each: X\n  do: {}\n".to_string(),
                 "`l` needs a non-empty `do`",
@@ -947,11 +800,6 @@ mod tests {
         for (yaml, expected) in [
             (format!("w:\n{cond}{body}  cmd: [echo]\n"), a_while),
             (format!("w:\n{cond}{body}  timeout: 1s\n"), a_while),
-            (
-                format!("w:\n{cond}{body}  if: {{this: X, eq: 1}}\n"),
-                a_while,
-            ),
-            (format!("w:\n{cond}{body}  switch: X\n"), a_while),
             (
                 format!("w:\n{cond}{body}  as: Y\n"),
                 "`w` has `as` but no `for_each`",
@@ -1009,8 +857,7 @@ mod tests {
         }
         for yaml in [
             "a:\n  cmd: [a]\n  on_failure: next\n",
-            "r:\n  if: {this: X, eq: 1}\n  then: {a: {cmd: [a]}}\n  on_failure: next\n",
-            "s:\n  switch: X\n  cases: {1: {a: {cmd: [a]}}}\n  on_failure: next\n",
+            "a:\n  when: {this: X, eq: 1}\n  cmd: [a]\n  on_failure: next\n",
         ] {
             let msg = invalid_task(yaml);
             assert!(
@@ -1024,79 +871,13 @@ mod tests {
     }
 
     #[test]
-    fn resolves_paths_inside_switch_cases() {
-        let dir = Path::new("/project");
-        let tasks = resolve_in(
-            dir,
-            "s:\n  switch: X\n  cases:\n    1: {a: {cmd: [a], cwd: a}}\n\
-             \x20 default: {b: {cmd: [b], cwd: b}}\n",
-        )
-        .unwrap();
-        assert_eq!(tasks[0].cases[0].body[0].dir, dir);
-        assert_eq!(tasks[0].default[0].dir, dir);
-    }
-
-    #[test]
-    fn rejects_invalid_switches() {
-        let case = "  cases: {1: {a: {cmd: [echo]}}}\n";
-        let switch = "`s` is a switch (`switch`) and cannot have";
-        let no_cases = "`s` needs a non-empty `cases`";
-        let no_switch = "`s` has `cases`/`default` but no `switch`";
-        for (yaml, expected) in [
-            (format!("s:\n  switch: X\n{case}  cmd: [echo]\n"), switch),
-            (
-                format!("s:\n  switch: X\n{case}  allow_failure: true\n"),
-                switch,
-            ),
-            (
-                format!("s:\n  switch: X\n{case}  if: {{this: X, eq: 1}}\n"),
-                switch,
-            ),
-            ("s:\n  switch: X\n".to_string(), no_cases),
-            (
-                "s:\n  switch: X\n  default: {a: {cmd: [echo]}}\n".to_string(),
-                no_cases,
-            ),
-            (
-                "s:\n  switch: X\n  cases: {1: {}}\n".to_string(),
-                "`s` case 1 needs at least one task",
-            ),
-            (format!("s:\n{case}"), no_switch),
-            (
-                "s:\n  cmd: [echo]\n  default: {b: {cmd: [echo]}}\n".to_string(),
-                no_switch,
-            ),
-            (
-                format!("s:\n  for_each: X\n  do: {{a: {{cmd: [echo]}}}}\n  switch: X\n{case}"),
-                "`s` is a loop (`for_each`) and cannot have",
-            ),
-            (
-                "w:\n  switch: X\n  cases:\n    1: {s: {cmd: []}}\n".to_string(),
-                "`s` has an empty `cmd`",
-            ),
-        ] {
-            let msg = invalid_task(&yaml);
-            assert!(msg.contains(expected), "{yaml}: {msg}");
-        }
-        assert!(
-            parse_named("s:\n  switch: X\n  cases: [{match: 1, do: {a: {cmd: [echo]}}}]\n")
-                .is_err()
-        );
-        let err = parse_named(
-            "s:\n  switch: X\n  cases: {1: {a: {cmd: [echo]}}, 1: {b: {cmd: [echo]}}}\n",
-        )
-        .unwrap_err();
-        assert!(err.to_string().contains("duplicate case `1`"), "{err}");
-    }
-
-    #[test]
     fn triggers_take_no_other_fields() {
         let tasks = resolve_here("t:\n  trigger: report\n").unwrap();
         assert_eq!(tasks[0].trigger.as_deref(), Some("report"));
         for yaml in [
             "t:\n  trigger: report\n  timeout: 5s\n",
             "t:\n  trigger: report\n  allow_failure: true\n",
-            "t:\n  trigger: report\n  if: {this: X, eq: 1}\n  then: {a: {cmd: [echo]}}\n",
+            "t:\n  trigger: report\n  cmd: [echo]\n",
             "t:\n  trigger: report\n  for_each: X\n  do: {a: {cmd: [echo]}}\n",
             "t:\n  trigger: report\n  on_failure: next\n",
         ] {
@@ -1108,8 +889,7 @@ mod tests {
         }
         let msg = invalid_task("t:\n  trigger: report\n  stdin: x\n");
         assert!(msg.contains("only works with `cmd`"), "{msg}");
-        let msg =
-            invalid_task("b:\n  if: {this: X, eq: 1}\n  then: {t: {trigger: r, cmd: [echo]}}\n");
+        let msg = invalid_task("b:\n  for_each: X\n  do: {t: {trigger: r, cmd: [echo]}}\n");
         assert!(msg.contains("`t` is a trigger"), "{msg}");
     }
 
@@ -1150,7 +930,7 @@ mod tests {
 
         std::fs::write(
             dir.path().join("a.yaml"),
-            "if: {this: X, eq: 1}\nthen: {b: b.yaml}\n",
+            "while: {this: X, eq: 1}\ndo: {b: b.yaml}\n",
         )
         .unwrap();
         std::fs::write(dir.path().join("b.yaml"), "for_each: X\ndo: {a: a.yaml}\n").unwrap();
@@ -1216,8 +996,38 @@ mod tests {
     }
 
     #[test]
+    fn task_file_entries_take_when_and_keep_the_files_own() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("plain.yaml"), "cmd: [echo]\n").unwrap();
+        std::fs::write(
+            dir.path().join("gated.yaml"),
+            "when: {this: WHO, eq: b}\ncmd: [echo]\n",
+        )
+        .unwrap();
+        let tasks = resolve_in(
+            dir.path(),
+            "a: {file: plain.yaml, when: {this: X, eq: 1}}\nb: gated.yaml\n\
+             c: {file: gated.yaml, with: {WHO: c}, when: {this: X, eq: 1}}\n",
+        )
+        .unwrap();
+        let holds = |task: &Task, x: i64| {
+            let lookup = |var: &str| match var {
+                "X" => Some(serde_json::json!(x)),
+                "WHO" => Some(serde_json::json!("b")),
+                _ => None,
+            };
+            task.when.as_ref().unwrap().evaluate(&lookup).unwrap()
+        };
+        assert!(holds(&tasks[0], 1) && !holds(&tasks[0], 2));
+        assert!(holds(&tasks[1], 2));
+        assert!(holds(&tasks[2], 1) && !holds(&tasks[2], 2));
+        let msg = invalid_task("a:\n  file: plain.yaml\n  when: {this: X, gt: ten}\n");
+        assert!(msg.contains("`a`: invalid condition"), "{msg}");
+    }
+
+    #[test]
     fn rejects_invalid_condition() {
-        let msg = invalid_task("r:\n  if: {this: X, gt: ten}\n  then: {a: {cmd: [echo]}}\n");
+        let msg = invalid_task("r:\n  when: {this: X, gt: ten}\n  cmd: [echo]\n");
         assert!(
             msg.starts_with("`r`: invalid condition: `gt` needs a number"),
             "{msg}"
@@ -1225,24 +1035,12 @@ mod tests {
     }
 
     #[test]
-    fn for_each_and_switch_take_a_bare_or_wrapped_path() {
-        let tasks = resolve_here(
-            "l:\n  for_each: ${tasks.a.stdout}\n  do: {a: {cmd: [echo]}}\n\
-             s:\n  switch: ${X}\n  cases: {1: {b: {cmd: [echo]}}}\n",
-        )
-        .unwrap();
+    fn for_each_takes_a_bare_or_wrapped_path() {
+        let tasks =
+            resolve_here("l:\n  for_each: ${tasks.a.stdout}\n  do: {a: {cmd: [echo]}}\n").unwrap();
         assert_eq!(tasks[0].for_each.as_deref(), Some("tasks.a.stdout"));
-        assert_eq!(tasks[1].switch.as_deref(), Some("X"));
-        for yaml in [
-            "l:\n  for_each: a${X}\n  do: {a: {cmd: [echo]}}\n",
-            "s:\n  switch: ${X}${Y}\n  cases: {1: {b: {cmd: [echo]}}}\n",
-        ] {
-            let err = parse_named(yaml).unwrap_err();
-            assert!(
-                err.to_string().contains("must name one variable"),
-                "{yaml}: {err}"
-            );
-        }
+        let err = parse_named("l:\n  for_each: a${X}\n  do: {a: {cmd: [echo]}}\n").unwrap_err();
+        assert!(err.to_string().contains("must name one variable"), "{err}");
     }
 
     #[test]

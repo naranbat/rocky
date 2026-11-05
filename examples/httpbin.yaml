@@ -63,7 +63,7 @@ jobs:
         cmd: [curl, -sS, --fail-with-body, --json, '@-', '${BASE}/anything/report']
         stdin: ${tasks.load.stdout}
 
-  # Branching: if count > 10 call /big, else check the message.
+  # Conditions: `when` runs a task only if it holds. If count > 10 call /big, else check the message.
   conditional:
     schedule:
       hourly: 15                      # at minute 15 of every hour
@@ -72,37 +72,32 @@ jobs:
         cmd: [curl, -sS, --fail-with-body, -G, '${BASE}/anything/stats', -d, 'count=${COUNT}', --data-urlencode, 'message=warning: disk low']
 
       # httpbin echoes query values as strings ("15"); numeric strings compare as numbers.
-      route:
-        if: { this: tasks.stats.stdout.args.count, gt: 10 }
-        then:
-          big:
-            cmd: [curl, -sS, --fail-with-body, -X, POST, '${BASE}/anything/big']
-        else:
-          check:
-            if:
-              all:
-                - { this: tasks.stats.stdout.args.message, contains: warning }
-                - not: { this: tasks.stats.stdout.args.message, matches: "^ignore" }
-            then:
-              warn:
-                cmd: [curl, -sS, --fail-with-body, -X, POST, '${BASE}/anything/warn']
+      big:
+        when: { this: tasks.stats.stdout.args.count, gt: 10 }
+        cmd: [curl, -sS, --fail-with-body, -X, POST, '${BASE}/anything/big']
+
+      warn:
+        when:                         # a list: every condition must hold
+          - { this: tasks.stats.stdout.args.count, lte: 10 }
+          - { this: tasks.stats.stdout.args.message, contains: warning }
+          - not: { this: tasks.stats.stdout.args.message, matches: "^ignore" }
+        cmd: [curl, -sS, --fail-with-body, -X, POST, '${BASE}/anything/warn']
 
   # Tolerating a timeout: `allow_failure` keeps going and the result is just `{ok: false, error: ...}`.
   health:
     tasks:
       ping:
         cmd: [curl, -sS, --fail-with-body, '${BASE}/delay/3']   # httpbin waits 3s before answering
-        timeout: 1s                   # set to 5s to take the `else` branch
+        timeout: 1s                   # set to 5s to run `ok` instead of `failed`
         allow_failure: true
 
-      report:
-        if: { this: tasks.ping.ok, eq: false }   # false after a non-zero exit or a timeout
-        then:
-          failed:
-            cmd: [echo, 'ping failed: ${tasks.ping.error}']
-        else:
-          ok:
-            cmd: [echo, 'ping reached ${tasks.ping.stdout.url}']
+      failed:
+        when: { this: tasks.ping.ok, eq: false }   # false after a non-zero exit or a timeout
+        cmd: [echo, 'ping failed: ${tasks.ping.error}']
+
+      ok:
+        when: { this: tasks.ping.ok, eq: true }
+        cmd: [echo, 'ping reached ${tasks.ping.stdout.url}']
 
   # Looping: fetch a list, then POST once per element.
   loop:

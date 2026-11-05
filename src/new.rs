@@ -109,29 +109,16 @@ allow_failure: false                # true continues after a non-zero exit or a 
 ";
 
 const FULL_CONTROL: &str = "
-  # A branch: `then` runs when the condition holds, `else` otherwise. Either may be left out.
-  check:
-    if:                                 # a list: all must hold (also `all`, `any`, `not`)
+  # `when`: any task (and any job) runs only if its condition holds; otherwise it is skipped.
+  greet:
+    when:                               # a list: all must hold (also `all`, `any`, `not`)
       - {this: tasks.login.exit_code, eq: 0}   # a name or dot path; ${} optional
       - {this: tasks.shout.stdout, contains: ALICE}   # also ne, gt, gte, lt, lte, matches
       - {this: tasks.login.stdout.json.token, exists: true}   # defined at all; never fails
-    then:
-      greet:
-        cmd: [echo, \"logged in with ${tasks.login.stdout.json.token}\"]
-    else:
-      complain:
-        cmd: [echo, login failed]
-
-  # A switch: runs the tasks of the first case whose value equals the variable.
-  route:
-    switch: tasks.login.exit_code
-    cases:
-      0:
-        ok:
-          cmd: [echo, ok]
-    default:                            # when no case matches
-      unexpected:
-        cmd: [echo, \"unexpected exit code ${tasks.login.exit_code}\"]
+    cmd: [echo, \"logged in with ${tasks.login.stdout.json.token}\"]
+  complain:
+    when: {this: tasks.greet, exists: false}   # a skipped task has no result
+    cmd: [echo, login failed]
 
   # A loop: runs `do` once for each element of a list.
   each_tag:

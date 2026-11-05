@@ -83,15 +83,12 @@ pub fn task(name: &str, result: &TaskResult, elapsed: Duration, allowed: bool) -
     event
 }
 
-pub fn branch(name: &str, taken: bool, count: usize) -> Value {
-    let arm = if taken { "then" } else { "else" };
-    json!({"event": "branch", "task": name, "arm": arm, "tasks": count})
-}
-
-/// `case` is the 1-based index of the matching case, or `None` for `default`.
-pub fn switch(name: &str, case: Option<usize>, count: usize) -> Value {
-    let case = case.map_or(json!("default"), |index| json!(index));
-    json!({"event": "switch", "task": name, "case": case, "tasks": count})
+/// A task, or with `None` the whole job, skipped because its `when` doesn't hold.
+pub fn skip(name: Option<&str>) -> Value {
+    match name {
+        Some(name) => json!({"event": "skip", "task": name}),
+        None => json!({"event": "skip"}),
+    }
 }
 
 pub fn for_each(name: &str, var: &str, count: usize) -> Value {
@@ -154,22 +151,8 @@ mod tests {
 
     #[test]
     fn formats_control_flow_events() {
-        assert_eq!(
-            branch("route", true, 1),
-            json!({"event": "branch", "task": "route", "arm": "then", "tasks": 1})
-        );
-        assert_eq!(
-            branch("route", false, 0),
-            json!({"event": "branch", "task": "route", "arm": "else", "tasks": 0})
-        );
-        assert_eq!(
-            switch("route", Some(2), 1),
-            json!({"event": "switch", "task": "route", "case": 2, "tasks": 1})
-        );
-        assert_eq!(
-            switch("route", None, 0),
-            json!({"event": "switch", "task": "route", "case": "default", "tasks": 0})
-        );
+        assert_eq!(skip(Some("big")), json!({"event": "skip", "task": "big"}));
+        assert_eq!(skip(None), json!({"event": "skip"}));
         assert_eq!(
             for_each("each", "IDS", 3),
             json!({"event": "for_each", "task": "each", "var": "IDS", "items": 3})

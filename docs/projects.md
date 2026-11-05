@@ -57,6 +57,7 @@ Examples: [`httpbin.yaml`](../examples/httpbin.yaml) (jobs `login`, `mixed`, `co
 | `schedule` | Optional. When `rocky run` runs this job. See [Schedules](schedules.md). `exec` checks it but doesn't run it. |
 | `values` | Map of uppercase name → fixed value, read as `${NAME}` by this job's tasks; wins over a project value of the same name. See [Env](env.md#values). |
 | `defaults` | Fields this job's cmd tasks get unless they set them; win over the project's. See [Defaults](#defaults). |
+| `when` | Optional. A [condition](conditions.md) checked before the first task; if it doesn't hold, the job is skipped. A job file entry with `file` can't have it; put it in the job file. |
 | `tasks` | Required, and must not be empty. Map of task name → an inline task, a task-file path, or a task file with its own `with` inputs. Tasks run in the order they are written. |
 
 ## Defaults
@@ -89,19 +90,17 @@ jobs:
 | `retry` | Like a task's [`retry`](cmd-tasks.md#retry). |
 
 - A task's own value wins. A job's `defaults` win over the project's, field by field, and their `env` is merged by name.
-- Defaults reach every cmd task of the job: inside branches, switches and loops, and in task files. Branches, switches and loops themselves don't take them.
+- Defaults reach every cmd task of the job: inside loops, and in task files. Loops themselves don't take them.
 - Other fields, such as `allow_failure` or `stdout_file`, aren't allowed: unknown keys are an error.
 - A [job file entry with `file`](#reusing-a-job-file) can't have `defaults`; put them in the job file.
 
 ## Task kinds
 
-Each entry in `tasks` (and in `then`, `else`, `do`, each switch case and `default`) is exactly one of the following.
+Each entry in `tasks` (and in `do`) is exactly one of the following. Any of them can also have [`when`](conditions.md), to run only if a condition holds.
 
 | Kind | Keys | Page |
 |---|---|---|
 | Command | `cmd`, optionally `pipe` | [Cmd tasks](cmd-tasks.md) |
-| Branch | `if`, `then`, `else` | [Conditions](conditions.md) |
-| Switch | `switch`, `cases`, `default` | [Conditions](conditions.md#switch) |
 | For-each loop | `for_each`, `as`, `do`, `on_failure` | [Loops](loops.md) |
 | While loop | `while`, `attempts`, `do`, `on_failure` | [Conditions](conditions.md#while) |
 | Trigger | `trigger:` a job name | [Run](run.md#triggering-jobs-from-a-task) |
@@ -118,8 +117,7 @@ Each entry in `tasks` (and in `then`, `else`, `do`, each switch case and `defaul
 | `retry` | cmd tasks | Run the command again until it succeeds or a condition holds. See [Retry](cmd-tasks.md#retry). |
 | `allow_failure` | cmd tasks | `true` to continue the job when the task fails. |
 | `on_failure` | loops | `next` to skip to the next iteration when a `do` task fails; default `stop`. See [Loops](loops.md#behaviour). |
-| `if`, `then`, `else` | branches | A branch has no `cmd`, `timeout` or `allow_failure`. |
-| `switch`, `cases`, `default` | switches | Like a branch: no `cmd`, `timeout` or `allow_failure`, and no `if`, `then` or `else`. |
+| `when` | every task | Run the task only if this [condition](conditions.md) holds; otherwise skip it. |
 | `for_each`, `as`, `do` | for-each loops | Runs `do` once per list item. A loop has no `cmd`, `timeout` or `allow_failure`. |
 | `while`, `attempts`, `do` | while loops | Runs `do` while a condition holds; `attempts` optionally limits iterations. A loop has no `cmd`, `timeout` or `allow_failure`. |
 | `trigger` | triggers | The name of a job of the project to queue a run of. A trigger has no other fields. See [Triggering jobs from a task](run.md#triggering-jobs-from-a-task). |
@@ -145,9 +143,9 @@ Each cmd task's result is saved as `tasks.<key>`, and later tasks read it with a
 | `${tasks.check.exit_code}`, `${tasks.check.stderr}` | a command's exit code and error output |
 | `${tasks.check.ok}` | `false` if the task failed in any way (non-zero exit, timeout, exhausted `retry`), otherwise `true` |
 
-- **Where it works:** anywhere `${...}` works. In an `if` condition, `switch` or `for_each`, the `${}` is optional: `this: tasks.login.exit_code` and `this: ${tasks.login.exit_code}` are the same.
+- **Where it works:** anywhere `${...}` works. In a condition's `this` or `for_each`, the `${}` is optional: `this: tasks.login.exit_code` and `this: ${tasks.login.exit_code}` are the same.
 - **Typed values:** a `stdin` field that is exactly `${tasks...}` keeps its JSON type, so `stdin: ${tasks.fetch.stdout}` writes the whole object.
-- **Every task:** each cmd task is saved under its key. Keys only need to be unique within one map, so a task nested in a branch or loop can share a name with another; the later result replaces the earlier one.
+- **Every task:** each cmd task is saved under its key. Keys only need to be unique within one map, so a task nested in a loop can share a name with another; the later result replaces the earlier one.
 - **`tasks` is reserved:** a variable named `tasks` fails when the project loads (see [names](env.md#names)).
 
 ## Failures and `allow_failure`
@@ -155,32 +153,32 @@ Each cmd task's result is saved as `tasks.<key>`, and later tasks read it with a
 A cmd task **fails** when its exit code isn't `0`. `curl` exits `0` for any HTTP status unless told otherwise: pass `--fail-with-body` to make a 4xx or 5xx fail the task (exit code 22) while keeping the body.
 
 - **Without `allow_failure`:** the job stops. `rocky exec` prints the failed task's result, then reports ``task `name` exited with code 3`` and exits `1`.
-- **With `allow_failure: true`:** the job continues. The result is still saved as `tasks.<name>`, so you can branch on `${tasks.x.exit_code}`.
+- **With `allow_failure: true`:** the job continues. The result is still saved as `tasks.<name>`, so a later task's `when` can test `${tasks.x.exit_code}`.
 - **Inside a loop with `on_failure: next`:** the rest of that iteration is skipped and the loop goes on with its next element or condition check (see [Loops](loops.md#behaviour)).
 
-`allow_failure: true` also lets the job continue after a **timeout** (a command that runs past its `timeout`). The task has no exit code, so its result is just the error, e.g. `tasks.<name>` is ``{"ok": false, "error": "command `curl` timed out after 5s"}``. To branch on any failure, a non-zero exit or a timeout alike, test `ok`: `if: {this: tasks.<name>.ok, eq: false}`.
+`allow_failure: true` also lets the job continue after a **timeout** (a command that runs past its `timeout`). The task has no exit code, so its result is just the error, e.g. `tasks.<name>` is ``{"ok": false, "error": "command `curl` timed out after 5s"}``. To react to any failure, a non-zero exit or a timeout alike, test `ok`: `when: {this: tasks.<name>.ok, eq: false}`.
 
 Other errors stop the job no matter what `allow_failure` says: an undefined variable, a missing program. Without `allow_failure`, so do timeouts. See [Command line](cli.md#errors-and-exit-codes).
 
 ## Execution
 
 - Tasks run one at a time, in order. There is no parallelism.
-- Branches, switches and loops run their nested tasks in place, then continue with the next task.
-- The printed result is the last cmd task that ran, including one inside a branch or loop. If no cmd task ran at all (every branch skipped), the printed result is `null`.
+- Loops run their nested tasks in place, then continue with the next task. A task whose `when` doesn't hold is skipped.
+- The printed result is the last cmd task that ran, including one inside a loop. If no cmd task ran at all (every task skipped), the printed result is `null`.
 
 ## Validation
 
-The whole project, every job including nested branches and loops, is checked when it loads, before any task runs. `rocky validate <PROJECT>` runs these checks alone, without running anything. These fail immediately:
+The whole project, every job including nested loops, is checked when it loads, before any task runs. `rocky validate <PROJECT>` runs these checks alone, without running anything. These fail immediately:
 
-- no `jobs`, an empty `tasks`, an empty `cmd`, `do`, `cases`, or `then` *and* `else`
-- `tasks`, `then`, `else`, `do` or `default` written as a list instead of a map, or two tasks with the same key in one map
-- a task without `cmd` that isn't a branch, switch, loop, trigger or task file
+- no `jobs`, an empty `tasks`, an empty `cmd` or `do`
+- `tasks` or `do` written as a list instead of a map, or two tasks with the same key in one map
+- a task without `cmd` that isn't a loop, trigger or task file
 - a trigger with any other field, or whose job isn't in the project's `jobs`
 - a job entry with both `file` and `tasks`, or with neither
-- `pipe`, `cwd`, `stdin`, `env`, `capture_stdout`, `stdout_file` or `retry` without `cmd`; both `stdout_file` and `capture_stdout`; `timeout` on a branch, switch or loop; `allow_failure` on a loop (use `on_failure: next`), or `on_failure` on anything but a loop; `then`/`else` without `if`; `cases`/`default` without `switch`; `do` without `for_each` or `while`; `as` without `for_each`; `attempts` without `while`
+- `pipe`, `cwd`, `stdin`, `env`, `capture_stdout`, `stdout_file` or `retry` without `cmd`; both `stdout_file` and `capture_stdout`; `timeout` on a loop; `allow_failure` on a loop (use `on_failure: next`), or `on_failure` on anything but a loop; `do` without `for_each` or `while`; `as` without `for_each`; `attempts` without `while`
 - a missing task or job file, a task file with a `name` field, or a task file that uses itself, directly or through other files
 - a task entry with `file` and any field but `with`, or `with` without `file`
-- a name that appears twice in `jobs`, a cmd task's `env`, or a switch's `cases`
+- a name that appears twice in `jobs` or a cmd task's `env`
 - a [variable name](env.md#names) in `as` that isn't uppercase (`A-Z`, `0-9`, `_`), or a task key that isn't an identifier or is `tasks`
 - an invalid [condition](conditions.md) or [schedule](schedules.md)
 - unknown keys anywhere, including `schedules` in the project and `vars` anywhere
@@ -214,12 +212,12 @@ tasks:
   today:
     cmd: [date]
 
-# tasks/login.yaml: one task of any kind, including a branch or loop; no `name`
+# tasks/login.yaml: one task of any kind, including a loop; no `name`
 cmd: [curl, -sS, --fail-with-body, https://httpbin.org/anything/login]
 ```
 
-- A task file holds one task, without a `name`: the key that points at it names it, so one file can be used under several names. It can use other task files, inside a branch or loop too, but not itself, directly or through other files.
-- A task file entry is a path, or `{file: path, with: {...}}` to give the file [inputs of its own](#reusing-a-task-file). Everything else goes in the file. To change another field for one use, write the task inline.
+- A task file holds one task, without a `name`: the key that points at it names it, so one file can be used under several names. It can use other task files, inside a loop too, but not itself, directly or through other files.
+- A task file entry is a path, or `{file: path, with: {...}, when: ...}` to give the file [inputs of its own](#reusing-a-task-file). Everything else goes in the file. To change another field for one use, write the task inline.
 - A job file has the job fields `schedule`, `values`, `defaults` and `tasks`. The project keeps `env_file`. To run one job file with different values or schedules, see below.
 
 Example: [`imports.yaml`](../examples/imports.yaml), whose jobs all come from [`jobs/`](../examples/jobs/) and share its env file.
@@ -241,7 +239,7 @@ tasks:
 cmd: [echo, 'hello ${WHO}']
 ```
 
-- Only `file` and `with` are allowed; everything else goes in the file. `with` only works next to `file`.
+- Only `file`, `with` and `when` are allowed; everything else goes in the file. `with` only works next to `file`. If the file has its own `when` too, both must hold.
 - The inputs apply while that task runs, including tasks nested in it, and win over the job's and the project's values. Afterwards the earlier values are back.
 - Names are uppercase. `${...}` in an input is expanded when the task starts, so it can pass a loop element or an earlier task's output into the file, e.g. `with: {USER: '${ITEM}'}` or `with: {TOKEN: '${tasks.login.stdout.token}'}`. A value that is exactly `${NAME}` keeps its JSON type, `$${` is a literal `${`, and an undefined variable fails the task. Quote `${...}` inside a flow map (`{...}`); see [Writing YAML](yaml.md#quoting).
 - A task file can itself be a `{file, with}` entry; the outer entry's inputs win over the inner one's.

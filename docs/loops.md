@@ -29,7 +29,7 @@ Example: the `loop` job in [`examples/httpbin.yaml`](../examples/httpbin.yaml).
 
 Like every task, a loop is named by its key, which labels it in errors and `run`'s log lines.
 
-A loop can't also have `cmd`, `timeout`, `if`, `then`, `else`, `switch`, `cases`, `default`, `while` or `attempts`. It can't have `allow_failure` either, which is for cmd tasks: a loop with it fails to load, pointing to `on_failure: next`.
+A loop can't also have `cmd`, `timeout`, `while` or `attempts`. It can have [`when`](conditions.md), checked once before the loop starts. It can't have `allow_failure` either, which is for cmd tasks: a loop with it fails to load, pointing to `on_failure: next`.
 
 ## The list
 
@@ -40,7 +40,7 @@ A loop can't also have `cmd`, `timeout`, `if`, `then`, `else`, `switch`, `cases`
 
 ## The current element
 
-- Inside `do`, the element is `${ITEM}` (or the `as` name). Dot paths work for objects: `${USER.id}`, `if: { this: USER.id, eq: 7 }`.
+- Inside `do`, the element is `${ITEM}` (or the `as` name). Dot paths work for objects: `${USER.id}`, `when: { this: USER.id, eq: 7 }`.
 - Where a value is exactly `${USER}`, the element keeps its JSON type; see [typed values](env.md#typed-values).
 - When the loop ends, the `as` variable goes back to the value an outer loop gave it, or stops being set by the loop.
 
@@ -48,6 +48,6 @@ A loop can't also have `cmd`, `timeout`, `if`, `then`, `else`, `switch`, `cases`
 
 - **Sequential:** elements run one after another, never in parallel.
 - **Variables persist:** `tasks.NAME` results set inside `do` stay available after the loop. Each iteration overwrites the last, so the final element's values win.
-- **Failures:** a task that fails without `allow_failure` stops the whole job, even in the middle of a loop, unless the loop (or an outer loop) has `on_failure: next`. Then a non-zero exit or a timeout anywhere inside `do`, including nested branches and loops, skips the rest of that iteration of the innermost such loop, which goes on with its next element. The failed task's result stays in `tasks.NAME`. Other errors, such as an undefined variable, still stop the job.
-- **Nesting:** loops and [branches](conditions.md) can be nested inside each other. Give nested loops different `as` names.
+- **Failures:** a task that fails without `allow_failure` stops the whole job, even in the middle of a loop, unless the loop (or an outer loop) has `on_failure: next`. Then a non-zero exit or a timeout anywhere inside `do`, including nested loops, skips the rest of that iteration of the innermost such loop, which goes on with its next element. The failed task's result stays in `tasks.NAME`. Other errors, such as an undefined variable, still stop the job.
+- **Nesting:** loops can be nested inside each other. Give nested loops different `as` names. Any task inside `do` can have [`when`](conditions.md), checked on each iteration.
 - **Result:** if the loop is the last task, the printed result is the last task that ran in the last iteration (for an empty list, the task before the loop).

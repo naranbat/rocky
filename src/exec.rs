@@ -6,7 +6,7 @@ use serde::{Serialize, Serializer};
 use serde_json::{Map, Value, json};
 
 use crate::command::{self, CommandResult, Stdout};
-use crate::condition::{self, Condition};
+use crate::condition::Condition;
 use crate::error::Error;
 use crate::project::Project;
 use crate::task::{OnFailure, Task};
@@ -172,13 +172,13 @@ fn queued(tasks: Vec<Task>) -> impl DoubleEndedIterator<Item = Work> {
 }
 
 /// Runs the project's `job` tasks in order; later tasks read earlier results as
-/// `tasks.NAME`. A branch's chosen `then`/`else` tasks, or a switch's matching case or
-/// `default`, run in its place; a loop's `do` tasks run once per list element, with the
+/// `tasks.NAME`. The job, or a task, whose `when` doesn't hold is skipped; a loop's `do`
+/// tasks run once per list element, with the
 /// element bound to its `as` variable, or, for a `while` loop, as long as its condition holds.
 /// A failing task inside a loop with `allow_failure` skips the rest of that iteration.
 /// A `trigger` task queues a run of its job on `trigger` and goes on.
 /// The job's `values` (the project's merged in at load) are read as `${NAME}`.
-/// With `log`, one JSON line per task, branch or switch decision, loop, and `while` check is
+/// With `log`, one JSON line per task, skip, loop, and `while` check is
 /// printed to stdout. With `verbose`, each command is printed to stderr before it runs.
 pub async fn exec(
     mut project: Project,
@@ -197,6 +197,17 @@ pub async fn exec(
     .collect();
 
     let mut values: Map<String, Value> = tasks.values.into_iter().collect();
+    if let Some(condition) = tasks.when
+        && !condition.evaluate(&|var| lookup(var, &values, &env))?
+    {
+        if log {
+            progress::emit(job, progress::skip(None)).await;
+        }
+        return Ok(Outcome {
+            result: None,
+            failed_task: None,
+        });
+    }
     let mut last = None;
     // Next work last, so nested tasks are pushed in reverse to run in place.
     let mut stack: Vec<Work> = queued(tasks.tasks).rev().collect();
@@ -274,42 +285,23 @@ pub async fn exec(
             source: Box::new(source),
         };
 
+        if let Some(condition) = task.when.take() {
+            let holds = condition
+                .evaluate(&|var| lookup(var, &values, &env))
+                .map_err(to_task_error)?;
+            if !holds {
+                if log {
+                    progress::emit(job, progress::skip(Some(&name))).await;
+                }
+                continue;
+            }
+        }
+
         if let Some(target) = task.trigger.take() {
             trigger.send(&target);
             if log {
                 progress::emit(job, progress::trigger(&name, &target)).await;
             }
-            continue;
-        }
-
-        if let Some(condition) = task.condition.take() {
-            let taken = condition
-                .evaluate(&|var| lookup(var, &values, &env))
-                .map_err(to_task_error)?;
-            let chosen = if taken { task.then } else { task.otherwise };
-            if log {
-                progress::emit(job, progress::branch(&name, taken, chosen.len())).await;
-            }
-            stack.extend(queued(chosen).rev());
-            continue;
-        }
-
-        if let Some(var) = task.switch.take() {
-            let value = lookup(&var, &values, &env)
-                .ok_or_else(|| to_task_error(Error::UndefinedVar(var)))?;
-            let matched = task
-                .cases
-                .into_iter()
-                .enumerate()
-                .find(|(_, case)| condition::loose_eq(&value, &case.value));
-            let (case, chosen) = match matched {
-                Some((index, case)) => (Some(index + 1), case.body),
-                None => (None, task.default),
-            };
-            if log {
-                progress::emit(job, progress::switch(&name, case, chosen.len())).await;
-            }
-            stack.extend(queued(chosen).rev());
             continue;
         }
 
@@ -607,9 +599,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn skipped_branch_with_no_task_run_succeeds_without_result() {
+    async fn skipped_task_with_no_task_run_succeeds_without_result() {
         let (project, _dir) = project_with_env(
-            "tasks:\n  r:\n    if: {this: X, eq: 1}\n    then: {a: {cmd: [echo, hi]}}\n",
+            "tasks:\n  a:\n    when: {this: X, eq: 1}\n    cmd: [echo, hi]\n",
             &[("X", "2")],
         );
         let outcome = exec(project).await.unwrap();
@@ -618,11 +610,73 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn when_runs_or_skips_a_task_and_a_skipped_task_has_no_result() {
+        let outcome = exec(project(&format!(
+            "{}  big:\n    when: {{this: tasks.seed.stdout.N, gt: 3}}\n    cmd: [echo, big]\n\
+             \x20 small:\n    when: {{this: tasks.seed.stdout.N, lte: 3}}\n    cmd: [echo, small]\n\
+             \x20 print:\n    when: {{this: tasks.small, exists: false}}\n    cmd: [echo, '${{tasks.big.stdout}}']\n",
+            seed(json!({"N": 5}))
+        )))
+        .await
+        .unwrap();
+        assert_eq!(stdout(&outcome), &json!("big"));
+    }
+
+    #[tokio::test]
+    async fn when_skips_a_whole_loop() {
+        let outcome = exec(project(&format!(
+            "{}  each:\n    when: {{this: tasks.seed.stdout.GO, eq: true}}\n    for_each: tasks.seed.stdout.IDS\n\
+             \x20   do: {{e: {{cmd: [echo, '${{ITEM}}']}}}}\n",
+            seed(json!({"GO": false, "IDS": [1]}))
+        )))
+        .await
+        .unwrap();
+        assert_eq!(stdout(&outcome), &json!({"GO": false, "IDS": [1]}));
+    }
+
+    #[tokio::test]
+    async fn job_when_skips_every_task() {
+        for (x, ran) in [("1", true), ("2", false)] {
+            let (project, _dir) = project_with_env(
+                "when: {this: X, eq: 1}\ntasks:\n  a:\n    cmd: [echo, hi]\n",
+                &[("X", x)],
+            );
+            let outcome = exec(project).await.unwrap();
+            assert_eq!(outcome.result.is_some(), ran, "{x}");
+            assert_eq!(outcome.failed_task, None);
+        }
+    }
+
+    #[tokio::test]
+    async fn task_file_when_sees_with_inputs_and_both_must_hold() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("greet.yaml"),
+            "when: {this: WHO, ne: nobody}\ncmd: [echo, '${WHO}']\n",
+        )
+        .unwrap();
+        let outcome = exec(project_in(
+            dir.path(),
+            "values: {GO: true}\ntasks:\n\
+             \x20 a: {file: greet.yaml, with: {WHO: a}}\n\
+             \x20 b: {file: greet.yaml, with: {WHO: nobody}}\n\
+             \x20 c: {file: greet.yaml, with: {WHO: c}, when: {this: GO, eq: false}}\n\
+             \x20 print:\n    cmd: [echo, '${tasks.a.stdout}']\n\
+             \x20 check:\n    when: [{this: tasks.b, exists: false}, {this: tasks.c, exists: false}]\n\
+             \x20   cmd: [echo, '${tasks.print.stdout} only']\n",
+        ))
+        .await
+        .unwrap();
+        assert_eq!(stdout(&outcome), &json!("a only"));
+    }
+
+    #[tokio::test]
     async fn trigger_queues_its_job_and_goes_on() {
         let (trigger, mut queue) = Trigger::channel();
         let project = project(
-            "tasks:\n  a:\n    cmd: [echo, a]\n  r:\n    if: {this: tasks.a.ok, eq: true}\n\
-             \x20   then: {t: {trigger: report}}\n",
+            "tasks:\n  a:\n    cmd: [echo, a]\n\
+             \x20 t:\n    when: {this: tasks.a.ok, eq: true}\n    trigger: report\n\
+             \x20 u:\n    when: {this: tasks.a.ok, eq: false}\n    trigger: other\n",
         );
         let outcome = super::exec(project, "w", false, false, &trigger)
             .await
@@ -640,8 +694,8 @@ mod tests {
     async fn timeout_fails_unless_allowed_then_exists_sees_the_error() {
         let allowed = "tasks:\n\
                        \x20 slow:\n    cmd: [sleep, '5']\n    timeout: 1s\n    allow_failure: true\n\
-                       \x20 check:\n    if: {this: tasks.slow.error, exists: true}\n\
-                       \x20   then: {errored: {cmd: [echo, '${tasks.slow.error}']}}\n    else: {ok: {cmd: [echo, ok]}}\n";
+                       \x20 errored:\n    when: {this: tasks.slow.error, exists: true}\n    cmd: [echo, '${tasks.slow.error}']\n\
+                       \x20 ok:\n    when: {this: tasks.slow.error, exists: false}\n    cmd: [echo, ok]\n";
         let (allowed, failed) = tokio::join!(
             exec(project(allowed)),
             exec(project(
@@ -658,71 +712,6 @@ mod tests {
             panic!("expected a task error");
         };
         assert!(matches!(*source, Error::CommandTimeout { .. }), "{source}");
-    }
-
-    #[tokio::test]
-    async fn branch_runs_chosen_arm() {
-        let outcome = exec(
-            project(&format!(
-                "{}  size:\n    if: {{this: tasks.seed.stdout.N, gt: 3}}\n    then: {{big: {{cmd: [echo, big]}}}}\n    else: {{small: {{cmd: [echo, small]}}}}\n",
-                seed(json!({"N": 5}))
-            )))
-        .await
-        .unwrap();
-        assert_eq!(stdout(&outcome), &json!("big"));
-    }
-
-    /// A job seeded with `N`, then a switch on it that echoes the case it took (cases 200,
-    /// "404" and a duplicate 404, plus a default if `default`).
-    fn switch_project(n: Value, default: bool) -> Project {
-        let pick = |word: &str| format!("{{pick: {{cmd: [echo, {word}]}}}}");
-        let default = if default {
-            format!("    default: {}\n", pick("other"))
-        } else {
-            String::new()
-        };
-        project(&format!(
-            "{}\
-             \x20 route:\n    switch: tasks.seed.stdout.N\n    cases:\n\
-             \x20     200: {}\n\
-             \x20     \"404\": {}\n\
-             \x20     404: {}\n\
-             {default}",
-            seed(json!({ "N": n })),
-            pick("ok"),
-            pick("missing"),
-            pick("second"),
-        ))
-    }
-
-    #[tokio::test]
-    async fn switch_runs_first_matching_case() {
-        for (n, expected) in [
-            (json!(200), "ok"),
-            (json!("200"), "ok"),
-            (json!(404), "missing"),
-        ] {
-            let outcome = exec(switch_project(n.clone(), true)).await.unwrap();
-            assert_eq!(stdout(&outcome), &json!(expected), "{n}");
-        }
-    }
-
-    #[tokio::test]
-    async fn switch_falls_back_to_default_or_runs_nothing() {
-        let outcome = exec(switch_project(json!(500), true)).await.unwrap();
-        assert_eq!(stdout(&outcome), &json!("other"));
-        let outcome = exec(switch_project(json!(500), false)).await.unwrap();
-        assert_eq!(stdout(&outcome), &json!({"N": 500}));
-    }
-
-    #[tokio::test]
-    async fn switch_on_undefined_var_errors() {
-        let (name, err) = task_error(project(
-            "tasks:\n  s:\n    switch: NOPE_UNDEFINED\n    cases: {1: {e: {cmd: [echo]}}}\n",
-        ))
-        .await;
-        assert_eq!(name, "s");
-        assert!(matches!(err, Error::UndefinedVar(_)), "{err}");
     }
 
     #[tokio::test]
@@ -756,7 +745,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn for_each_default_item_with_paths_and_nested_branch() {
+    async fn for_each_default_item_with_paths_and_nested_when() {
         let dir = tempfile::tempdir().unwrap();
         let outcome = exec(project_in(
             dir.path(),
@@ -764,13 +753,11 @@ mod tests {
                 "tasks:\n\
                  \x20 list:\n    cmd: [echo, '[{{\"id\": 1, \"ok\": true}}, {{\"id\": 2, \"ok\": false}}]']\n\
                  \x20 each:\n    for_each: tasks.list.stdout\n    do:\n\
-                 \x20     check:\n        if: {{this: ITEM.ok, eq: true}}\n        then:\n\
-                 \x20         plus:\n{}\
-                 \x20       else:\n\
-                 \x20         minus:\n{}\
+                 \x20     plus:\n        when: {{this: ITEM.ok, eq: true}}\n{}\
+                 \x20     minus:\n        when: {{this: ITEM.ok, eq: false}}\n{}\
                  \x20 print:\n    cmd: [cat, acc]\n    cwd: .\n",
-                append(12, "+${ITEM.id}"),
-                append(12, "-${ITEM.id}")
+                append(8, "+${ITEM.id}"),
+                append(8, "-${ITEM.id}")
             ),
         ))
         .await
@@ -779,24 +766,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn nested_loops_inside_branch() {
+    async fn nested_loops_with_when() {
         let dir = tempfile::tempdir().unwrap();
         let outcome = exec(project_in(
             dir.path(),
             &format!(
                 "{}\
-                 \x20 go:\n    if: {{this: tasks.seed.stdout.GO, eq: true}}\n    then:\n\
-                 \x20     rows:\n        for_each: tasks.seed.stdout.ROWS\n        as: ROW\n        do:\n\
-                 \x20         cells:\n            for_each: ROW\n            as: CELL\n            do:\n\
-                 \x20             add:\n{}\
+                 \x20 rows:\n    when: {{this: tasks.seed.stdout.GO, eq: true}}\n    for_each: tasks.seed.stdout.ROWS\n    as: ROW\n    do:\n\
+                 \x20     cells:\n        for_each: ROW\n        as: CELL\n        do:\n\
+                 \x20         add:\n            when: {{this: CELL, ne: b}}\n{}\
                  \x20 print:\n    cmd: [cat, acc]\n    cwd: .\n",
                 seed(json!({"GO": true, "ROWS": [["a", "b"], ["c"]]})),
-                append(16, "${CELL}")
+                append(12, "${CELL}")
             ),
         ))
         .await
         .unwrap();
-        assert_eq!(stdout(&outcome), &json!("abc"));
+        assert_eq!(stdout(&outcome), &json!("ac"));
     }
 
     #[tokio::test]
@@ -1159,8 +1145,7 @@ mod tests {
                  \x20         check:\n            cmd: [test, '${{CELL}}', '!=', b]\n\
                  \x20         add:\n{}\
                  \x20     end:\n{}\
-                 \x20 print:\n    if: {{this: CELL, exists: false}}\n    then:\n\
-                 \x20     cat:\n        cmd: [cat, acc]\n        cwd: .\n",
+                 \x20 print:\n    when: {{this: CELL, exists: false}}\n    cmd: [cat, acc]\n    cwd: .\n",
                 seed(json!({"ROWS": [["a", "b", "x"], ["c", "d"]]})),
                 append(12, "${CELL}"),
                 append(8, "|")
@@ -1247,8 +1232,7 @@ mod tests {
     #[tokio::test]
     async fn cmd_errors_carry_task_name() {
         let (name, err) = task_error(project(
-            "tasks:\n  r:\n    if: {this: NOPE_UNDEFINED, exists: false}\n    then:\n\
-                 \x20     inner:\n        cmd: [echo, '${NOPE_UNDEFINED}']\n",
+            "tasks:\n  inner:\n    when: {this: NOPE_UNDEFINED, exists: false}\n    cmd: [echo, '${NOPE_UNDEFINED}']\n",
         ))
         .await;
         assert_eq!(name, "inner");
@@ -1265,8 +1249,7 @@ mod tests {
                 "tasks:\n\
                  \x20 produce:\n    cmd: [echo, '{\"items\": [1, 2, 3]}']\n\
                  \x20 piped:\n    cmd: [cat]\n    stdin: ${tasks.produce.stdout}\n\
-                 \x20 check:\n    if: {this: tasks.piped.stdout.items.2, eq: 3}\n    then:\n\
-                 \x20     print:\n        cmd: [echo, 'first=${tasks.produce.stdout.items.0} code=${tasks.piped.exit_code}']\n",
+                 \x20 print:\n    when: {this: tasks.piped.stdout.items.2, eq: 3}\n    cmd: [echo, 'first=${tasks.produce.stdout.items.0} code=${tasks.piped.exit_code}']\n",
             ))
         .await
         .unwrap();
@@ -1368,14 +1351,12 @@ mod tests {
         let yaml = format!(
             "values: {{LATEST: 2}}\n{}\
              \x20 each:\n    for_each: tasks.seed.stdout.IDS\n    as: ID\n    do:\n\
-             \x20     check:\n        if: {{this: ID, gt: '${{LATEST}}'}}\n        then:\n\
-             \x20         plus:\n{}\
-             \x20       else:\n\
-             \x20         minus:\n{}\
+             \x20     plus:\n        when: {{this: ID, gt: '${{LATEST}}'}}\n{}\
+             \x20     minus:\n        when: {{this: ID, lte: '${{LATEST}}'}}\n{}\
              \x20 print:\n    cmd: [cat, acc]\n    cwd: .\n",
             seed(json!({"IDS": [1, 2, 3, 4]})),
-            append(12, "+${ID}"),
-            append(12, "-${ID}")
+            append(8, "+${ID}"),
+            append(8, "-${ID}")
         );
         let outcome = exec(project_in(dir.path(), &yaml)).await.unwrap();
         assert_eq!(stdout(&outcome), &json!("-1-2+3+4"));
@@ -1446,17 +1427,6 @@ mod tests {
             printed.canonicalize().unwrap(),
             std::env::current_dir().unwrap().canonicalize().unwrap()
         );
-    }
-
-    #[tokio::test]
-    async fn switch_case_keys_are_not_expanded() {
-        let yaml = "tasks:\n  s:\n    switch: V\n    cases: {'${X}': {lit: {cmd: [echo, literal]}}}\n\
-                    \x20   default: {other: {cmd: [echo, other]}}\n";
-        for (v, expected) in [("a", "other"), ("${X}", "literal")] {
-            let (project, _dir) = project_with_env(yaml, &[("X", "a"), ("V", v)]);
-            let outcome = exec(project).await.unwrap();
-            assert_eq!(stdout(&outcome), &json!(expected), "{v}");
-        }
     }
 
     #[test]

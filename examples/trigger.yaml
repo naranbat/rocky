@@ -10,11 +10,10 @@ jobs:
       usage:
         cmd: [sh, -c, "df -P . | awk 'NR == 2 {print $5 + 0}'"]
 
-      # A trigger in a branch: `alert` only runs when the disk is nearly full.
+      # A trigger with `when`: `alert` only runs when the disk is nearly full.
       full:
-        if: {this: tasks.usage.stdout, gt: 90}
-        then:
-          alert: {trigger: alert}
+        when: {this: tasks.usage.stdout, gt: 90}
+        trigger: alert
 
       # A trigger on its own: `report` runs after every check. `check` goes on without
       # waiting, so this task's result isn't saved and `say` below runs right away.

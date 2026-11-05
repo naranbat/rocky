@@ -10,8 +10,9 @@ use crate::extract::text;
 use crate::pattern::Pattern;
 use crate::vars;
 
-/// A job branch condition: either `this` with one or more operators (all must hold;
-/// `exists` only alone), or exactly one of `all`, `any`, `not`. A list is shorthand for `all`.
+/// A `when`, `while` or `until` condition: either `this` with one or more operators (all must
+/// hold; `exists` only alone), or exactly one of `all`, `any`, `not`. A list is shorthand for
+/// `all`.
 /// Operator values other than `matches` may use `${VAR}`, expanded when the condition is evaluated.
 #[derive(Clone, Debug)]
 pub struct Condition(Fields);
@@ -60,11 +61,7 @@ impl<'de> Deserialize<'de> for Condition {
             }
 
             fn visit_seq<A: SeqAccess<'de>>(self, seq: A) -> Result<Condition, A::Error> {
-                let all = Vec::deserialize(de::value::SeqAccessDeserializer::new(seq))?;
-                Ok(Condition(Fields {
-                    all: Some(all),
-                    ..Fields::default()
-                }))
+                Vec::deserialize(de::value::SeqAccessDeserializer::new(seq)).map(Condition::all)
             }
 
             fn visit_map<A: MapAccess<'de>>(self, map: A) -> Result<Condition, A::Error> {
@@ -96,6 +93,14 @@ enum Op<'a> {
 }
 
 impl Condition {
+    /// A condition that holds when every one of `conditions` does, like a list.
+    pub fn all(conditions: Vec<Condition>) -> Self {
+        Condition(Fields {
+            all: Some(conditions),
+            ..Fields::default()
+        })
+    }
+
     /// Checks the shape and threshold operands, recursively.
     pub fn validate(&self) -> Result<(), Error> {
         match self.kind()? {

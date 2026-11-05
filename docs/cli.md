@@ -83,7 +83,7 @@ Writes a starter file that loads as-is, creating missing parent directories, and
 | Level | Writes |
 |---|---|
 | `basic` (default) | The smallest file that runs, as in the table above |
-| `full` | Every field, each with a comment. A full project or job has a `schedule`, `values`, a `curl` request, a cmd task, a branch, a switch, a `for_each` loop and a `while` loop. A full task is a cmd task with all of its fields. Fields that need another file (`env_file`, a task file) are commented out, so the file still loads and runs as-is. Its tasks use `${USER}` from the environment |
+| `full` | Every field, each with a comment. A full project or job has a `schedule`, `values`, a `curl` request, cmd tasks with `when`, a `for_each` loop and a `while` loop. A full task is a cmd task with all of its fields. Fields that need another file (`env_file`, a task file) are commented out, so the file still loads and runs as-is. Its tasks use `${USER}` from the environment |
 
 ```
 $ rocky new job jobs/deploy.yaml
@@ -95,7 +95,7 @@ add it to a project:
 
 ## Output streams
 
-- **stdout** holds only results: one JSON document for `exec`, one JSON log line per task, branch, switch, loop, finished run, error and stopped schedule for `run`. It is safe to pipe into `jq`.
+- **stdout** holds only results: one JSON document for `exec`, one JSON log line per task, skip, loop, finished run, error and stopped schedule for `run`. It is safe to pipe into `jq`.
 - **stderr** holds errors, `exec --verbose`'s command lines and `run`'s ``cannot write log file`` messages.
 
 ## Errors and exit codes

@@ -7,6 +7,7 @@ use serde::de::{self, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer};
 use serde_json::Value;
 
+use crate::condition::Condition;
 use crate::defaults::Defaults;
 use crate::error::Error;
 use crate::schedule::Schedule;
@@ -86,6 +87,7 @@ struct JobEntry {
     #[serde(default, deserialize_with = "unique")]
     values: BTreeMap<String, Value>,
     defaults: Option<Defaults>,
+    when: Option<Condition>,
     #[serde(default, deserialize_with = "some_named")]
     tasks: Option<Vec<Task>>,
 }
@@ -117,6 +119,9 @@ impl<'de> Deserialize<'de> for JobSource {
                     (Some(_), None) if entry.defaults.is_some() => Err(de::Error::custom(
                         "a job with `file` can't have `defaults`; set them in the job file",
                     )),
+                    (Some(_), None) if entry.when.is_some() => Err(de::Error::custom(
+                        "a job with `file` can't have `when`; set it in the job file",
+                    )),
                     (Some(file), None) => Ok(JobSource::File {
                         file,
                         schedule: entry.schedule,
@@ -126,6 +131,7 @@ impl<'de> Deserialize<'de> for JobSource {
                         schedule: entry.schedule,
                         values: entry.values,
                         defaults: entry.defaults.unwrap_or_default(),
+                        when: entry.when,
                         tasks,
                     }))),
                     (Some(_), Some(_)) => Err(de::Error::custom(
@@ -154,6 +160,9 @@ pub struct Job {
     /// Fields this job's `cmd` tasks get unless they set them; already applied once loaded.
     #[serde(default)]
     pub defaults: Defaults,
+    /// The job runs only if this condition holds when it starts; otherwise it is skipped.
+    #[serde(default)]
+    pub when: Option<Condition>,
     #[serde(deserialize_with = "task::named")]
     pub tasks: Vec<Task>,
 }
@@ -226,13 +235,7 @@ fn check_triggers(tasks: &[Task], project: &Project) -> Result<(), Error> {
                 }),
             });
         }
-        check_triggers(&task.then, project)?;
-        check_triggers(&task.otherwise, project)?;
         check_triggers(&task.body, project)?;
-        for case in &task.cases {
-            check_triggers(&case.body, project)?;
-        }
-        check_triggers(&task.default, project)?;
     }
     Ok(())
 }
@@ -264,6 +267,9 @@ fn load_job(
         return Err(Error::InvalidProject("job has no tasks".to_string()));
     }
     check_names(job.values.keys())?;
+    if let Some(condition) = &job.when {
+        condition.validate()?;
+    }
     task::resolve(&mut job.tasks, &dir)?;
     job.values = values.clone().into_iter().chain(job.values).collect();
     job.defaults.validate()?;
@@ -444,7 +450,7 @@ mod tests {
         let err = load_in(
             dir.path(),
             "jobs:\n  a:\n    tasks:\n      l:\n        for_each: X\n        do:\n\
-             \x20         r: {if: {this: X, eq: 1}, then: {t: {trigger: nope}}}\n",
+             \x20         t: {when: {this: X, eq: 1}, trigger: nope}\n",
         )
         .unwrap_err();
         assert_eq!(
@@ -603,7 +609,7 @@ mod tests {
              jobs:\n  w:\n    defaults:\n      timeout: 5s\n      env: {B: job, C: job}\n    tasks:\n\
              \x20     plain: {cmd: [echo]}\n\
              \x20     own: {cmd: [echo], timeout: 1s, env: {C: task}, retry: {attempts: 9}}\n\
-             \x20     branch:\n        if: {this: X, eq: 1}\n        then: {nested: {cmd: [echo]}}\n",
+             \x20     each:\n        for_each: X\n        do: {nested: {cmd: [echo]}}\n",
         )
         .unwrap();
         let job = project.take("w").unwrap();
@@ -622,10 +628,10 @@ mod tests {
             serde_json::json!({"A": "project", "B": "job", "C": "task"})
         );
         assert_eq!(own.retry.as_ref().map(|r| r.attempts), Some(9));
-        let branch = &job.tasks[2];
-        assert_eq!(branch.timeout, None);
-        assert!(branch.env.is_empty());
-        assert_eq!(branch.then[0].timeout, Some(5));
+        let each = &job.tasks[2];
+        assert_eq!(each.timeout, None);
+        assert!(each.env.is_empty());
+        assert_eq!(each.body[0].timeout, Some(5));
     }
 
     #[test]

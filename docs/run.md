@@ -48,7 +48,7 @@ The whole project is loaded and checked before anything runs. Any error stops `r
 
 ## Output
 
-Every log line is one JSON object on **stdout**, with `job`, `time` (local time with offset) and `event` fields. The same lines are appended to `.rocky/logs/YYYY-MM-DD.log` in the current directory, one file per day by each line's date (`.rocky/logs/NAME-YYYY-MM-DD.log` with `--service NAME`); the `.rocky/logs` directory is created if missing, and a failed write is reported on stderr without stopping `run`. If stdout is closed (`run | head`), `run` keeps running and logging to the file. Each run writes a line per task, branch or switch decision, loop and `while` check as it goes, then a `done` line:
+Every log line is one JSON object on **stdout**, with `job`, `time` (local time with offset) and `event` fields. The same lines are appended to `.rocky/logs/YYYY-MM-DD.log` in the current directory, one file per day by each line's date (`.rocky/logs/NAME-YYYY-MM-DD.log` with `--service NAME`); the `.rocky/logs` directory is created if missing, and a failed write is reported on stderr without stopping `run`. If stdout is closed (`run | head`), `run` keeps running and logging to the file. Each run writes a line per task, skipped task, loop and `while` check as it goes, then a `done` line:
 
 ```json
 {"job":"poll","time":"2026-10-09T09:30:00+09:00","event":"task","task":"fetch","exit_code":0,"ms":412,"ok":true}
@@ -58,8 +58,7 @@ Every log line is one JSON object on **stdout**, with `job`, `time` (local time 
 | `event` | Other fields |
 |---|---|
 | `task` | `task` (the task's key), then `exit_code` or `error` (a timeout with `allow_failure`), `ms`, `ok`, and `allowed: true` when it failed with `allow_failure`, or inside a loop with `on_failure: next` |
-| `branch` | `task`, `arm` (`then` or `else`), `tasks` (how many entries the chosen arm has; nested tasks and loop iterations aren't counted) |
-| `switch` | `task`, `case` (the matching case's number, from 1, or `"default"`), `tasks` (how many entries the chosen case has) |
+| `skip` | `task`, for a task whose [`when`](conditions.md) doesn't hold; no `task` when the whole job is skipped |
 | `for_each` | `task`, `var`, `items` (the list length) |
 | `while` | `task`, `iteration` (which check this is, from 1), `holds` (whether the condition held, so `do` runs again) |
 | `done` | `failed_task`: the task that failed without `allow_failure`, or `null`; `reason`: why it failed (`exited with code 3`), or `null` |
@@ -85,7 +84,7 @@ A task that ends in an error gets no `task` line; the `error` line names it. See
 
 ## Triggering jobs from a task
 
-A task with `trigger` queues a run of another job of the project, scheduled or not, and the job goes on with its next task without waiting. It can go anywhere a task can, so a branch can trigger a job only when something happened:
+A task with `trigger` queues a run of another job of the project, scheduled or not, and the job goes on with its next task without waiting. It can go anywhere a task can, and with [`when`](conditions.md) it triggers a job only when something happened:
 
 ```yaml
 jobs:
@@ -95,10 +94,9 @@ jobs:
       dump:
         cmd: [pg_dump, -f, backup.sql, app]
         allow_failure: true
-      check:
-        if: {this: tasks.dump.ok, eq: false}
-        then:
-          alert: {trigger: notify}   # queue a run of `notify`
+      alert:
+        when: {this: tasks.dump.ok, eq: false}
+        trigger: notify              # queue a run of `notify`
   notify:
     tasks:
       send:

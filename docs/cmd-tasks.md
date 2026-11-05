@@ -25,11 +25,9 @@ jobs:
       config:
         cmd: [test, -f, config.toml]
         allow_failure: true
-      fallback:
-        if: { this: tasks.config.exit_code, ne: 0 }
-        then:
-          note:
-            cmd: [echo, "config.toml not found, using defaults"]
+      note:
+        when: { this: tasks.config.exit_code, ne: 0 }
+        cmd: [echo, "config.toml not found, using defaults"]
 ```
 
 Example: the `mixed` job in [`examples/httpbin.yaml`](../examples/httpbin.yaml).
@@ -87,7 +85,7 @@ top_titles:
 
 Invalid UTF-8 in `stdout` or `stderr` is replaced with `�`.
 
-A non-zero exit code fails the task unless `allow_failure: true`. A command that times out with `allow_failure` has no exit code or output; its result is just `` {"ok": false, "error": "command `x` timed out after 5s"} ``. To check for any failure, test `ok`: `if: {this: tasks.x.ok, eq: false}`. See [Projects](projects.md#failures-and-allow_failure).
+A non-zero exit code fails the task unless `allow_failure: true`. A command that times out with `allow_failure` has no exit code or output; its result is just `` {"ok": false, "error": "command `x` timed out after 5s"} ``. To check for any failure, test `ok`: `when: {this: tasks.x.ok, eq: false}`. See [Projects](projects.md#failures-and-allow_failure).
 
 ## Options
 

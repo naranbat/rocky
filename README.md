@@ -93,7 +93,7 @@ All pages are in [`docs/`](docs/README.md).
   - [Env](docs/env.md): `${NAME}` substitution and env files
   - [Writing YAML](docs/yaml.md): quoting rules, editor schema and common YAML pitfalls
 - **Control flow**
-  - [Conditions](docs/conditions.md): `if` / `then` / `else`, `switch`, `while`
+  - [Conditions](docs/conditions.md): `when`, `while`
   - [Loops](docs/loops.md): `for_each` / `as` / `do`
 - **Operating**
   - [Run](docs/run.md): running jobs on a schedule, or when a client of a Unix socket asks
