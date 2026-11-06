@@ -36,7 +36,7 @@ rocky validate                     # check it without running anything
 rocky exec example                 # run the job once
 ```
 
-Every `rocky` command works on the project in the current directory.
+`exec`, `run` and `validate` work on the project in the current directory.
 
 `exec` prints the result of the last task as JSON:
 

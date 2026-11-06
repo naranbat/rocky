@@ -6,14 +6,7 @@
 
 ## See what `exec` runs
 
-`exec` prints only the result of the last task that ran, on stdout. It doesn't show the tasks before it. `--verbose` (or `-v`) prints each command to stderr just before it runs, with `${VAR}`s filled in (secrets included):
-
-```
-$ rocky exec login --verbose > result.json
-+ [login] curl -s -H 'Authorization: Bearer abc123' https://example.com/login | jq .token
-```
-
-See [`rocky exec`](cli.md#rocky-exec-job).
+`exec` prints only the result of the last task that ran, on stdout. It doesn't show the tasks before it. `--verbose` (or `-v`) prints each command to stderr just before it runs, with `${VAR}`s filled in (secrets included); see [`rocky exec`](cli.md#rocky-exec-job) for an example.
 
 ## Read `run`'s log lines
 

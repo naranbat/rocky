@@ -5,7 +5,7 @@ description: Write, validate and run rocky projects, directories of YAML job fil
 
 # rocky
 
-rocky runs **projects**: a directory where every `jobs/NAME.yaml` file is one **job** named `NAME`, plus an optional `rocky.yaml` of shared settings. Every command works on the project in the **current directory**. A job is a map of named **tasks** that run one at a time, in the order written. A task runs a command (no shell), and later tasks read earlier tasks' output. `rocky exec` runs one job once; `rocky run` runs jobs on their `schedule`.
+rocky runs **projects**: a directory where every `jobs/NAME.yaml` file is one **job** named `NAME`, plus an optional `rocky.yaml` of shared settings. `exec`, `run` and `validate` work on the project in the **current directory**. A job is a map of named **tasks** that run one at a time, in the order written. A task runs a command (no shell), and later tasks read earlier tasks' output. `rocky exec` runs one job once; `rocky run` runs jobs on their `schedule`.
 
 ## Workflow
 

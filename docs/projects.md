@@ -10,7 +10,7 @@ my-project/
     health.yaml       # job `health`
 ```
 
-`rocky` always works on the project in the current directory, so run it from there.
+`rocky exec`, `run` and `validate` work on the project in the current directory, so run them from there.
 
 ```yaml
 # jobs/report.yaml

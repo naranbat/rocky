@@ -105,8 +105,6 @@ An undefined variable fails the task: ``variable `NAME` is not defined (checked 
 | the project's [env file](#env-file) | string |
 | the process environment | string |
 
-These only fill in `${...}`. A command doesn't see env file values in its environment unless its task lists them under [`env`](cmd-tasks.md#options): `env: {TOKEN: '${API_TOKEN}'}`. The quotes are required around `${...}` inside a flow map; see [Writing YAML](yaml.md#quoting).
-
 ## Lookup order
 
 First match wins, for every kind of task, and for a condition's `this` and `for_each`. An undefined variable fails the task, except with the [`exists`](conditions.md#operators) operator:

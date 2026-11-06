@@ -55,11 +55,11 @@ schedule:
   run_on_start: true   # optional, default false
 ```
 
-`run_on_start: true` runs the job once as soon as `run` starts, then follows the schedule. Slots that pass during that first run are skipped, except an `at` time, which then runs late since it's the only one. It works with `hourly`, `daily`, `weekly` and `at`.
+`run_on_start: true` runs the job once as soon as `run` starts, then follows the schedule. Slots that pass during that first run are skipped, except an `at` time, which then runs late since it's the only one. It works with `hourly`, `daily`, `weekly` and `at`, not with `every`, which already runs at start unless `delay` is set.
 
 On its own, `schedule: {run_on_start: true}` runs the job once when `run` starts, and then the job is done, like a one-off `at` job.
 
-An `at` time that is already in the past when `run` starts is not an error: without `run_on_start`, the job logs a `skipped` line (``{"event":"skipped","reason":"`at` is in the past"}``) and doesn't run, while the other jobs run as usual. With `run_on_start`, the job runs once at start. It doesn't work with `every`, which already runs at start unless `delay` is set.
+An `at` time that is already in the past when `run` starts is not an error: without `run_on_start`, the job logs a `skipped` line (``{"event":"skipped","reason":"`at` is in the past"}``) and doesn't run, while the other jobs run as usual. With `run_on_start`, the job runs once at start.
 
 ## Errors
 

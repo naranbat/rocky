@@ -63,7 +63,7 @@ top_titles:
 - Each command's stdout goes straight into the next one's stdin, so data streams through unchanged. Nothing is parsed or trimmed between stages.
 - `stdin` goes to `cmd`. The result's `stdout` is the last command's output (`capture_stdout` applies to it).
 - `exit_code` is the code of the last command that exited non-zero, otherwise `0`, like `set -o pipefail`. A failing command in the middle fails the task.
-- `stderr` is the stderr of every command that wrote some, in order, one per line.
+- `stderr` is the stderr of every command that wrote some, in order, each trimmed and separated by a newline.
 - `cwd`, `env` and `timeout` apply to every command. A timeout or a stop kills them all.
 - `${...}` is substituted in each argument of each command, as for `cmd`.
 
@@ -168,6 +168,6 @@ load:
 ## Environment
 
 - Without `cwd` (here or in [`defaults`](projects.md#defaults)), commands run in **your current directory**, which is the project directory when you run `rocky` from there, not the job file's directory.
-- They inherit the environment of `rocky`. Env file values are **not** exported to them; list the ones a command needs under [`env`](#options), or pass them as arguments or `stdin`.
+- They inherit the environment of `rocky`. [Env file](variables.md#behaviour) values are **not** exported to them; list the ones a command needs under [`env`](#options), or pass them as arguments or `stdin`.
 - Without `timeout`, a command that never exits blocks the job until `rocky` is stopped (Ctrl-C, SIGTERM, SIGHUP or SIGQUIT), which kills it and everything it started.
 - A program that can't be found or started fails the task with ``failed to start command `x` ``, even with `allow_failure`.
