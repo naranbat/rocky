@@ -8,6 +8,7 @@ mod condition;
 mod doc;
 mod edit;
 mod home;
+mod icons;
 mod job;
 mod legacy;
 mod new_sheet;
@@ -28,6 +29,7 @@ mod task_loop;
 mod task_trigger;
 mod theme;
 mod validate;
+mod widgets;
 mod yaml_view;
 
 use std::path::PathBuf;

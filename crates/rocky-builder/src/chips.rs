@@ -13,7 +13,9 @@ use crate::autocomplete;
 use crate::complete::{Mode, Var};
 use crate::doc;
 use crate::edit::Edit;
+use crate::icons::Icon;
 use crate::theme;
+use crate::widgets;
 
 /// A one-line text field over text that is derived from the document every frame. While it
 /// has focus, the typed text is kept in egui memory, so writing it back (and re-deriving it)
@@ -223,11 +225,7 @@ pub fn args(ui: &mut egui::Ui, ed: &mut Edit, command: &mut Value) {
             items.remove(index);
             ed.changed = true;
         }
-        if ui
-            .small_button("+")
-            .on_hover_text("Add an argument")
-            .clicked()
-        {
+        if widgets::icon_button(ui, Icon::Plus, theme::DIM, "Add an argument").clicked() {
             items.push(Value::from(""));
             ed.changed = true;
             let id = ui.scope_id().with(("arg", items.len() - 1)).with("field");
@@ -253,9 +251,9 @@ pub fn vars(
             for (index, name) in names.iter().enumerate() {
                 ui.push_id(index, |ui| {
                     egui::Frame::new()
-                        .fill(theme::FIELD)
-                        .stroke(Stroke::new(1.0, theme::BORDER))
-                        .corner_radius(6)
+                        .fill(theme::CARD)
+                        .stroke(Stroke::new(1.0, theme::BORDER_STRONG))
+                        .corner_radius(theme::RADIUS)
                         .inner_margin(Margin::symmetric(4, 2))
                         .show(ui, |ui| {
                             ui.spacing_mut().item_spacing.x = 4.0;
@@ -268,7 +266,8 @@ pub fn vars(
                             if let Some(value) = map.get_mut(name.as_str()) {
                                 scalar_field(ui, ed, "value", value);
                             }
-                            if ui.small_button("×").on_hover_text("Remove").clicked() {
+                            if widgets::icon_button(ui, Icon::Close, theme::DIM, "Remove").clicked()
+                            {
                                 remove = Some(name.clone());
                             }
                         });
@@ -283,7 +282,7 @@ pub fn vars(
                 doc::set(map, &name, None);
                 ed.changed = true;
             }
-            if ui.small_button("+").on_hover_text("Add a name").clicked() {
+            if widgets::icon_button(ui, Icon::Plus, theme::DIM, "Add a name").clicked() {
                 let name = doc::fresh_key(map, base);
                 map.insert(Value::from(name), Value::from(""));
                 ed.changed = true;
@@ -294,15 +293,7 @@ pub fn vars(
 
 /// A small button with a leading `+`, for adding an optional part.
 pub fn add_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
-    ui.add(
-        egui::Button::new(
-            RichText::new(format!("+ {label}"))
-                .color(theme::DIM)
-                .size(12.0),
-        )
-        .fill(Color32::TRANSPARENT)
-        .stroke(Stroke::new(1.0, theme::BORDER)),
-    )
+    widgets::ghost_button(ui, Some(Icon::Plus), label)
 }
 
 /// A labeled row: a dim fixed-width label, then the contents.

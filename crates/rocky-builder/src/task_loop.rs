@@ -97,6 +97,6 @@ fn body(ui: &mut egui::Ui, ed: &mut Edit, map: &mut Mapping, color: egui::Color3
         .or_insert_with(|| Value::Mapping(Mapping::new()));
     let count = tasks.as_mapping().map_or(0, Mapping::len);
     let plural = if count == 1 { "TASK" } else { "TASKS" };
-    theme::badge(ui, &format!("DO · {count} {plural}"), color);
+    theme::badge(ui, None, &format!("DO · {count} {plural}"), color);
     ui.push_id("do", |ui| task::list(ui, ed, tasks, false));
 }

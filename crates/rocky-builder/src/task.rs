@@ -1,17 +1,19 @@
 //! A list of task cards (a job's `tasks`, or a loop's `do`): each card's header, kind
 //! switching, reordering and deletion, and the add-task picker.
 
-use eframe::egui::{self, Color32, RichText, Stroke};
+use eframe::egui::{self, Color32, Popup, RichText, Stroke};
 use serde_yaml::{Mapping, Value};
 
 use crate::chips;
 use crate::condition;
 use crate::doc;
 use crate::edit::Edit;
+use crate::icons::Icon;
 use crate::legacy;
 use crate::run_view;
 use crate::scope;
 use crate::theme;
+use crate::widgets;
 use crate::{task_cmd, task_file, task_loop, task_trigger};
 
 #[derive(Clone, Copy, PartialEq)]
@@ -70,7 +72,7 @@ impl Kind {
         }
     }
 
-    pub fn color(self) -> Color32 {
+    fn color(self) -> Color32 {
         match self {
             Kind::Cmd => theme::CMD,
             Kind::ForEach => theme::FOR_EACH,
@@ -80,13 +82,13 @@ impl Kind {
         }
     }
 
-    pub fn glyph(self) -> &'static str {
+    fn icon(self) -> Icon {
         match self {
-            Kind::Cmd => ">_",
-            Kind::ForEach => "⇄",
-            Kind::While => "↻",
-            Kind::Trigger => "⚡",
-            Kind::File => "▤",
+            Kind::Cmd => Icon::Terminal,
+            Kind::ForEach => Icon::Loop,
+            Kind::While => Icon::While,
+            Kind::Trigger => Icon::Bolt,
+            Kind::File => Icon::File,
         }
     }
 
@@ -134,20 +136,9 @@ impl Kind {
     }
 }
 
-/// A colored kind icon: the kind's glyph on a tinted square.
-pub fn icon(ui: &mut egui::Ui, kind: Kind) {
-    egui::Frame::new()
-        .fill(kind.color())
-        .corner_radius(4)
-        .inner_margin(egui::Margin::symmetric(3, 1))
-        .show(ui, |ui| {
-            ui.label(
-                RichText::new(kind.glyph())
-                    .color(theme::BG)
-                    .strong()
-                    .size(11.0),
-            );
-        });
+/// A colored kind icon: the kind's icon on a tinted square.
+fn icon(ui: &mut egui::Ui, kind: Kind, size: f32) {
+    widgets::kind_badge(ui, kind.icon(), kind.color(), size);
 }
 
 /// What a card asked its list to do.
@@ -247,20 +238,24 @@ fn drop_target(ui: &egui::Ui, row: &egui::Response, list: egui::Id, index: usize
         .map(|dropped| dropped.from)
 }
 
-/// The step number to the left of a top-level card.
+/// The step number to the left of a top-level card, level with its header.
 fn number(ui: &mut egui::Ui, n: usize, highlighted: bool) {
     let color = if highlighted {
         theme::ACCENT
     } else {
         theme::DIM
     };
-    egui::Frame::new()
-        .stroke(Stroke::new(1.0, color))
-        .corner_radius(12)
-        .inner_margin(egui::Margin::symmetric(7, 3))
-        .show(ui, |ui| {
-            ui.label(RichText::new(n.to_string()).color(color).size(11.0));
-        });
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(24.0, 48.0), egui::Sense::hover());
+    let center = egui::pos2(rect.center().x, rect.top() + 25.0);
+    ui.painter()
+        .circle(center, 11.0, theme::BG, Stroke::new(1.0, color));
+    ui.painter().text(
+        center,
+        egui::Align2::CENTER_CENTER,
+        n.to_string(),
+        theme::font(theme::SMALL),
+        color,
+    );
 }
 
 /// One task card. Returns what the list should do with it, if anything. `legacy` is set
@@ -288,7 +283,7 @@ fn card(
         ui.set_width(ui.available_width());
         ui.horizontal(|ui| {
             ui.dnd_drag_source(ui.scope_id().with("drag"), drag, |ui| {
-                ui.label(RichText::new("⠿").color(theme::DIM))
+                widgets::icon(ui, Icon::Grip, 14.0, theme::FAINT)
                     .on_hover_cursor(egui::CursorIcon::Grab);
             })
             .response
@@ -308,13 +303,15 @@ fn card(
             }
             theme::hint(ui, &format!("→ tasks.{name}"));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.small_button("🗑").on_hover_text("Delete task").clicked() {
+                if widgets::icon_button(ui, Icon::Trash, theme::DIM, "Delete task").clicked() {
                     action = Some(Action::Delete);
                 }
                 if top
                     && ui
-                        .add_enabled(ed.can_run, egui::Button::new("▶").small())
-                        .on_hover_text("Run the job up to this task")
+                        .add_enabled_ui(ed.can_run, |ui| {
+                            widgets::icon_button(ui, Icon::Play, theme::OK, "Run the job up to this task")
+                        })
+                        .inner
                         .on_disabled_hover_text("Fix the errors, or wait for the current run")
                         .clicked()
                 {
@@ -369,9 +366,10 @@ fn old_syntax(ui: &mut egui::Ui, name: &str, task: &Value, conflict: Option<&str
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal_wrapped(|ui| {
+                widgets::icon(ui, Icon::Warning, 12.0, theme::ACCENT);
                 ui.label(
                     RichText::new(format!(
-                        "⚠ Old syntax · `{field}` in task `{name}`. if / then / else and switch were removed."
+                        "Old syntax · `{field}` in task `{name}`. if / then / else and switch were removed."
                     ))
                     .color(theme::ACCENT),
                 );
@@ -401,26 +399,27 @@ fn old_syntax(ui: &mut egui::Ui, name: &str, task: &Value, conflict: Option<&str
 /// The kind dropdown in a card's header. Returns the newly picked kind.
 fn kind_picker(ui: &mut egui::Ui, kind: Option<Kind>) -> Option<Kind> {
     let mut picked = None;
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
-        if let Some(kind) = kind {
-            icon(ui, kind);
+    let id = ui.scope_id().with("kind");
+    let leading = kind.map(|kind| (kind.icon(), kind.color()));
+    let chip = widgets::chip(ui, id, leading, kind.map_or("Unknown", Kind::label));
+    Popup::menu(&chip).show(|ui| {
+        for option in Kind::ALL {
+            let row = ui.add_enabled_ui(Some(option) != kind, |ui| {
+                ui.horizontal(|ui| {
+                    icon(ui, option, 16.0);
+                    ui.selectable_label(Some(option) == kind, option.label())
+                })
+                .inner
+            });
+            if row
+                .inner
+                .on_hover_text("Replaces this task's fields (keeps when)")
+                .clicked()
+            {
+                picked = Some(option);
+                ui.close();
+            }
         }
-        ui.menu_button(
-            RichText::new(format!("{} ⏷", kind.map_or("Unknown", Kind::label))).strong(),
-            |ui| {
-                for option in Kind::ALL {
-                    if ui
-                        .add_enabled(Some(option) != kind, egui::Button::new(option.label()))
-                        .on_hover_text("Replaces this task's fields (keeps when)")
-                        .clicked()
-                    {
-                        picked = Some(option);
-                        ui.close();
-                    }
-                }
-            },
-        );
     });
     picked
 }
@@ -429,11 +428,12 @@ fn kind_picker(ui: &mut egui::Ui, kind: Option<Kind>) -> Option<Kind> {
 fn add_row(ui: &mut egui::Ui, ed: &mut Edit, tasks: &mut Mapping, top: bool) {
     let mut add = None;
     ui.horizontal(|ui| {
-        ui.menu_button(RichText::new("+ ADD TASK").strong().size(12.0), |ui| {
+        let button = widgets::ghost_button(ui, Some(Icon::Plus), "Add task");
+        Popup::menu(&button).show(|ui| {
             for kind in Kind::ALL {
                 let clicked = ui
                     .horizontal(|ui| {
-                        icon(ui, kind);
+                        icon(ui, kind, 22.0);
                         ui.vertical(|ui| {
                             let response =
                                 ui.selectable_label(false, RichText::new(kind.label()).strong());

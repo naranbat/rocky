@@ -6,8 +6,10 @@ use std::time::{Duration, Instant};
 use eframe::egui::{self, RichText};
 use serde_json::Value;
 
+use crate::icons::Icon;
 use crate::results::{End, Results, TaskRun};
 use crate::theme;
+use crate::widgets;
 
 /// One run as the editor shows it: a run started in the builder, or the latest run of a
 /// job that the scheduler reported.
@@ -55,7 +57,7 @@ pub fn job_status(ui: &mut egui::Ui, run: Shown, job: &str) {
     }
     ui.horizontal(|ui| {
         if results.job_skipped(job) {
-            theme::badge(ui, "⏭ SKIPPED", theme::DIM);
+            theme::badge(ui, Some(Icon::Skip), "SKIPPED", theme::DIM);
             theme::hint(ui, "the job's when was false · no task ran");
             return;
         }
@@ -68,17 +70,17 @@ pub fn job_status(ui: &mut egui::Ui, run: Shown, job: &str) {
                 );
             }
             Some(End::Done { failed: None }) => {
-                theme::badge(ui, "✔ LAST RUN OK", theme::OK);
+                theme::badge(ui, Some(Icon::Check), "LAST RUN OK", theme::OK);
                 theme::hint(ui, &format!("{runs} task runs in {secs:.2}s{upto}"));
             }
             Some(End::Done {
                 failed: Some(reason),
             }) => {
-                theme::badge(ui, "✖ LAST RUN FAILED", theme::ERROR);
+                theme::badge(ui, Some(Icon::Close), "LAST RUN FAILED", theme::ERROR);
                 ui.label(RichText::new(reason).color(theme::ERROR).size(12.0));
             }
             Some(End::Error(error)) => {
-                theme::badge(ui, "✖ RUN ERROR", theme::ERROR);
+                theme::badge(ui, Some(Icon::Close), "RUN ERROR", theme::ERROR);
                 ui.label(RichText::new(error).color(theme::ERROR).size(12.0));
             }
         }
@@ -109,22 +111,37 @@ pub fn task_strip(ui: &mut egui::Ui, run: Shown, job: &str, name: &str) {
 /// The badge and one-line summary of a task's runs.
 fn summary(ui: &mut egui::Ui, task: &TaskRun, name: &str) {
     if task.skipped {
-        theme::badge(ui, "⏭ skipped", theme::DIM);
+        theme::badge(ui, Some(Icon::Skip), "skipped", theme::DIM);
         theme::hint(ui, &format!("when was false · tasks.{name} stays unset"));
         return;
     }
     if let Some(target) = &task.queued {
-        theme::badge(ui, &format!("✔ queued {target}"), theme::OK);
+        theme::badge(
+            ui,
+            Some(Icon::Check),
+            &format!("queued {target}"),
+            theme::OK,
+        );
         theme::hint(ui, &format!("{target} runs after this job"));
         return;
     }
     if let Some(items) = task.items {
-        theme::badge(ui, &format!("⇄ {items} items"), theme::FOR_EACH);
+        theme::badge(
+            ui,
+            Some(Icon::Loop),
+            &format!("{items} items"),
+            theme::FOR_EACH,
+        );
         theme::hint(ui, "each item ran do; see its tasks below");
         return;
     }
     if let Some((checks, holds)) = task.check {
-        theme::badge(ui, &format!("↻ {checks} checks"), theme::WHILE);
+        theme::badge(
+            ui,
+            Some(Icon::While),
+            &format!("{checks} checks"),
+            theme::WHILE,
+        );
         let state = if holds {
             "still true"
         } else {
@@ -138,10 +155,15 @@ fn summary(ui: &mut egui::Ui, task: &TaskRun, name: &str) {
     };
     let ok = last["ok"] == Value::Bool(true);
     let label = match last.get("exit_code") {
-        Some(code) => format!("{} exit {code}", if ok { "✔" } else { "✖" }),
-        None => "✖ error".to_string(),
+        Some(code) => format!("exit {code}"),
+        None => "error".to_string(),
     };
-    theme::badge(ui, &label, if ok { theme::OK } else { theme::ERROR });
+    let (icon, color) = if ok {
+        (Icon::Check, theme::OK)
+    } else {
+        (Icon::Close, theme::ERROR)
+    };
+    theme::badge(ui, Some(icon), &label, color);
     let ms = last["ms"].as_u64().unwrap_or_default();
     let mut text = format!(
         "{} · {:.2}s",
@@ -185,12 +207,23 @@ fn output(ui: &mut egui::Ui, result: &Value) {
     let id = ui.make_persistent_id("output");
     let (mut open, mut tab) =
         ui.data_mut(|data| data.get_temp::<(bool, u8)>(id).unwrap_or((false, 0)));
-    let toggle = if open {
-        ">_ Hide output ⏶"
+    let (toggle, chevron) = if open {
+        ("Hide output", Icon::ChevronUp)
     } else {
-        ">_ View output ⏷"
+        ("View output", Icon::Chevron)
     };
-    if ui.small_button(toggle).clicked() {
+    let button = ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        widgets::icon(ui, Icon::Terminal, 12.0, theme::DIM);
+        ui.label(RichText::new(toggle).color(theme::TEXT_DIM).size(12.0));
+        widgets::icon(ui, chevron, 10.0, theme::DIM);
+    });
+    if button
+        .response
+        .interact(egui::Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .clicked()
+    {
         open = !open;
     }
     if open {
@@ -224,7 +257,7 @@ fn output(ui: &mut egui::Ui, result: &Value) {
                     }
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.small_button("Copy").clicked() {
+                    if widgets::icon_button(ui, Icon::Copy, theme::DIM, "Copy").clicked() {
                         ui.ctx().copy_text(text.clone());
                     }
                     if tab == 0 && !result["stdout"].is_string() && !result["stdout"].is_null() {

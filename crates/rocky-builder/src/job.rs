@@ -1,18 +1,20 @@
 //! The job editor: header, schedule, values, defaults, `when`, and tasks. Jobs kept in their
 //! own file show only what the project entry sets (`file`, `schedule`, `values`).
 
-use eframe::egui::{self, RichText};
+use eframe::egui;
 use serde_yaml::{Mapping, Value};
 
 use crate::chips;
 use crate::condition;
 use crate::doc;
 use crate::edit::Edit;
+use crate::icons::Icon;
 use crate::project;
 use crate::run_view;
 use crate::schedule;
 use crate::task;
 use crate::theme;
+use crate::widgets;
 
 /// What the job editor asked the app to do with the job.
 pub enum Action {
@@ -67,13 +69,7 @@ pub fn editor(ui: &mut egui::Ui, ed: &mut Edit, name: &str, job: &mut Value) -> 
 fn header(ui: &mut egui::Ui, name: &str, job: &Value, file: Option<&str>) -> Option<Action> {
     let mut action = None;
     ui.horizontal(|ui| {
-        egui::Frame::new()
-            .fill(theme::ACCENT)
-            .corner_radius(8)
-            .inner_margin(egui::Margin::symmetric(10, 8))
-            .show(ui, |ui| {
-                ui.label(RichText::new("◷").color(theme::BG).size(20.0));
-            });
+        widgets::kind_badge(ui, Icon::Clock, theme::ACCENT, 40.0);
         ui.vertical(|ui| {
             ui.style_mut().override_text_style = Some(egui::TextStyle::Heading);
             if let Some(new) = chips::text(ui, "job name", name, "job name", 120.0, None)
@@ -89,10 +85,7 @@ fn header(ui: &mut egui::Ui, name: &str, job: &Value, file: Option<&str>) -> Opt
             theme::hint(ui, &format!("{kind} · {}", summary(job).to_uppercase()));
         });
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui
-                .button(RichText::new("🗑 Delete job").color(theme::DIM))
-                .clicked()
-            {
+            if widgets::ghost_button(ui, Some(Icon::Trash), "Delete job").clicked() {
                 action = Some(Action::Delete);
             }
         });
@@ -127,7 +120,7 @@ fn inline_job(ui: &mut egui::Ui, ed: &mut Edit, job: &mut Mapping) {
         condition::when_block(ui, ed, job, "false → no task runs");
     } else {
         ui.horizontal(|ui| {
-            if chips::add_button(ui, "ADD JOB CONDITION").clicked() {
+            if chips::add_button(ui, "add job condition").clicked() {
                 job.insert(Value::from("when"), condition::new_leaf());
                 ed.changed = true;
             }

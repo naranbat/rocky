@@ -10,10 +10,12 @@ use eframe::egui::{
 use jiff::{Timestamp, Zoned};
 
 use crate::home::tilde;
+use crate::icons::{self, Icon};
 use crate::new_sheet::{NewSheet, Outcome};
 use crate::recent::{Entry, Recent, Status};
 use crate::scheduler;
 use crate::theme;
+use crate::widgets;
 
 const NEW: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::N);
 const OPEN: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::O);
@@ -173,40 +175,49 @@ fn sidebar(ui: &mut Ui, rocky: Option<&Path>) -> Actions {
         new: action(
             ui,
             true,
-            "+",
+            Icon::Plus,
             "New project…",
             "Start from a basic or full starter",
-            "⌘N",
+            "Cmd N",
         ),
         open: action(
             ui,
             false,
-            "🗁",
+            Icon::Folder,
             "Open project…",
             "Pick a project .yaml file",
-            "⌘O",
+            "Cmd O",
         ),
         example: Path::new(EXAMPLE).is_file()
-            && action(ui, false, "🗐", "Open example", "examples/httpbin.yaml", ""),
+            && action(
+                ui,
+                false,
+                Icon::File,
+                "Open example",
+                "examples/httpbin.yaml",
+                "",
+            ),
     };
     ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
         ui.spacing_mut().item_spacing.y = 4.0;
         match rocky {
             Some(path) => {
                 theme::hint(ui, &tilde(path));
-                ui.label(
-                    RichText::new("● rocky CLI found")
-                        .color(theme::OK)
-                        .size(12.0),
-                );
+                ui.horizontal(|ui| {
+                    widgets::dot(ui, theme::OK, true);
+                    ui.label(RichText::new("rocky CLI found").color(theme::OK).size(12.0));
+                });
             }
             None => {
                 theme::hint(ui, "Running and scheduling need it on PATH");
-                ui.label(
-                    RichText::new("● rocky CLI not found")
-                        .color(theme::ERROR)
-                        .size(12.0),
-                );
+                ui.horizontal(|ui| {
+                    widgets::dot(ui, theme::ERROR, true);
+                    ui.label(
+                        RichText::new("rocky CLI not found")
+                            .color(theme::ERROR)
+                            .size(12.0),
+                    );
+                });
             }
         }
     });
@@ -215,13 +226,13 @@ fn sidebar(ui: &mut Ui, rocky: Option<&Path>) -> Actions {
 
 /// A full-width button with an icon, a title, a line under it and a shortcut; `primary` is
 /// filled yellow. Returns whether it was clicked.
-fn action(ui: &mut Ui, primary: bool, icon: &str, title: &str, detail: &str, keys: &str) -> bool {
+fn action(ui: &mut Ui, primary: bool, icon: Icon, title: &str, detail: &str, keys: &str) -> bool {
     let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 60.0), Sense::click());
     let hovered = response.hovered();
     let (fill, text, dim) = match (primary, hovered) {
         (true, false) => (theme::ACCENT, theme::BG, theme::BG.gamma_multiply(0.75)),
         (true, true) => (
-            theme::ACCENT.gamma_multiply(0.9),
+            theme::lerp(theme::ACCENT, egui::Color32::WHITE, 0.12),
             theme::BG,
             theme::BG.gamma_multiply(0.75),
         ),
@@ -231,19 +242,14 @@ fn action(ui: &mut Ui, primary: bool, icon: &str, title: &str, detail: &str, key
     let painter = ui.painter();
     painter.rect(
         rect,
-        6,
+        4,
         fill,
-        Stroke::new(1.0, if primary { fill } else { theme::BORDER }),
+        Stroke::new(1.0, if primary { fill } else { theme::BORDER_STRONG }),
         egui::StrokeKind::Inside,
     );
     let left = rect.left() + 16.0;
-    painter.text(
-        egui::pos2(left + 6.0, rect.center().y),
-        Align2::CENTER_CENTER,
-        icon,
-        FontId::proportional(15.0),
-        text,
-    );
+    let at = Rect::from_center_size(egui::pos2(left + 6.0, rect.center().y), vec2(14.0, 14.0));
+    icons::paint(painter, at, icon, text);
     painter.text(
         egui::pos2(left + 26.0, rect.center().y - 9.0),
         Align2::LEFT_CENTER,
@@ -278,12 +284,22 @@ fn recent_list(ui: &mut Ui, filter: &mut String, recent: &Recent) -> Option<Pick
         ui.label(RichText::new("RECENT PROJECTS").strong().size(13.0));
         theme::hint(ui, &recent.entries.len().to_string());
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            ui.add(
+            let field = ui.add(
                 egui::TextEdit::singleline(filter)
-                    .hint_text("🔍 Filter by name or path")
+                    .hint_text("Filter by name or path")
                     .desired_width(280.0)
-                    .margin(vec2(10.0, 8.0)),
+                    .margin(egui::Margin {
+                        left: 30,
+                        right: 10,
+                        top: 8,
+                        bottom: 8,
+                    }),
             );
+            let at = Rect::from_center_size(
+                egui::pos2(field.rect.left() + 16.0, field.rect.center().y),
+                vec2(12.0, 12.0),
+            );
+            icons::paint(ui.painter(), at, Icon::Search, theme::DIM);
         });
     });
     ui.add_space(14.0);
@@ -397,7 +413,7 @@ fn row(ui: &mut Ui, columns: &Columns, entry: &Entry, now: &Zoned) -> Option<Pic
     );
     let mut pick = response.clicked().then(|| Pick::Open(entry.path.clone()));
     let response = if missing {
-        response.on_hover_text("The file is gone; remove it from the list with ···")
+        response.on_hover_text("The file is gone; remove it from the list with ⋯")
     } else {
         response
             .on_hover_text(format!("Open {}", entry.path.display()))
@@ -407,9 +423,9 @@ fn row(ui: &mut Ui, columns: &Columns, entry: &Entry, now: &Zoned) -> Option<Pic
     if response.hovered() {
         painter.rect(
             rect,
-            8,
+            4,
             theme::CARD,
-            Stroke::new(1.0, theme::BORDER),
+            Stroke::new(1.0, theme::BORDER_STRONG),
             egui::StrokeKind::Inside,
         );
     }
@@ -425,17 +441,16 @@ fn row(ui: &mut Ui, columns: &Columns, entry: &Entry, now: &Zoned) -> Option<Pic
     let icon = Rect::from_center_size(egui::pos2(rect.left() + 33.0, y), vec2(38.0, 38.0));
     painter.rect(
         icon,
-        6,
+        4,
         theme::BG,
-        Stroke::new(1.0, theme::BORDER),
+        Stroke::new(1.0, theme::BORDER_STRONG),
         egui::StrokeKind::Inside,
     );
-    painter.text(
-        icon.center(),
-        Align2::CENTER_CENTER,
-        "🗋",
-        FontId::proportional(16.0),
-        fade(theme::TEXT),
+    icons::paint(
+        painter,
+        icon.shrink(11.0),
+        Icon::File,
+        fade(theme::TEXT_DIM),
     );
 
     let text = |x: f32, y: f32, align: Align2, text: &str, size: f32, color| {
@@ -507,9 +522,9 @@ fn row(ui: &mut Ui, columns: &Columns, entry: &Entry, now: &Zoned) -> Option<Pic
         theme::DIM,
     );
 
-    let more = Rect::from_center_size(egui::pos2(columns.right - 30.0, y), vec2(28.0, 24.0));
+    let more = Rect::from_center_size(egui::pos2(columns.right - 30.0, y), vec2(22.0, 22.0));
     ui.scope_builder(egui::UiBuilder::new().max_rect(more), |ui| {
-        ui.menu_button(RichText::new("···").color(theme::DIM), |ui| {
+        widgets::more_menu(ui, "More", |ui| {
             if ui.button("Remove from recent").clicked() {
                 pick = Some(Pick::Forget(entry.path.clone()));
             }
@@ -531,7 +546,7 @@ fn drop_zone(ui: &mut Ui) {
         theme::BORDER
     };
     if hovering {
-        ui.painter().rect_filled(rect, 8, theme::ACCENT_BG);
+        ui.painter().rect_filled(rect, 4, theme::ACCENT_BG);
     }
     let corners = [
         rect.left_top(),
@@ -546,13 +561,19 @@ fn drop_zone(ui: &mut Ui) {
         4.0,
         4.0,
     ));
-    ui.painter().text(
-        rect.center(),
+    let color = if hovering { theme::ACCENT } else { theme::DIM };
+    let text = ui.painter().text(
+        rect.center() + vec2(11.0, 0.0),
         Align2::CENTER_CENTER,
-        "🗁  Drop a project .yaml file here to open it",
+        "Drop a project .yaml file here to open it",
         FontId::monospace(13.0),
-        if hovering { theme::ACCENT } else { theme::DIM },
+        color,
     );
+    let at = Rect::from_center_size(
+        egui::pos2(text.left() - 12.0, rect.center().y),
+        vec2(14.0, 14.0),
+    );
+    icons::paint(ui.painter(), at, Icon::Folder, color);
 }
 
 /// The system's Open panel, for YAML files. `None` if cancelled.

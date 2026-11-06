@@ -8,6 +8,7 @@ use eframe::egui::{self, Key, KeyboardShortcut, Modifiers, RichText, Stroke};
 
 use crate::doc::{self, Doc};
 use crate::edit::Edit;
+use crate::icons::Icon;
 use crate::job;
 use crate::project;
 use crate::recent::Recent;
@@ -19,6 +20,7 @@ use crate::sidebar::{self, Selection};
 use crate::start;
 use crate::theme;
 use crate::validate::Validation;
+use crate::widgets;
 use crate::yaml_view;
 
 const SAVE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::S);
@@ -199,7 +201,10 @@ impl App {
                         .inner_margin(egui::Margin::symmetric(16, 8)),
                 )
                 .show(ui, |ui| {
-                    ui.label(RichText::new(format!("⚠ {}", error.message)).color(theme::ERROR));
+                    ui.horizontal(|ui| {
+                        widgets::icon(ui, Icon::Warning, 12.0, theme::ERROR);
+                        ui.label(RichText::new(&error.message).color(theme::ERROR));
+                    });
                 });
         }
         egui::Panel::bottom("status")
@@ -388,13 +393,7 @@ fn top_bar(
         stop: false,
     };
     ui.horizontal(|ui| {
-        egui::Frame::new()
-            .fill(theme::ACCENT)
-            .corner_radius(6)
-            .inner_margin(egui::Margin::symmetric(7, 3))
-            .show(ui, |ui| {
-                ui.label(RichText::new("⛰").color(theme::BG).strong());
-            });
+        theme::logo(ui, 22.0);
         ui.label(RichText::new("rocky").strong().size(15.0));
         let file = file_name(&doc.path);
         let crumb = match selection {
@@ -404,21 +403,19 @@ fn top_bar(
         theme::hint(ui, &crumb);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if running {
-                let stop = egui::Button::new(RichText::new("■ Stop").color(theme::BG).strong())
-                    .fill(theme::ERROR);
-                if ui
-                    .add(stop)
+                if widgets::filled_button(ui, Icon::Stop, "Stop", theme::ERROR)
                     .on_hover_text("Stop the run and kill its commands")
                     .clicked()
                 {
                     actions.stop = true;
                 }
             } else {
-                let run = egui::Button::new(RichText::new("▶ Run job").color(theme::BG).strong())
-                    .fill(theme::ACCENT);
                 let enabled = can_run && matches!(selection, Selection::Job(_));
-                if ui
-                    .add_enabled(enabled, run)
+                let run = ui.add_enabled_ui(enabled, |ui| {
+                    widgets::filled_button(ui, Icon::Play, "Run job", theme::ACCENT)
+                });
+                if run
+                    .inner
                     .on_hover_text(if scheduling {
                         "Queue a run of this job on the scheduler (its saved version)"
                     } else {
@@ -433,17 +430,18 @@ fn top_bar(
             if ui.button("Validate").clicked() {
                 actions.validate = true;
             }
-            if ui.selectable_label(*show_yaml, "<> YAML").clicked() {
+            if ui.selectable_label(*show_yaml, "</> YAML").clicked() {
                 *show_yaml = !*show_yaml;
             }
-            let save = if dirty { "● Save ⌘S" } else { "Save ⌘S" };
-            if ui.button(save).clicked() {
+            let save = if dirty { "● Save" } else { "Save" };
+            if ui.button(save).on_hover_text("Save · Cmd+S").clicked() {
                 actions.save = true;
             }
+            ui.add_space(4.0);
             match &validation.result {
-                Some(Ok(())) => theme::badge(ui, "✔ VALID", theme::OK),
-                Some(Err(_)) => theme::badge(ui, "✖ INVALID", theme::ERROR),
-                None => theme::badge(ui, "CHECKING", theme::DIM),
+                Some(Ok(())) => theme::badge(ui, Some(Icon::Check), "VALID", theme::OK),
+                Some(Err(_)) => theme::badge(ui, Some(Icon::Close), "INVALID", theme::ERROR),
+                None => theme::badge(ui, None, "CHECKING", theme::DIM),
             };
         });
     });
@@ -470,7 +468,8 @@ fn status_bar(
     ui.horizontal(|ui| {
         match running {
             Some((scheduler, started_with)) => {
-                ui.label(RichText::new("● Scheduler running").color(theme::OK).size(12.0));
+                widgets::dot(ui, theme::OK, true);
+                ui.label(RichText::new("Scheduler running").color(theme::OK).size(12.0));
                 if ui
                     .small_button("Stop")
                     .on_hover_text("Stop `rocky run`; running commands are killed")
@@ -495,7 +494,8 @@ fn status_bar(
                 }
             }
             None => {
-                ui.label(RichText::new("○ Scheduler stopped").color(theme::DIM).size(12.0));
+                widgets::dot(ui, theme::DIM, false);
+                ui.label(RichText::new("Scheduler stopped").color(theme::DIM).size(12.0));
                 if ui
                     .small_button("Start")
                     .on_hover_text("Run `rocky run` on the saved project, with a socket, until stopped")

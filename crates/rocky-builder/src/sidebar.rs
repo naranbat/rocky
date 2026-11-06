@@ -4,11 +4,13 @@ use eframe::egui::{self, RichText, Stroke};
 use serde_yaml::{Mapping, Value};
 
 use crate::doc::{self, Doc};
+use crate::icons::Icon;
 use crate::job;
 use crate::project;
 use crate::scheduler::Scheduler;
 use crate::theme;
 use crate::validate::Problem;
+use crate::widgets;
 
 /// What the main area shows.
 #[derive(Clone, PartialEq)]
@@ -55,7 +57,7 @@ pub fn show(
     ui.horizontal(|ui| {
         theme::hint(ui, &format!("JOBS · {}", names.len()));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui.small_button("+").on_hover_text("Add a job").clicked() {
+            if widgets::icon_button(ui, Icon::Plus, theme::DIM, "Add a job").clicked() {
                 let jobs = doc.jobs_mut();
                 let name = doc::fresh_key(jobs, "new_job");
                 jobs.insert(Value::from(name.clone()), new_job());
@@ -113,8 +115,8 @@ fn row(ui: &mut egui::Ui, label: &str, value: &str, selected: bool) -> egui::Res
     .on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
-/// One job in the list: its name, and a dot (filled when scheduled, ▶ while the scheduler
-/// runs it, a cross when it has a problem) with its summary.
+/// One job in the list: its name, and a marker (a filled dot when scheduled, a play icon
+/// while the scheduler runs it, a cross when it has a problem) with its summary.
 fn job_item(
     ui: &mut egui::Ui,
     name: &str,
@@ -127,28 +129,26 @@ fn job_item(
     let frame = if selected {
         egui::Frame::new()
             .fill(theme::CARD)
-            .stroke(Stroke::new(1.0, theme::BORDER))
+            .stroke(Stroke::new(1.0, theme::BORDER_STRONG))
     } else {
         egui::Frame::new()
     };
     frame
-        .corner_radius(8)
+        .corner_radius(theme::RADIUS)
         .inner_margin(egui::Margin::symmetric(10, 8))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.label(RichText::new(name).strong());
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
-                let (dot, color) = if broken {
-                    ("✖", theme::ERROR)
+                if broken {
+                    widgets::icon(ui, Icon::Close, 10.0, theme::ERROR);
                 } else if running {
-                    ("▶", theme::ACCENT)
-                } else if scheduled {
-                    ("●", theme::OK)
+                    widgets::icon(ui, Icon::Play, 10.0, theme::ACCENT);
                 } else {
-                    ("○", theme::DIM)
-                };
-                ui.label(RichText::new(dot).color(color).size(10.0));
+                    let color = if scheduled { theme::OK } else { theme::DIM };
+                    widgets::dot(ui, color, scheduled);
+                }
                 theme::hint(ui, &job::summary(job));
             });
         })

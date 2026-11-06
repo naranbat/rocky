@@ -7,7 +7,9 @@ use crate::chips;
 use crate::condition;
 use crate::doc;
 use crate::edit::Edit;
+use crate::icons::Icon;
 use crate::theme;
+use crate::widgets;
 
 /// Optional fields offered by the `+` menu, with the value each starts with.
 fn optional() -> [(&'static str, Value); 10] {
@@ -164,10 +166,7 @@ fn pipe(ui: &mut egui::Ui, ed: &mut Edit, task: &mut Mapping) {
             chips::row(ui, if index == 0 { "pipe" } else { "" }, |ui| {
                 ui.label(RichText::new("|").color(theme::DIM));
                 chips::args(ui, ed, stage);
-                if ui
-                    .small_button("×")
-                    .on_hover_text("Remove this stage")
-                    .clicked()
+                if widgets::icon_button(ui, Icon::Close, theme::DIM, "Remove this stage").clicked()
                 {
                     remove = Some(index);
                 }
@@ -195,7 +194,7 @@ pub fn retry_editor(ui: &mut egui::Ui, ed: &mut Edit, retry: &mut Mapping) -> bo
             chips::number_field(ui, ed, retry, "attempts", "3");
             ui.label(RichText::new("times, waiting").color(theme::DIM));
             chips::str_field(ui, ed, retry, "delay", "0s", 30.0);
-            if ui.small_button("×").on_hover_text("Remove retry").clicked() {
+            if widgets::icon_button(ui, Icon::Close, theme::DIM, "Remove retry").clicked() {
                 remove = true;
             }
         });

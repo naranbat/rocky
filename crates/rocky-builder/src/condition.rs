@@ -7,7 +7,9 @@ use serde_yaml::{Mapping, Value};
 use crate::chips;
 use crate::doc;
 use crate::edit::Edit;
+use crate::icons::Icon;
 use crate::theme;
+use crate::widgets;
 
 /// Comparison operators: key, label, and whether it compares numbers.
 const OPERATORS: [(&str, &str, bool); 9] = [
@@ -37,19 +39,16 @@ pub fn when_block(ui: &mut egui::Ui, ed: &mut Edit, map: &mut Mapping, note: &st
     };
     let mut remove = false;
     egui::Frame::new()
-        .fill(theme::ACCENT_BG.gamma_multiply(0.6))
-        .stroke(Stroke::new(1.0, theme::ACCENT.gamma_multiply(0.4)))
-        .corner_radius(6)
+        .fill(theme::ACCENT_BG)
+        .stroke(Stroke::new(1.0, theme::tint(theme::ACCENT, 0.35)))
+        .corner_radius(theme::RADIUS)
         .inner_margin(egui::Margin::same(8))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                theme::badge(ui, "WHEN", theme::ACCENT);
+                theme::badge(ui, None, "WHEN", theme::ACCENT);
                 theme::hint(ui, &format!("{} · {note}", summary(condition)));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui
-                        .small_button(RichText::new("REMOVE WHEN").color(theme::DIM).size(11.0))
-                        .clicked()
-                    {
+                    if widgets::icon_button(ui, Icon::Close, theme::DIM, "Remove when").clicked() {
                         remove = true;
                     }
                 });
@@ -130,7 +129,7 @@ fn not_editor(ui: &mut egui::Ui, ed: &mut Edit, condition: &mut Value) -> bool {
     let mut delete = false;
     let mut unwrap = false;
     ui.horizontal_top(|ui| {
-        if theme::badge(ui, "NOT", theme::ERROR)
+        if theme::badge(ui, None, "NOT", theme::ERROR)
             .interact(egui::Sense::click())
             .on_hover_text("Remove the NOT")
             .clicked()
@@ -169,7 +168,7 @@ fn group_editor(ui: &mut egui::Ui, ed: &mut Edit, condition: &mut Value) -> bool
             let count = group(condition).map_or(0, |(_, items)| items.len());
             theme::hint(ui, &format!("{count} conditions"));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.small_button("🗑").on_hover_text("Delete group").clicked() {
+                if widgets::icon_button(ui, Icon::Trash, theme::DIM, "Delete group").clicked() {
                     delete = true;
                 }
                 if ui
@@ -207,11 +206,11 @@ fn group_editor(ui: &mut egui::Ui, ed: &mut Edit, condition: &mut Value) -> bool
             ed.changed = true;
         }
         ui.horizontal(|ui| {
-            if chips::add_button(ui, "ADD CONDITION").clicked() {
+            if chips::add_button(ui, "add condition").clicked() {
                 items.push(new_leaf());
                 ed.changed = true;
             }
-            if chips::add_button(ui, "ADD GROUP").clicked() {
+            if chips::add_button(ui, "add group").clicked() {
                 items.push(doc::map_of([(
                     "any",
                     Value::Sequence(vec![new_leaf(), new_leaf()]),
@@ -251,23 +250,22 @@ fn leaf_editor(ui: &mut egui::Ui, ed: &mut Edit, condition: &mut Value) -> bool 
             && let Some((key, _, _)) = OPERATORS[..8]
                 .iter()
                 .find(|(key, _, _)| !map.contains_key(*key))
-            && ui
-                .small_button("+")
-                .on_hover_text("Add another operator to make a range")
-                .clicked()
+            && widgets::icon_button(
+                ui,
+                Icon::Plus,
+                theme::DIM,
+                "Add another operator to make a range",
+            )
+            .clicked()
         {
             map.insert(Value::from(*key), Value::from(""));
             ed.changed = true;
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui
-                .small_button("🗑")
-                .on_hover_text("Delete condition")
-                .clicked()
-            {
+            if widgets::icon_button(ui, Icon::Trash, theme::DIM, "Delete condition").clicked() {
                 delete = true;
             }
-            ui.menu_button(RichText::new("⋯").color(theme::DIM), |ui| {
+            widgets::more_menu(ui, "More", |ui| {
                 if ui.button("Negate (NOT)").clicked() {
                     wrap_in = Some("not");
                 }
@@ -345,10 +343,7 @@ fn operator_editor(
     } else if let Some(value) = map.get_mut(key) {
         chips::scalar_field(ui, ed, "value", value);
         if removable
-            && ui
-                .small_button(RichText::new("×").color(theme::DIM))
-                .on_hover_text("Remove operator")
-                .clicked()
+            && widgets::icon_button(ui, Icon::Close, theme::DIM, "Remove operator").clicked()
         {
             map.shift_remove(key);
             ed.changed = true;
