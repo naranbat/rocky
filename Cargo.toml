@@ -1,10 +1,12 @@
-[package]
-name = "rocky"
+[workspace]
+members = ["crates/*"]
+resolver = "3"
+
+[workspace.package]
 version = "0.1.0"
-description = "Automate repeatable work: chain commands into YAML projects, run on demand or on a schedule"
 edition = "2024"
 
-[dependencies]
+[workspace.dependencies]
 anyhow = "1.0.104"
 clap = { version = "4.6.7", features = ["derive"] }
 dotenvy = "0.15.7"
@@ -16,6 +18,4 @@ serde_json = { version = "1.0.151", features = ["preserve_order", "arbitrary_pre
 serde_yaml = "0.9.34"
 thiserror = "2.0.21"
 tokio = { version = "1.53.2", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
-
-[dev-dependencies]
 tempfile = "3.27.0"

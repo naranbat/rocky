@@ -5,7 +5,7 @@
 Install `rocky` first, and use its absolute path below, since service managers don't use your shell's `PATH`:
 
 ```sh
-cargo install --path .     # installs ~/.cargo/bin/rocky
+cargo install --path crates/rocky     # installs ~/.cargo/bin/rocky
 rocky validate /path/to/project.yaml
 ```
 

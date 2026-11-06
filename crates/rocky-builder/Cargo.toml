@@ -1,0 +1,9 @@
+[package]
+name = "rocky-builder"
+description = "Build rocky projects in a desktop UI"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+rocky-core = { path = "../rocky-core" }
+eframe = "0.37.0"

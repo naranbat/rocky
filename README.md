@@ -7,7 +7,7 @@ A CLI for automating repeatable work. A project is a YAML file of named jobs; ea
 Needs a Rust toolchain (stable) and a Unix system (Linux or macOS).
 
 ```sh
-cargo install --path .     # puts `rocky` on your PATH
+cargo install --path crates/rocky     # puts `rocky` on your PATH
 # or
 cargo build --release      # binary at target/release/rocky
 ```

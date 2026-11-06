@@ -152,7 +152,7 @@ const FULL_CONTROL: &str = "
 ";
 
 /// How much a starter file shows.
-#[derive(Clone, Copy, clap::ValueEnum)]
+#[derive(Clone, Copy)]
 pub enum Level {
     /// The smallest file that runs.
     Basic,

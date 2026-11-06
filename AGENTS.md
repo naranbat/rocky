@@ -8,6 +8,19 @@ A CLI tool for automating repeatable work. Combine multiple tools into a single 
 - Test: `cargo nextest run` (fall back to `cargo test` if nextest isn't installed)
 - Lint: `cargo clippy --all-targets -- -D warnings`
 - Format: `cargo fmt` (check only: `cargo fmt --check`)
+- Run the CLI: `cargo run -p rocky -- <args>`
+- Run the builder UI: `cargo run -p rocky-builder`
+
+## Layout
+
+A Cargo workspace; commands above run on every crate from the repo root.
+
+- `crates/rocky-core`: the library. All project loading, validation, running and scheduling lives here, with no CLI or UI dependencies.
+- `crates/rocky`: the `rocky` CLI. Only parses arguments and prints results.
+- `crates/rocky-builder`: the desktop builder UI (eframe/egui). Only draws and edits; calls `rocky-core` for everything else.
+- `docs/`, `examples/`, `schema/` and `skills/` stay at the repo root, shared by all crates.
+
+New logic goes in `rocky-core`, not in a binary crate.
 
 ## Rust Rules
 

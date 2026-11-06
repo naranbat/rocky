@@ -1366,7 +1366,7 @@ mod tests {
     async fn env_file_beats_the_process_environment() {
         let yaml = "tasks:\n  e:\n    cmd: [echo, '${CARGO_PKG_NAME}']\n";
         let outcome = exec(project(yaml)).await.unwrap();
-        assert_eq!(stdout(&outcome), &json!("rocky"));
+        assert_eq!(stdout(&outcome), &json!("rocky-core"));
         let (project, _dir) = project_with_env(yaml, &[("CARGO_PKG_NAME", "rb")]);
         let outcome = exec(project).await.unwrap();
         assert_eq!(stdout(&outcome), &json!("rb"));

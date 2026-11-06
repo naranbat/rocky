@@ -1,0 +1,19 @@
+[package]
+name = "rocky-core"
+description = "Rocky's engine: load, validate, run and schedule YAML projects"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+dotenvy.workspace = true
+jiff.workspace = true
+nix.workspace = true
+regex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

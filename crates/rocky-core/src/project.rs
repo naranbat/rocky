@@ -320,7 +320,7 @@ mod tests {
 
     #[test]
     fn loads_every_example_project() {
-        let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples");
+        let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
         let mut loaded = 0;
         for entry in std::fs::read_dir(examples).unwrap() {
             let path = entry.unwrap().path();

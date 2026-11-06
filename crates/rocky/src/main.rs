@@ -4,8 +4,8 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 use nix::sys::signal::Signal;
-use rocky::trigger::Trigger;
-use rocky::{error, exec, new, process_group, progress, project, run, socket};
+use rocky_core::trigger::Trigger;
+use rocky_core::{error, exec, new, process_group, progress, project, run, socket};
 use tokio::signal::unix::{SignalKind, signal};
 
 #[derive(Parser)]
@@ -61,8 +61,17 @@ enum Command {
         kind: NewKind,
         /// How much the file shows: `basic` is the smallest file that runs, `full` uses every field, with comments.
         #[arg(long, global = true, value_enum, default_value = "basic")]
-        level: new::Level,
+        level: Level,
     },
+}
+
+/// How much a starter file shows.
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum Level {
+    /// The smallest file that runs.
+    Basic,
+    /// Every field, with comments.
+    Full,
 }
 
 #[derive(Subcommand)]
@@ -131,6 +140,10 @@ async fn main() -> anyhow::Result<()> {
                 NewKind::Project { path } => (new::Kind::Project, path),
                 NewKind::Job { path } => (new::Kind::Job, path),
                 NewKind::Task { path } => (new::Kind::Task, path),
+            };
+            let level = match level {
+                Level::Basic => new::Level::Basic,
+                Level::Full => new::Level::Full,
             };
             println!("{}", new::create(kind, level, &path)?);
         }

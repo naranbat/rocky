@@ -13,9 +13,9 @@ fn markdown_files(root: &Path) -> Vec<PathBuf> {
 
 #[test]
 fn documentation_yaml_blocks_parse() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let mut blocks = 0;
-    for path in markdown_files(root) {
+    for path in markdown_files(&root) {
         let text = std::fs::read_to_string(&path).unwrap();
         let mut yaml = None;
         for line in text.lines() {
@@ -41,7 +41,7 @@ fn documentation_yaml_blocks_parse() {
 
 #[test]
 fn project_schema_is_valid_json() {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("schema/rocky.schema.json");
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schema/rocky.schema.json");
     let text = std::fs::read_to_string(&path).unwrap();
     let schema: serde_json::Value = serde_json::from_str(&text).unwrap();
     assert_eq!(
