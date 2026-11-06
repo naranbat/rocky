@@ -8,6 +8,7 @@ use crate::chips;
 use crate::condition;
 use crate::doc;
 use crate::edit::Edit;
+use crate::run_view;
 use crate::theme;
 use crate::{task_cmd, task_file, task_loop, task_trigger};
 
@@ -171,7 +172,7 @@ pub fn list(ui: &mut egui::Ui, ed: &mut Edit, tasks: &mut Value, top: bool) {
                     number(ui, index + 1, task.get("when").is_some());
                 }
                 ui.vertical(|ui| {
-                    if let Some(act) = card(ui, ed, name, task, index, names.len()) {
+                    if let Some(act) = card(ui, ed, name, task, index, names.len(), top) {
                         action = Some((index, name.clone(), act));
                     }
                 });
@@ -222,6 +223,7 @@ fn card(
     task: &mut Value,
     index: usize,
     count: usize,
+    top: bool,
 ) -> Option<Action> {
     let kind = Kind::of(task);
     let mut action = None;
@@ -251,6 +253,15 @@ fn card(
                 if ui.small_button("🗑").on_hover_text("Delete task").clicked() {
                     action = Some(Action::Delete);
                 }
+                if top
+                    && ui
+                        .add_enabled(ed.can_run, egui::Button::new("▶").small())
+                        .on_hover_text("Run the job up to this task")
+                        .on_disabled_hover_text("Fix the errors, or wait for the current run")
+                        .clicked()
+                {
+                    ed.run_until = Some(name.to_string());
+                }
                 if ui.add_enabled(index + 1 < count, egui::Button::new("↓").small()).on_hover_text("Move down").clicked() {
                     action = Some(Action::MoveDown);
                 }
@@ -272,6 +283,9 @@ fn card(
                 theme::hint(ui, "Unknown task: no cmd, for_each, while, trigger or file. Pick a kind above, or fix it in the file.");
                 ui.label(RichText::new(doc::flow(task)).color(theme::ERROR));
             }
+        }
+        if let Some(run) = ed.run {
+            run_view::task_strip(ui, run, ed.job, name);
         }
     });
     action

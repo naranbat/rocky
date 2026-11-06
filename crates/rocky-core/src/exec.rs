@@ -1,9 +1,10 @@
 use std::collections::BTreeMap;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use serde::ser::SerializeMap;
 use serde::{Serialize, Serializer};
 use serde_json::{Map, Value, json};
+use tokio::sync::mpsc::UnboundedSender;
 
 use crate::command::{self, CommandResult, Stdout};
 use crate::condition::Condition;
@@ -67,6 +68,49 @@ impl TaskResult {
             stdout: Value::Null,
             stderr: String::new(),
         })
+    }
+}
+
+/// Where [`exec`] reports progress: one JSON event per task, skip, loop, `while` check and
+/// trigger (see [`progress`]).
+pub enum Log {
+    /// Nowhere.
+    Off,
+    /// As JSON lines on stdout and in the log file, as `rocky run` does.
+    Emit,
+    /// To a channel, each event with its `job`, and task events with the task's full
+    /// result (as `tasks.NAME` reads it) under `result`.
+    Send(UnboundedSender<Value>),
+}
+
+impl Log {
+    async fn event(&self, job: &str, event: Value) {
+        match self {
+            Log::Off => {}
+            Log::Emit => progress::emit(job, event).await,
+            Log::Send(sender) => {
+                let mut event = event;
+                event["job"] = json!(job);
+                // A closed channel means nobody is watching any more; the run goes on.
+                let _ = sender.send(event);
+            }
+        }
+    }
+
+    /// Reports one finished run of task `name`.
+    async fn task(
+        &self,
+        job: &str,
+        name: &str,
+        result: &TaskResult,
+        elapsed: Duration,
+        allowed: bool,
+    ) {
+        let mut event = progress::task(name, result, elapsed, allowed);
+        if let Log::Send(_) = self {
+            event["result"] = serde_json::to_value(result).unwrap_or(Value::Null);
+        }
+        self.event(job, event).await;
     }
 }
 
@@ -178,12 +222,11 @@ fn queued(tasks: Vec<Task>) -> impl DoubleEndedIterator<Item = Work> {
 /// A failing task inside a loop with `allow_failure` skips the rest of that iteration.
 /// A `trigger` task queues a run of its job on `trigger` and goes on.
 /// The job's `values` (the project's merged in at load) are read as `${NAME}`.
-/// With `log`, one JSON line per task, skip, loop, and `while` check is
-/// printed to stdout. With `verbose`, each command is printed to stderr before it runs.
+/// Progress goes to `log`. With `verbose`, each command is printed to stderr before it runs.
 pub async fn exec(
     mut project: Project,
     job: &str,
-    log: bool,
+    log: &Log,
     verbose: bool,
     trigger: &Trigger,
 ) -> Result<Outcome, Error> {
@@ -200,9 +243,7 @@ pub async fn exec(
     if let Some(condition) = tasks.when
         && !condition.evaluate(&|var| lookup(var, &values, &env))?
     {
-        if log {
-            progress::emit(job, progress::skip(None)).await;
-        }
+        log.event(job, progress::skip(None)).await;
         return Ok(Outcome {
             result: None,
             failed_task: None,
@@ -239,9 +280,8 @@ pub async fn exec(
                     .condition
                     .evaluate(&|var| lookup(var, &values, &env))
                     .map_err(to_task_error)?;
-                if log {
-                    progress::emit(job, progress::repeat(&name, repeat.done + 1, holds)).await;
-                }
+                log.event(job, progress::repeat(&name, repeat.done + 1, holds))
+                    .await;
                 if holds {
                     if repeat.max == Some(repeat.done) {
                         return Err(to_task_error(Error::While(format!(
@@ -290,18 +330,14 @@ pub async fn exec(
                 .evaluate(&|var| lookup(var, &values, &env))
                 .map_err(to_task_error)?;
             if !holds {
-                if log {
-                    progress::emit(job, progress::skip(Some(&name))).await;
-                }
+                log.event(job, progress::skip(Some(&name))).await;
                 continue;
             }
         }
 
         if let Some(target) = task.trigger.take() {
             trigger.send(&target);
-            if log {
-                progress::emit(job, progress::trigger(&name, &target)).await;
-            }
+            log.event(job, progress::trigger(&name, &target)).await;
             continue;
         }
 
@@ -315,9 +351,8 @@ pub async fn exec(
                 }
                 None => return Err(to_task_error(Error::UndefinedVar(list_var))),
             };
-            if log {
-                progress::emit(job, progress::for_each(&name, &list_var, items.len())).await;
-            }
+            log.event(job, progress::for_each(&name, &list_var, items.len()))
+                .await;
             let var = task.item_var.unwrap_or_else(|| "ITEM".to_string());
             stack.push(Work::Loop(Box::new(Loop {
                 body: task.body,
@@ -355,13 +390,8 @@ pub async fn exec(
             let result = run_task(&task, tolerated, verbose, &mut values, &env)
                 .await
                 .map_err(to_task_error)?;
-            if log {
-                progress::emit(
-                    job,
-                    progress::task(&name, &result, started.elapsed(), tolerated),
-                )
+            log.task(job, &name, &result, started.elapsed(), tolerated)
                 .await;
-            }
             let Some(retry) = &retry else {
                 break result;
             };
@@ -530,7 +560,31 @@ mod tests {
     }
 
     async fn exec(project: Project) -> Result<Outcome, Error> {
-        super::exec(project, "w", false, false, &Trigger::channel().0).await
+        super::exec(project, "w", &Log::Off, false, &Trigger::channel().0).await
+    }
+
+    #[tokio::test]
+    async fn send_log_carries_job_and_full_results() {
+        let yaml = "tasks:\n  a: {cmd: [echo, '{\"n\": 1}']}\n  b: {cmd: [echo], when: {this: tasks.a.ok, eq: false}}\n";
+        let (sender, mut events) = tokio::sync::mpsc::unbounded_channel();
+        super::exec(
+            project(yaml),
+            "w",
+            &Log::Send(sender),
+            false,
+            &Trigger::channel().0,
+        )
+        .await
+        .unwrap();
+        let task = events.recv().await.unwrap();
+        assert_eq!(task["event"], "task");
+        assert_eq!(task["job"], "w");
+        assert_eq!(task["task"], "a");
+        assert_eq!(task["result"]["stdout"], json!({"n": 1}));
+        assert_eq!(task["result"]["ok"], true);
+        let skip = events.recv().await.unwrap();
+        assert_eq!(skip, json!({"event": "skip", "task": "b", "job": "w"}));
+        assert!(events.recv().await.is_none());
     }
 
     /// The failing task's name and its error, for a run that must fail in a task.
@@ -678,7 +732,7 @@ mod tests {
              \x20 t:\n    when: {this: tasks.a.ok, eq: true}\n    trigger: report\n\
              \x20 u:\n    when: {this: tasks.a.ok, eq: false}\n    trigger: other\n",
         );
-        let outcome = super::exec(project, "w", false, false, &trigger)
+        let outcome = super::exec(project, "w", &Log::Off, false, &trigger)
             .await
             .unwrap();
         assert_eq!(stdout(&outcome), &json!("a"));

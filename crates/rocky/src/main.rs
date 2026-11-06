@@ -90,8 +90,14 @@ async fn main() -> anyhow::Result<()> {
         Command::Exec { file, job, verbose } => {
             let (trigger, mut queue) = Trigger::channel();
             let project = project::load(&file)?;
-            let outcome =
-                until_stopped(exec::exec(project, &job, false, verbose, &trigger)).await?;
+            let outcome = until_stopped(exec::exec(
+                project,
+                &job,
+                &exec::Log::Off,
+                verbose,
+                &trigger,
+            ))
+            .await?;
             drop(trigger);
             println!("{}", serde_json::to_string_pretty(&outcome.result)?);
             let failed = until_stopped(async {
@@ -99,8 +105,14 @@ async fn main() -> anyhow::Result<()> {
                 // Jobs that `trigger` tasks queued, one at a time, and those they queue in turn.
                 while let Some(queued) = queue.recv().await {
                     let project = project::load(&file)?;
-                    let outcome =
-                        exec::exec(project, &queued.job, false, verbose, &queued.trigger).await?;
+                    let outcome = exec::exec(
+                        project,
+                        &queued.job,
+                        &exec::Log::Off,
+                        verbose,
+                        &queued.trigger,
+                    )
+                    .await?;
                     if failed.is_none() {
                         failed = failure(&outcome)
                             .map(|failure| format!("triggered job `{}`: {failure}", queued.job));

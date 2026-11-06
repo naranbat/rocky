@@ -2981,8 +2981,10 @@ dependencies = [
  "anyhow",
  "eframe",
  "rocky-core",
+ "serde_json",
  "serde_yaml",
  "tempfile",
+ "tokio",
 ]
 
 [[package]]

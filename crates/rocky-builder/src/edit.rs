@@ -3,6 +3,8 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use crate::run::Run;
+
 pub struct Edit<'a> {
     /// Set by any widget that changed the document this frame.
     pub changed: bool,
@@ -12,6 +14,13 @@ pub struct Edit<'a> {
     pub dir: &'a Path,
     /// Task file contents by path, read once per validation.
     pub previews: &'a mut HashMap<PathBuf, String>,
+    /// The job being edited, and the latest run, whose results the cards show.
+    pub job: &'a str,
+    pub run: Option<&'a Run>,
+    /// Whether a run can start now (the document is valid and nothing is running).
+    pub can_run: bool,
+    /// Set by a card's ▶: run the job up to this task.
+    pub run_until: Option<String>,
 }
 
 impl Edit<'_> {

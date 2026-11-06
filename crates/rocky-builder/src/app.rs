@@ -10,6 +10,7 @@ use crate::doc::{self, Doc};
 use crate::edit::Edit;
 use crate::job;
 use crate::project;
+use crate::run::Run;
 use crate::sidebar::{self, Selection};
 use crate::theme;
 use crate::validate::Validation;
@@ -29,6 +30,8 @@ pub struct App {
     /// The last save or open message, for the status bar; `Err` in red.
     message: Option<Result<String, String>>,
     title: String,
+    /// The latest run, finished or not.
+    run: Option<Run>,
 }
 
 impl App {
@@ -47,6 +50,7 @@ impl App {
             previews: HashMap::new(),
             message: None,
             title: String::new(),
+            run: None,
         };
         if let Some(path) = path {
             app.open(&path);
@@ -65,6 +69,7 @@ impl App {
                 self.validation = Validation::default();
                 self.previews.clear();
                 self.message = None;
+                self.run = None;
             }
             Err(error) => self.message = Some(Err(format!("{error:#}"))),
         }
@@ -89,6 +94,16 @@ impl App {
         };
         let dirty = doc.is_dirty(&text);
         let mut validate_now = false;
+        if let Some(run) = &mut self.run {
+            run.poll();
+            if run.is_running() {
+                ui.ctx()
+                    .request_repaint_after(std::time::Duration::from_millis(100));
+            }
+        }
+        let running = self.run.as_ref().is_some_and(Run::is_running);
+        let can_run = self.validation.is_valid() && !running;
+        let mut start: Option<Option<String>> = None;
         let mut save = ui.input_mut(|input| input.consume_shortcut(&SAVE));
 
         egui::Panel::top("top")
@@ -105,9 +120,18 @@ impl App {
                     &self.validation,
                     dirty,
                     &mut self.show_yaml,
+                    (can_run, running),
                 );
                 save |= actions.save;
                 validate_now |= actions.validate;
+                if actions.run {
+                    start = Some(None);
+                }
+                if actions.stop
+                    && let Some(run) = &mut self.run
+                {
+                    run.stop();
+                }
             });
         if let Some(Err(error)) = &self.validation.result {
             egui::Panel::top("errors")
@@ -144,11 +168,19 @@ impl App {
 
         let jobs = doc.job_names();
         let dir = doc.dir().to_path_buf();
+        let job = match &self.selection {
+            Selection::Job(name) => name.clone(),
+            Selection::Project => String::new(),
+        };
         let mut ed = Edit {
             changed,
             jobs: &jobs,
             dir: &dir,
             previews: &mut self.previews,
+            job: &job,
+            run: self.run.as_ref(),
+            can_run,
+            run_until: None,
         };
         egui::CentralPanel::default()
             .frame(
@@ -169,6 +201,13 @@ impl App {
                     });
             });
         if ed.changed {
+            ui.ctx().request_repaint();
+        }
+        if let Some(until) = ed.run_until.take() {
+            start = Some(Some(until));
+        }
+        if let (Some(until), Selection::Job(job)) = (start, &self.selection) {
+            self.run = Some(Run::start(&doc.path, &text, job, until.as_deref()));
             ui.ctx().request_repaint();
         }
 
@@ -203,6 +242,8 @@ impl App {
 struct TopActions {
     save: bool,
     validate: bool,
+    run: bool,
+    stop: bool,
 }
 
 fn top_bar(
@@ -212,10 +253,13 @@ fn top_bar(
     validation: &Validation,
     dirty: bool,
     show_yaml: &mut bool,
+    (can_run, running): (bool, bool),
 ) -> TopActions {
     let mut actions = TopActions {
         save: false,
         validate: false,
+        run: false,
+        stop: false,
     };
     ui.horizontal(|ui| {
         egui::Frame::new()
@@ -233,11 +277,31 @@ fn top_bar(
         };
         theme::hint(ui, &crumb);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let run = egui::Button::new(RichText::new("▶ Run job").color(theme::BG).strong())
-                .fill(theme::ACCENT);
-            ui.add_enabled(false, run).on_disabled_hover_text(
-                "Running jobs from the builder is coming next; use `rocky exec` for now.",
-            );
+            if running {
+                let stop = egui::Button::new(RichText::new("■ Stop").color(theme::BG).strong())
+                    .fill(theme::ERROR);
+                if ui
+                    .add(stop)
+                    .on_hover_text("Stop the run and kill its commands")
+                    .clicked()
+                {
+                    actions.stop = true;
+                }
+            } else {
+                let run = egui::Button::new(RichText::new("▶ Run job").color(theme::BG).strong())
+                    .fill(theme::ACCENT);
+                let enabled = can_run && matches!(selection, Selection::Job(_));
+                if ui
+                    .add_enabled(enabled, run)
+                    .on_hover_text(
+                        "Run this job as shown, unsaved edits included, as `rocky exec` would",
+                    )
+                    .on_disabled_hover_text("Select a job, and fix any errors first")
+                    .clicked()
+                {
+                    actions.run = true;
+                }
+            }
             if ui.button("Validate").clicked() {
                 actions.validate = true;
             }
@@ -420,6 +484,58 @@ mod tests {
             }
         }
         assert!(viewed > 5);
+    }
+
+    /// Draws a job while it runs and after, with results on every card.
+    #[test]
+    fn draws_a_run_to_the_end() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("project.yaml");
+        let yaml = "\
+jobs:
+  main:
+    tasks:
+      list: {cmd: [echo, '[1, 2]']}
+      each:
+        for_each: tasks.list.stdout
+        do:
+          show: {cmd: [echo, '${ITEM}']}
+      fail: {cmd: [sh, -c, 'echo oops >&2; exit 3'], allow_failure: true}
+      never: {cmd: [echo], when: {this: tasks.fail.ok, eq: true}}
+      page: {trigger: other}
+  other:
+    tasks:
+      only: {cmd: [echo, done]}
+";
+        std::fs::write(&path, yaml).unwrap();
+        let ctx = egui::Context::default();
+        let mut app = App::with_context(&ctx, Some(path.clone()));
+        app.selection = Selection::Job("main".to_string());
+        app.run = Some(Run::start(&path, yaml, "main", None));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while app.run.as_ref().is_some_and(Run::is_running) && std::time::Instant::now() < deadline
+        {
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| app.draw(ui));
+            output.textures_delta.clear();
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        for _ in 0..2 {
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| app.draw(ui));
+            output.textures_delta.clear();
+        }
+        let results = &app.run.as_ref().unwrap().results;
+        assert!(matches!(
+            results.end,
+            Some(crate::results::End::Done { failed: None })
+        ));
+        assert_eq!(results.task("main", "show").unwrap().runs, 2);
+        assert_eq!(results.task("main", "fail").unwrap().failures, 1);
+        assert!(results.task("main", "never").unwrap().skipped);
+        assert!(results.task("other", "only").is_some());
+        assert_eq!(
+            app.doc.as_ref().unwrap().text().unwrap(),
+            serde_yaml::to_string(&serde_yaml::from_str::<Value>(yaml).unwrap()).unwrap()
+        );
     }
 
     /// Covers what the examples don't: while, any, exists, weekly and at schedules,

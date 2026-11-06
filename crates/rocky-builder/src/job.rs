@@ -9,6 +9,7 @@ use crate::condition;
 use crate::doc;
 use crate::edit::Edit;
 use crate::project;
+use crate::run_view;
 use crate::schedule;
 use crate::task;
 use crate::theme;
@@ -45,6 +46,9 @@ pub fn editor(ui: &mut egui::Ui, ed: &mut Edit, name: &str, job: &mut Value) -> 
         job => job.get("file").map(doc::scalar_text),
     };
     let action = header(ui, name, job, file.as_deref());
+    if let Some(run) = ed.run {
+        run_view::job_status(ui, run, name);
+    }
     ui.add_space(8.0);
     match file {
         Some(file) => file_job(ui, ed, job, &file),
