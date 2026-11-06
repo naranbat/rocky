@@ -66,14 +66,11 @@ pub fn rows(ed: &mut Edit, root: &Value, name: &str) -> Vec<Row> {
 }
 
 fn job_rows(ed: &mut Edit, root: &Value, path: &Path, job: &Value) -> Vec<Row> {
-    let mut rows = vec![Row::heading("SCHEDULE", "when `rocky run` runs this job")];
+    let mut rows = vec![Row::heading("SCHEDULE", "")];
     rows.extend(schedule::rows(root, &path.key("schedule")));
-    rows.push(Row::heading("VALUES", "read as ${NAME}"));
+    rows.push(Row::heading("VALUES", ""));
     rows.extend(vars::rows(root, &path.key("values"), "value"));
-    rows.push(Row::heading(
-        "DEFAULTS",
-        "this job's cmd tasks get these unless they set them",
-    ));
+    rows.push(Row::heading("DEFAULTS", ""));
     rows.extend(project::defaults(
         root,
         &path.key("defaults"),
@@ -83,10 +80,7 @@ fn job_rows(ed: &mut Edit, root: &Value, path: &Path, job: &Value) -> Vec<Row> {
         .get("tasks")
         .and_then(Value::as_mapping)
         .map_or(0, Mapping::len);
-    rows.push(Row::heading(
-        &format!("TASKS · {count}"),
-        "run in order · a task with when runs only if it holds",
-    ));
+    rows.push(Row::heading(&format!("TASKS · {count}"), ""));
     rows.extend(task::list(ed, root, &path.key("tasks"), true));
     rows
 }
