@@ -8,6 +8,8 @@ pub const ACCENT: Color = Color::Rgb(0xe8, 0xc8, 0x4f);
 pub const OK: Color = Color::Rgb(0x4c, 0xc2, 0x86);
 pub const ERROR: Color = Color::Rgb(0xe5, 0x5a, 0x52);
 pub const NUMBER: Color = Color::Rgb(0xe8, 0x84, 0x4a);
+/// A scheduled job's icon in the sidebar.
+pub const SCHEDULE: Color = Color::Rgb(0x63, 0x8f, 0xf0);
 /// Behind the top bar and the status bar.
 pub const BAR: Color = Color::Rgb(0x00, 0x00, 0x00);
 /// Behind the focused row.

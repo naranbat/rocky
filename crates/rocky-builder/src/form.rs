@@ -279,8 +279,17 @@ pub fn settle(rows: &[Row], focus: usize) -> usize {
     step(rows, focus, -1)
 }
 
-/// Draws `rows` in `area`, scrolled (through `offset`) so the focused row shows. While
-/// `editing`, the focused row's value is the text field; returns where it is.
+/// How many lines rows `from..=to` take when `from` is the first one shown: one each, plus a
+/// blank line above each heading but the first shown, to set the groups apart.
+fn span(rows: &[Row], from: usize, to: usize) -> usize {
+    (from..=to)
+        .map(|index| 1 + usize::from(index > from && rows[index].kind == Kind::Heading))
+        .sum()
+}
+
+/// Draws `rows` in `area`, scrolled (through `offset`) so the focused row shows, with a blank
+/// line above each heading but the first shown. While `editing`, the focused row's value is
+/// the text field; returns where it is.
 pub fn draw(
     frame: &mut Frame,
     area: Rect,
@@ -297,13 +306,27 @@ pub fn draw(
             *offset = focus.saturating_sub(usize::from(
                 focus > 0 && rows[focus - 1].kind == Kind::Heading,
             ));
-        } else if focus >= *offset + height {
-            *offset = focus + 1 - height;
+        } else {
+            while *offset < focus && span(rows, *offset, focus) > height {
+                *offset += 1;
+            }
         }
     }
-    *offset = (*offset).min(rows.len().saturating_sub(height));
-    for (index, row) in rows.iter().enumerate().skip(*offset).take(height) {
-        let y = area.y + u16::try_from(index - *offset).unwrap_or(0);
+    // No further down than needed to show the last row.
+    if let Some(last) = rows.len().checked_sub(1) {
+        *offset = (*offset).min(last);
+        while *offset > 0 && span(rows, *offset - 1, last) <= height {
+            *offset -= 1;
+        }
+    }
+    let mut lines = 0;
+    for (index, row) in rows.iter().enumerate().skip(*offset) {
+        lines += usize::from(index > *offset && row.kind == Kind::Heading);
+        if lines >= height {
+            break;
+        }
+        let y = area.y + u16::try_from(lines).unwrap_or(0);
+        lines += 1;
         let line_area = Rect::new(area.x, y, area.width, 1);
         let focused = focus == Some(index);
         let marker = if focused {
@@ -354,7 +377,45 @@ pub fn draw(
 
 #[cfg(test)]
 mod tests {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
     use super::*;
+
+    /// The text of each line `rows` draw in an area `height` lines high, focused on `focus`,
+    /// with runs of spaces as one.
+    fn drawn(rows: &[Row], height: u16, focus: usize) -> Vec<String> {
+        let mut terminal = Terminal::new(TestBackend::new(30, height)).unwrap();
+        let mut offset = 0;
+        terminal
+            .draw(|frame| {
+                draw(frame, frame.area(), rows, Some(focus), &mut offset, None);
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        (0..height)
+            .map(|y| {
+                let line: String = (0..30).map(|x| buffer[(x, y)].symbol()).collect();
+                let line = line.trim_start_matches('▌');
+                line.split_whitespace().collect::<Vec<_>>().join(" ")
+            })
+            .collect()
+    }
+
+    #[test]
+    fn groups_have_a_blank_line_above_their_heading() {
+        let field = |name: &str| Row::field(name, Line::raw("x"), Action::None);
+        let rows = [
+            Row::heading("ONE", ""),
+            field("a"),
+            Row::heading("TWO", ""),
+            field("b"),
+        ];
+        assert_eq!(drawn(&rows, 6, 1), ["ONE", "a x", "", "TWO", "b x", ""]);
+        // Scrolled to the last field: `a` and the gap don't fit too, and a heading at the
+        // top has no gap above it.
+        assert_eq!(drawn(&rows, 3, 3), ["TWO", "b x", ""]);
+    }
 
     #[test]
     fn parses_typed_text() {

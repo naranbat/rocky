@@ -165,8 +165,8 @@ pub fn draw(
         } else if running {
             Span::styled(" ▶ ", theme::accent())
         } else if scheduled {
-            // A clock, not a green dot: green dots mean running or valid elsewhere.
-            Span::styled(" ◷ ", theme::text())
+            // A blue clock, not a green dot: green dots mean running or valid elsewhere.
+            Span::styled(" ◷ ", Style::new().fg(theme::SCHEDULE))
         } else {
             Span::styled(" ○ ", theme::dim())
         };
@@ -253,6 +253,37 @@ mod tests {
         assert_eq!(column(&highlighted[0], "b"), TEXT, "{highlighted:?}");
         // A scheduled job's icon is a clock, not a green dot.
         assert!(highlighted[0].contains("◷ b"), "{highlighted:?}");
+        let icon = (0..20)
+            .flat_map(|y| (0..33).map(move |x| (x, y)))
+            .find(|&at| buffer[at].symbol() == "◷")
+            .unwrap();
+        assert_eq!(buffer[icon].fg, theme::SCHEDULE);
+
+        // A job with a problem shows a red ⦸.
+        let problem = Problem {
+            job: Some("a".to_string()),
+            task: None,
+            message: String::new(),
+        };
+        terminal
+            .draw(|frame| {
+                draw(
+                    frame,
+                    frame.area(),
+                    &doc,
+                    &selection,
+                    true,
+                    Some(&problem),
+                    None,
+                )
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let icon = (0..20)
+            .flat_map(|y| (0..33).map(move |x| (x, y)))
+            .find(|&at| buffer[at].symbol() == "⦸")
+            .unwrap();
+        assert_eq!(buffer[icon].fg, theme::ERROR);
         assert_eq!(column(&highlighted[1], "every 5m"), TEXT, "{highlighted:?}");
         // The task count ends one column short of the border.
         assert!(highlighted[1].ends_with("1 tasks "), "{highlighted:?}");
