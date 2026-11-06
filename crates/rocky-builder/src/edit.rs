@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::complete::Var;
-use crate::run::Run;
+use crate::run_view::Shown;
 use crate::validate::Problem;
 
 pub struct Edit<'a> {
@@ -18,7 +18,7 @@ pub struct Edit<'a> {
     pub previews: &'a mut HashMap<PathBuf, String>,
     /// The job being edited, and the latest run, whose results the cards show.
     pub job: &'a str,
-    pub run: Option<&'a Run>,
+    pub run: Option<Shown<'a>>,
     /// Whether a run can start now (the document is valid and nothing is running).
     pub can_run: bool,
     /// Set by a card's ▶: run the job up to this task.

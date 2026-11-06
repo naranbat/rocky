@@ -8,6 +8,7 @@ edition.workspace = true
 rocky-core = { path = "../rocky-core" }
 eframe = "0.37.0"
 jiff.workspace = true
+nix.workspace = true
 anyhow.workspace = true
 serde_json.workspace = true
 serde_yaml.workspace = true

@@ -2981,6 +2981,7 @@ dependencies = [
  "anyhow",
  "eframe",
  "jiff",
+ "nix",
  "rocky-core",
  "serde_json",
  "serde_yaml",

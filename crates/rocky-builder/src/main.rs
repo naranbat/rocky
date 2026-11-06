@@ -14,6 +14,7 @@ mod results;
 mod run;
 mod run_view;
 mod schedule;
+mod scheduler;
 mod scope;
 mod sidebar;
 mod task;

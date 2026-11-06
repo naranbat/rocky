@@ -12,6 +12,7 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tokio::sync::oneshot;
 
 use crate::results::Results;
+use crate::run_view::Shown;
 
 pub struct Run {
     /// The job started, and the task it stops after, if any.
@@ -82,6 +83,18 @@ impl Run {
     pub fn stop(&mut self) {
         if let Some(stop) = self.stop.take() {
             let _ = stop.send(());
+        }
+    }
+
+    /// This run, as the editor shows it.
+    pub fn shown(&self) -> Shown<'_> {
+        Shown {
+            results: &self.results,
+            job: &self.job,
+            until: self.until.as_deref(),
+            started: self.started,
+            elapsed: self.elapsed(),
+            by: None,
         }
     }
 

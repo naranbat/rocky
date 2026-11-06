@@ -1,30 +1,58 @@
 //! How a run shows in the editor: a result strip under each task card (exit badge, timing,
 //! output tabs) and a status line under the job header.
 
+use std::time::{Duration, Instant};
+
 use eframe::egui::{self, RichText};
 use serde_json::Value;
 
-use crate::results::{End, TaskRun};
-use crate::run::Run;
+use crate::results::{End, Results, TaskRun};
 use crate::theme;
+
+/// One run as the editor shows it: a run started in the builder, or the latest run of a
+/// job that the scheduler reported.
+#[derive(Clone, Copy)]
+pub struct Shown<'a> {
+    pub results: &'a Results,
+    /// The job the run started with, and the task it stops after.
+    pub job: &'a str,
+    pub until: Option<&'a str>,
+    pub started: Instant,
+    pub elapsed: Duration,
+    /// Who ran it, when it wasn't the builder: `scheduler`.
+    pub by: Option<&'static str>,
+}
+
+impl Shown<'_> {
+    pub fn is_running(&self) -> bool {
+        self.results.end.is_none()
+    }
+
+    /// Whether this run reported anything about `job`.
+    pub fn covers(&self, job: &str) -> bool {
+        self.job == job || self.results.jobs.iter().any(|name| name == job)
+    }
+}
 
 /// Longest preview of a result shown inline.
 const PREVIEW_CHARS: usize = 60;
 
 /// The run's state for `job`, under the job header.
-pub fn job_status(ui: &mut egui::Ui, run: &Run, job: &str) {
-    let results = &run.results;
-    if !results.jobs.iter().any(|name| name == job) && run.job != job {
+pub fn job_status(ui: &mut egui::Ui, run: Shown, job: &str) {
+    let results = run.results;
+    if !run.covers(job) {
         return;
     }
     let (runs, failures) = results.job_counts(job);
-    let secs = run.elapsed().as_secs_f32();
-    let upto = run
+    let secs = run.elapsed.as_secs_f32();
+    let mut upto = run
         .until
-        .as_ref()
         .filter(|_| run.job == job)
         .map(|task| format!(" · up to {task}"))
         .unwrap_or_default();
+    if let Some(by) = run.by {
+        upto.push_str(&format!(" · by the {by}"));
+    }
     ui.horizontal(|ui| {
         if results.job_skipped(job) {
             theme::badge(ui, "⏭ SKIPPED", theme::DIM);
@@ -61,7 +89,7 @@ pub fn job_status(ui: &mut egui::Ui, run: &Run, job: &str) {
 }
 
 /// The strip under task `name`'s card: what its last run did, and its output on demand.
-pub fn task_strip(ui: &mut egui::Ui, run: &Run, job: &str, name: &str) {
+pub fn task_strip(ui: &mut egui::Ui, run: Shown, job: &str, name: &str) {
     let Some(task) = run.results.task(job, name) else {
         if run.is_running() && run.job == job {
             ui.separator();

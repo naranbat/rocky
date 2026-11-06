@@ -2,15 +2,17 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use eframe::egui::{self, Key, KeyboardShortcut, Modifiers, RichText, Stroke};
-use serde_yaml::Value;
 
 use crate::doc::{self, Doc};
 use crate::edit::Edit;
 use crate::job;
 use crate::project;
 use crate::run::Run;
+use crate::run_view::Shown;
+use crate::scheduler::{self, Scheduler};
 use crate::scope;
 use crate::sidebar::{self, Selection};
 use crate::theme;
@@ -33,6 +35,8 @@ pub struct App {
     title: String,
     /// The latest run, finished or not.
     run: Option<Run>,
+    /// The scheduler, while started from here, and the saved text it started with.
+    scheduler: Option<(Scheduler, String)>,
 }
 
 impl App {
@@ -52,6 +56,7 @@ impl App {
             message: None,
             title: String::new(),
             run: None,
+            scheduler: None,
         };
         if let Some(path) = path {
             app.open(&path);
@@ -71,6 +76,7 @@ impl App {
                 self.previews.clear();
                 self.message = None;
                 self.run = None;
+                self.scheduler = None;
             }
             Err(error) => self.message = Some(Err(format!("{error:#}"))),
         }
@@ -102,6 +108,14 @@ impl App {
                     .request_repaint_after(std::time::Duration::from_millis(100));
             }
         }
+        if let Some((scheduler, _)) = &mut self.scheduler {
+            scheduler.poll();
+            if scheduler.is_running() {
+                // New log lines, and the next-run countdown.
+                ui.ctx()
+                    .request_repaint_after(std::time::Duration::from_millis(500));
+            }
+        }
         let running = self.run.as_ref().is_some_and(Run::is_running);
         let can_run = self.validation.is_valid() && !running;
         let mut start: Option<Option<String>> = None;
@@ -121,7 +135,11 @@ impl App {
                     &self.validation,
                     dirty,
                     &mut self.show_yaml,
-                    (can_run, running),
+                    RunState {
+                        can_run,
+                        running,
+                        scheduling: self.scheduler.as_ref().is_some_and(|(s, _)| s.is_running()),
+                    },
                 );
                 save |= actions.save;
                 validate_now |= actions.validate;
@@ -153,7 +171,34 @@ impl App {
                     .inner_margin(egui::Margin::symmetric(16, 6)),
             )
             .show(ui, |ui| {
-                status_bar(ui, doc, &self.validation, &self.message)
+                let scheduler = self.scheduler.as_ref().map(|(s, text)| (s, text.as_str()));
+                match status_bar(ui, doc, &self.validation, &self.message, scheduler) {
+                    Some(SchedulerAction::Start) => {
+                        let started = scheduler::find_rocky()
+                            .ok_or_else(|| {
+                                "can't find the `rocky` binary next to the builder or on PATH; \
+                                 install it with `cargo install --path crates/rocky`"
+                                    .to_string()
+                            })
+                            .and_then(|rocky| {
+                                Scheduler::start(&rocky, &doc.path)
+                                    .map_err(|error| format!("{error:#}"))
+                            });
+                        match started {
+                            Ok(started) => {
+                                self.scheduler = Some((started, doc.saved().to_string()));
+                                self.message = Some(Ok("scheduler started".to_string()));
+                            }
+                            Err(error) => self.message = Some(Err(error)),
+                        }
+                    }
+                    Some(SchedulerAction::Stop) => {
+                        if let Some((scheduler, _)) = &mut self.scheduler {
+                            scheduler.stop();
+                        }
+                    }
+                    None => {}
+                }
             });
         let mut changed = false;
         egui::Panel::left("sidebar")
@@ -164,7 +209,14 @@ impl App {
                     .inner_margin(egui::Margin::symmetric(12, 8)),
             )
             .show(ui, |ui| {
-                changed |= sidebar::show(ui, doc, &mut self.selection, self.validation.problem())
+                let scheduler = self.scheduler.as_ref().map(|(s, _)| s);
+                changed |= sidebar::show(
+                    ui,
+                    doc,
+                    &mut self.selection,
+                    self.validation.problem(),
+                    scheduler,
+                )
             });
 
         let jobs = doc.job_names();
@@ -180,7 +232,11 @@ impl App {
             dir: &dir,
             previews: &mut self.previews,
             job: &job,
-            run: self.run.as_ref(),
+            run: shown(
+                self.run.as_ref(),
+                self.scheduler.as_ref().map(|(s, _)| s),
+                &job,
+            ),
             can_run,
             run_until: None,
             problem: self.validation.problem(),
@@ -210,9 +266,25 @@ impl App {
         if let Some(until) = ed.run_until.take() {
             start = Some(Some(until));
         }
-        if let (Some(until), Selection::Job(job)) = (start, &self.selection) {
-            self.run = Some(Run::start(&doc.path, &text, job, until.as_deref()));
-            ui.ctx().request_repaint();
+        let scheduler = self
+            .scheduler
+            .as_ref()
+            .map(|(s, _)| s)
+            .filter(|s| s.is_running());
+        match (start, &self.selection, scheduler) {
+            // While the scheduler is up, a whole-job run is queued on it, so runs of a job
+            // never overlap.
+            (Some(None), Selection::Job(job), Some(scheduler)) => {
+                self.message = Some(
+                    scheduler::trigger(&scheduler.socket, job)
+                        .map(|()| format!("queued {job} on the scheduler")),
+                );
+            }
+            (Some(until), Selection::Job(job), _) => {
+                self.run = Some(Run::start(&doc.path, &text, job, until.as_deref()));
+                ui.ctx().request_repaint();
+            }
+            _ => {}
         }
 
         if save {
@@ -242,6 +314,14 @@ impl App {
     }
 }
 
+/// What Run job can do now: start a run (`can_run`), stop the builder's run (`running`),
+/// or queue on the scheduler (`scheduling`).
+struct RunState {
+    can_run: bool,
+    running: bool,
+    scheduling: bool,
+}
+
 /// What the top bar's buttons asked for.
 struct TopActions {
     save: bool,
@@ -257,7 +337,11 @@ fn top_bar(
     validation: &Validation,
     dirty: bool,
     show_yaml: &mut bool,
-    (can_run, running): (bool, bool),
+    RunState {
+        can_run,
+        running,
+        scheduling,
+    }: RunState,
 ) -> TopActions {
     let mut actions = TopActions {
         save: false,
@@ -297,9 +381,11 @@ fn top_bar(
                 let enabled = can_run && matches!(selection, Selection::Job(_));
                 if ui
                     .add_enabled(enabled, run)
-                    .on_hover_text(
-                        "Run this job as shown, unsaved edits included, as `rocky exec` would",
-                    )
+                    .on_hover_text(if scheduling {
+                        "Queue a run of this job on the scheduler (its saved version)"
+                    } else {
+                        "Run this job as shown, unsaved edits included, as `rocky exec` would"
+                    })
                     .on_disabled_hover_text("Select a job, and fix any errors first")
                     .clicked()
                 {
@@ -326,28 +412,70 @@ fn top_bar(
     actions
 }
 
+/// What the status bar asked of the scheduler.
+enum SchedulerAction {
+    Start,
+    Stop,
+}
+
+/// The scheduler's state and Start / Stop, the next job due, and where the scheduler
+/// listens and logs; then the file and whether it is valid.
 fn status_bar(
     ui: &mut egui::Ui,
     doc: &Doc,
     validation: &Validation,
     message: &Option<Result<String, String>>,
-) {
-    let jobs = doc.root.get("jobs").and_then(Value::as_mapping);
-    let scheduled = jobs.map_or(0, |jobs| {
-        jobs.values()
-            .filter(|job| job.get("schedule").is_some())
-            .count()
-    });
+    scheduler: Option<(&Scheduler, &str)>,
+) -> Option<SchedulerAction> {
+    let mut action = None;
+    let running = scheduler.filter(|(scheduler, _)| scheduler.is_running());
     ui.horizontal(|ui| {
-        theme::hint(ui, &format!("{scheduled} scheduled jobs"));
+        match running {
+            Some((scheduler, started_with)) => {
+                ui.label(RichText::new("● Scheduler running").color(theme::OK).size(12.0));
+                if ui
+                    .small_button("Stop")
+                    .on_hover_text("Stop `rocky run`; running commands are killed")
+                    .clicked()
+                {
+                    action = Some(SchedulerAction::Stop);
+                }
+                theme::hint(ui, &format!("| {} scheduled jobs", scheduler.scheduled()));
+                let now = jiff::Zoned::now();
+                if let Some((job, at)) = scheduler.next_due(&now) {
+                    let wait = Duration::try_from(now.duration_until(&at)).unwrap_or_default();
+                    theme::hint(ui, &format!("| next: {job} in {}", countdown(wait)));
+                }
+                if doc.saved() != started_with {
+                    ui.label(
+                        RichText::new(
+                            "| saved since start: tasks apply on the next run, schedules after a restart",
+                        )
+                        .color(theme::ACCENT)
+                        .size(12.0),
+                    );
+                }
+            }
+            None => {
+                ui.label(RichText::new("○ Scheduler stopped").color(theme::DIM).size(12.0));
+                if ui
+                    .small_button("Start")
+                    .on_hover_text("Run `rocky run` on the saved project, with a socket, until stopped")
+                    .clicked()
+                {
+                    action = Some(SchedulerAction::Start);
+                }
+                if let Some(exited) = scheduler.and_then(|(scheduler, _)| scheduler.exited.as_deref())
+                    && exited != "stopped"
+                {
+                    ui.label(RichText::new(format!("| {exited}")).color(theme::ERROR).size(12.0));
+                }
+            }
+        }
         match message {
             Some(Ok(text)) => theme::hint(ui, &format!("· {text}")),
             Some(Err(text)) => {
-                ui.label(
-                    RichText::new(format!("· {text}"))
-                        .color(theme::ERROR)
-                        .size(12.0),
-                );
+                ui.label(RichText::new(format!("· {text}")).color(theme::ERROR).size(12.0));
             }
             None => {}
         }
@@ -359,9 +487,42 @@ fn status_bar(
                 (format!("{file} invalid"), theme::ERROR)
             };
             ui.label(RichText::new(text).color(color).size(12.0));
-            theme::hint(ui, &doc.path.display().to_string());
+            if let Some((scheduler, _)) = running {
+                theme::hint(ui, &format!("{} |", scheduler.log));
+                theme::hint(ui, &format!("socket {} |", scheduler.socket.display()));
+            }
         });
     });
+    action
+}
+
+/// `2m 41s`, `1h 5m`, `12s`.
+fn countdown(wait: Duration) -> String {
+    let secs = wait.as_secs();
+    match (secs / 3600, secs % 3600 / 60, secs % 60) {
+        (0, 0, s) => format!("{s}s"),
+        (0, m, s) => format!("{m}m {s}s"),
+        (h, m, _) => format!("{h}h {m}m"),
+    }
+}
+
+/// The run whose results the cards of `job` show: the newer of the builder's latest run and
+/// the scheduler's latest run of `job`.
+fn shown<'a>(
+    run: Option<&'a Run>,
+    scheduler: Option<&'a Scheduler>,
+    job: &str,
+) -> Option<Shown<'a>> {
+    let local = run.map(Run::shown).filter(|run| run.covers(job));
+    let scheduled = scheduler.and_then(|scheduler| scheduler.shown(job));
+    match (local, scheduled) {
+        (Some(local), Some(scheduled)) => Some(if local.started >= scheduled.started {
+            local
+        } else {
+            scheduled
+        }),
+        (local, scheduled) => local.or(scheduled),
+    }
 }
 
 /// The project panel or the selected job's editor.
@@ -558,7 +719,8 @@ jobs:
         assert!(results.task("other", "only").is_some());
         assert_eq!(
             app.doc.as_ref().unwrap().text().unwrap(),
-            serde_yaml::to_string(&serde_yaml::from_str::<Value>(yaml).unwrap()).unwrap()
+            serde_yaml::to_string(&serde_yaml::from_str::<serde_yaml::Value>(yaml).unwrap())
+                .unwrap()
         );
     }
 

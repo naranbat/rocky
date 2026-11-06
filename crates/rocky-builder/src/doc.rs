@@ -35,6 +35,11 @@ impl Doc {
         Ok(serde_yaml::to_string(&self.root)?)
     }
 
+    /// The text last read from or written to disk.
+    pub fn saved(&self) -> &str {
+        &self.saved
+    }
+
     pub fn is_dirty(&self, text: &str) -> bool {
         text != self.saved
     }

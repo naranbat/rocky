@@ -6,6 +6,7 @@ use serde_yaml::{Mapping, Value};
 use crate::doc::{self, Doc};
 use crate::job;
 use crate::project;
+use crate::scheduler::Scheduler;
 use crate::theme;
 use crate::validate::Problem;
 
@@ -22,6 +23,7 @@ pub fn show(
     doc: &mut Doc,
     selection: &mut Selection,
     problem: Option<&Problem>,
+    scheduler: Option<&Scheduler>,
 ) -> bool {
     let mut changed = false;
     ui.add_space(8.0);
@@ -73,7 +75,8 @@ pub fn show(
             };
             let selected = *selection == Selection::Job(name.clone());
             let broken = problem.is_some_and(|problem| problem.job.as_ref() == Some(name));
-            if job_item(ui, name, job, selected, broken).clicked() {
+            let running = scheduler.is_some_and(|scheduler| scheduler.is_running_job(name));
+            if job_item(ui, name, job, selected, broken, running).clicked() {
                 *selection = Selection::Job(name.clone());
             }
         }
@@ -110,14 +113,15 @@ fn row(ui: &mut egui::Ui, label: &str, value: &str, selected: bool) -> egui::Res
     .on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
-/// One job in the list: its name, and a dot (filled when scheduled, a cross when it has a
-/// problem) with its summary.
+/// One job in the list: its name, and a dot (filled when scheduled, ▶ while the scheduler
+/// runs it, a cross when it has a problem) with its summary.
 fn job_item(
     ui: &mut egui::Ui,
     name: &str,
     job: &Value,
     selected: bool,
     broken: bool,
+    running: bool,
 ) -> egui::Response {
     let scheduled = job.get("schedule").is_some();
     let frame = if selected {
@@ -137,6 +141,8 @@ fn job_item(
                 ui.spacing_mut().item_spacing.x = 4.0;
                 let (dot, color) = if broken {
                     ("✖", theme::ERROR)
+                } else if running {
+                    ("▶", theme::ACCENT)
                 } else if scheduled {
                     ("●", theme::OK)
                 } else {
