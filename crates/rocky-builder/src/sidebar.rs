@@ -2,6 +2,7 @@
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
+use ratatui::style::Stylize;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use serde_yaml::{Mapping, Value};
@@ -60,6 +61,23 @@ pub fn draw(
         }
     };
     let name_style = |on: bool| if on { theme::accent() } else { theme::text() };
+    // The selected entry's lines, from its name to its summary, on the selection background
+    // across the sidebar (left of its border), padded since a line's background only covers
+    // its text.
+    let width = usize::from(area.width.saturating_sub(1));
+    let entry = |on: bool, lines: Vec<Line<'static>>| -> Vec<Line<'static>> {
+        if !on {
+            return lines;
+        }
+        lines
+            .into_iter()
+            .map(|mut line| {
+                let pad = width.saturating_sub(line.width());
+                line.push_span(Span::raw(" ".repeat(pad)));
+                line.bg(theme::SELECTED)
+            })
+            .collect()
+    };
     let values = doc
         .root
         .get("values")
@@ -71,19 +89,28 @@ pub fn draw(
         .map(doc::scalar_text)
         .unwrap_or_else(|| "none".into());
     let on_project = *selection == Selection::Project;
-    let mut lines = vec![
-        Line::styled(" PROJECT", theme::heading()),
-        Line::from(vec![
-            marker(on_project),
-            Span::styled("Project", name_style(on_project)),
-        ]),
-        Line::styled(format!("  {values} values · env {env_file}"), theme::dim()),
-        Line::styled(
-            format!("  defaults {}", project::defaults_summary(&doc.root)),
-            theme::dim(),
-        ),
-        Line::raw(""),
-    ];
+    let mut lines = vec![Line::styled(" PROJECT", theme::heading())];
+    lines.extend(entry(
+        on_project,
+        vec![
+            Line::from(vec![
+                marker(on_project),
+                Span::styled("Project", name_style(on_project)),
+            ]),
+            Line::from(vec![
+                marker(on_project),
+                Span::styled(format!(" {values} values · env {env_file}"), theme::dim()),
+            ]),
+            Line::from(vec![
+                marker(on_project),
+                Span::styled(
+                    format!(" defaults {}", project::defaults_summary(&doc.root)),
+                    theme::dim(),
+                ),
+            ]),
+        ],
+    ));
+    lines.push(Line::raw(""));
     let names = doc.job_names();
     lines.push(Line::styled(
         format!(" JOBS · {}", names.len()),
@@ -114,14 +141,19 @@ pub fn draw(
         } else {
             Span::styled("○ ", theme::dim())
         };
-        lines.push(Line::from(vec![
-            marker(on),
-            dot,
-            Span::styled(name.clone(), name_style(on)),
-        ]));
-        lines.push(Line::styled(
-            format!("    {}", job::summary(job)),
-            theme::dim(),
+        lines.extend(entry(
+            on,
+            vec![
+                Line::from(vec![
+                    marker(on),
+                    dot,
+                    Span::styled(name.clone(), name_style(on)),
+                ]),
+                Line::from(vec![
+                    marker(on),
+                    Span::styled(format!("   {}", job::summary(job)), theme::dim()),
+                ]),
+            ],
         ));
     }
     let height = usize::from(area.height);
@@ -137,4 +169,39 @@ pub fn draw(
             .scroll((u16::try_from(scroll).unwrap_or(0), 0)),
         area,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    use super::*;
+
+    /// The selected job's name and summary lines, and only those, are on the selection
+    /// background across the sidebar's width.
+    #[test]
+    fn highlights_the_whole_selected_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::parts::write(
+            dir.path(),
+            "",
+            "jobs:\n  a: {tasks: {t: {cmd: [echo]}}}\n  b: {schedule: {every: 5m}, tasks: {t: {cmd: [echo]}}}\n",
+        )
+        .unwrap();
+        let doc = Doc::open(dir.path()).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(34, 20)).unwrap();
+        let selection = Selection::Job("b".to_string());
+        terminal
+            .draw(|frame| draw(frame, frame.area(), &doc, &selection, true, None, None))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let highlighted: Vec<String> = (0..20)
+            .filter(|&y| buffer[(32, y)].bg == theme::SELECTED)
+            .map(|y| (0..33).map(|x| buffer[(x, y)].symbol()).collect::<String>())
+            .collect();
+        assert_eq!(highlighted.len(), 2, "{highlighted:?}");
+        assert!(highlighted[0].contains("b"), "{highlighted:?}");
+        assert!(highlighted[1].contains("every 5m"), "{highlighted:?}");
+    }
 }
