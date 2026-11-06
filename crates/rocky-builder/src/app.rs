@@ -479,6 +479,7 @@ impl App {
                 let jobs = doc.jobs_mut();
                 let name = doc::fresh_key(jobs, "new_job");
                 jobs.insert(Value::from(name.as_str()), sidebar::new_job());
+                doc.sort_jobs();
                 self.select(Selection::Job(name.clone()));
                 self.rename(job::path(&name));
             }
@@ -718,11 +719,15 @@ impl App {
             if path.last_key() == Some(new) {
                 return Ok(());
             }
-            if *path == job::path(path.last_key().unwrap_or_default()) {
+            let is_job = *path == job::path(path.last_key().unwrap_or_default());
+            if is_job {
                 rocky_core::project::check_job_name(new).map_err(|error| error.to_string())?;
             }
             let renamed = node::rename(&mut doc.root, path, new)
                 .ok_or_else(|| format!("`{new}` is empty or already used"))?;
+            if is_job {
+                doc.sort_jobs();
+            }
             self.renamed(path, &renamed);
             return Ok(());
         };
@@ -1490,6 +1495,24 @@ jobs:
         assert!(matches!(&app.message, Some(Err(error)) if error.contains("must be a file name")));
         press(&mut app, KeyCode::Esc);
         assert_eq!(app.doc.as_ref().unwrap().job_names(), ["a", "nightly"]);
+        // Added and renamed jobs take their place by name.
+        press(&mut app, KeyCode::Char('a'));
+        ctrl(&mut app, 'u');
+        type_text(&mut app, "backup");
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(
+            app.doc.as_ref().unwrap().job_names(),
+            ["a", "backup", "nightly"]
+        );
+        press(&mut app, KeyCode::Char('r'));
+        ctrl(&mut app, 'u');
+        type_text(&mut app, "z");
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.doc.as_ref().unwrap().job_names(), ["a", "nightly", "z"]);
+        assert_eq!(app.selection, Selection::Job("z".to_string()));
+        press(&mut app, KeyCode::Char('x'));
+        press(&mut app, KeyCode::Char('y'));
+        app.select(Selection::Job("nightly".to_string()));
         press(&mut app, KeyCode::Char('q'));
         press(&mut app, KeyCode::Char('n'));
         assert!(!app.quit);

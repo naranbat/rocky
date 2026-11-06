@@ -59,6 +59,14 @@ impl Doc {
         child_map(&mut self.root, "jobs")
     }
 
+    /// Puts the jobs in name order, the order their files load in.
+    pub fn sort_jobs(&mut self) {
+        let jobs = self.jobs_mut();
+        let mut entries: Vec<(Value, Value)> = std::mem::take(jobs).into_iter().collect();
+        entries.sort_by_key(|(name, _)| key_text(name));
+        *jobs = entries.into_iter().collect();
+    }
+
     pub fn job_names(&self) -> Vec<String> {
         self.root
             .get("jobs")
@@ -250,6 +258,10 @@ tasks:
         assert_eq!(keys(jobs), ["gamma", "alpha", "beta"]);
         move_entry(jobs, 0, 2);
         assert_eq!(keys(jobs), ["alpha", "beta", "gamma"]);
+        move_entry(jobs, 2, 0);
+        doc.sort_jobs();
+        assert_eq!(doc.job_names(), ["alpha", "beta", "gamma"]);
+        let jobs = doc.jobs_mut();
         set(jobs, "gamma", None);
         set(jobs, "alpha", None);
         assert_eq!(keys(jobs), ["beta"]);
