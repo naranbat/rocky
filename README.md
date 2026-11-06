@@ -58,7 +58,7 @@ rocky run project.yaml --socket /tmp/rocky.sock  # ...and accept requests on a s
 rocky trigger /tmp/rocky.sock example            # ask a running `run` to run a job
 ```
 
-To keep `rocky run` going in the background, see [Service](docs/service.md).
+See [Command line](docs/cli.md) for every flag, [Schedules](docs/schedules.md) for when jobs run, and [Service](docs/service.md) to keep `rocky run` going in the background.
 
 ## Templates
 
@@ -84,26 +84,13 @@ OpenCode also reads `~/.claude/skills/`, so the first link covers both.
 
 All pages are in [`docs/`](docs/README.md).
 
-- **Running things**
-  - [Command line](docs/cli.md): `exec`, `run`, `trigger`, `validate` and `new`, flags, output, exit codes
-  - [Projects](docs/projects.md): jobs, tasks, fields, validation, using earlier tasks' output
-- **Tasks**
-  - [Cmd tasks](docs/cmd-tasks.md): running programs, pipes, `stdin`, reading and writing files
-- **Data between tasks**
-  - [Env](docs/env.md): `${NAME}` substitution and env files
-  - [Writing YAML](docs/yaml.md): quoting rules, editor schema and common YAML pitfalls
-- **Control flow**
-  - [Conditions](docs/conditions.md): `when`, `while`
-  - [Loops](docs/loops.md): `for_each` / `as` / `do`
-- **Operating**
-  - [Run](docs/run.md): running jobs on a schedule, or when a client of a Unix socket asks
-  - [Schedules](docs/schedules.md): `every`, `hourly`, `daily`, `weekly` and `at`
-  - [Service](docs/service.md): running `rocky run` in the background with systemd (Linux) or launchd (macOS)
-  - [Debugging](docs/debugging.md): `run` log lines
+- **Getting started:** [Projects](docs/projects.md), [Writing YAML](docs/yaml.md)
+- **Writing projects:** [Tasks](docs/tasks.md), [Cmd tasks](docs/cmd-tasks.md), [Variables](docs/variables.md), [Conditions](docs/conditions.md), [Loops](docs/loops.md), [Job and task files](docs/files.md), [Triggers](docs/triggers.md)
+- **Running:** [Command line](docs/cli.md), [Run](docs/run.md), [Schedules](docs/schedules.md), [Service](docs/service.md), [Debugging](docs/debugging.md)
 
 ## Limitations
 
 - Unix only: commands run in their own process group, which needs Unix signals.
-- Durations take one whole unit: no fractions (`1.5m`), combined units (`1h30m`) or milliseconds.
+- [Durations](docs/yaml.md#durations-and-times) take one whole unit: no fractions (`1.5m`), combined units (`1h30m`) or milliseconds.
 - Dot paths can't step into a key that contains `.` (e.g. `{"user.id": 7}` in a task's stdout).
 - Ctrl-C, SIGTERM, SIGHUP (closing the terminal) and SIGQUIT stop `rocky` and the commands it runs; `kill -9` can't be caught, so it leaves running commands behind.

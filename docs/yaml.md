@@ -1,6 +1,6 @@
 # Writing YAML
 
-Rocky project, job and task files use YAML. `rocky validate <PROJECT>` checks both YAML syntax and Rocky's fields without running commands.
+Rocky project, job and task files use YAML. `rocky validate <PROJECT>` checks both YAML syntax and Rocky's fields without running commands: unknown fields, wrong YAML types, invalid conditions and schedules, bad task combinations, missing imported files and duplicate names. See [Validation](projects.md#validation).
 
 ## Editor schema
 
@@ -70,11 +70,11 @@ values:
   TAGS: [admin, beta]
 ```
 
-A field that is exactly `${NAME}` keeps the looked-up JSON type where typed substitution is supported; surrounding text makes it a string. See [Typed values](env.md#typed-values).
+A field that is exactly `${NAME}` keeps the looked-up JSON type where typed substitution is supported; surrounding text makes it a string. See [Typed values](variables.md#typed-values).
 
 ## Durations and times
 
-Durations are strings made from a whole number and one unit: `s`, `m` or `h`. Write `30s`, `5m`, `2h` or `90m`; integer seconds, fractions and combined units are not accepted.
+Durations (`timeout`, `retry.delay`, a schedule's `every` and `delay`) are strings made from a whole number and one unit: `s`, `m` or `h`. Write `30s`, `5m`, `2h` or `90m`. Integer seconds (`30`), fractions (`1.5m`), combined units (`1h30m`), milliseconds and other units (`1d`) are not accepted; write `90m` or `24h` instead.
 
 Quote wall-clock times and dates:
 
@@ -83,34 +83,29 @@ schedule:
   daily: "09:30"
 ```
 
-## Migrating older project files
+## Removed syntax
 
-Current Rocky syntax intentionally rejects three older forms:
+Current Rocky syntax rejects these older forms:
+
+| Old form | Write instead |
+|---|---|
+| `timeout: 30` or retry `delay: 2` (integer seconds) | `30s`, `2s` |
+| `weekly` and `time` as sibling fields of `schedule` | `weekly: {days: [mon, fri], time: "09:30"}` |
+| `values` next to a task `file` | `with` (project, job and job-file `values` don't change) |
+| `if`/`then`/`else` or `switch`/`cases`/`default` on a task | [`when`](conditions.md) on each task it should gate; the old keys fail as ``invalid YAML in <file>`` with ``unknown field `if` `` (or `switch`) |
+| `max` on a `while` loop | `attempts`; `max` fails with `` `max` is now `attempts` `` |
 
 ```yaml
-# Write duration strings, not integer seconds.
 timeout: 30s
 
-# Keep weekly fields together.
 schedule:
   weekly:
     days: [mon, fri]
     time: "09:30"
 
-# Pass runtime inputs to a task file with `with`.
 tasks:
   greet:
     file: tasks/greet.yaml
     with:
       WHO: alice
 ```
-
-Replace `timeout: 30` or retry `delay: 2` with `30s` or `2s`; replace sibling `weekly` and `time` fields with the nested form; and replace `values` next to a task `file` with `with`. Project, job and job-file `values` do not change.
-
-## Validate before running
-
-```sh
-rocky validate project.yaml
-```
-
-Validation catches unknown fields, wrong YAML types, invalid conditions and schedules, bad task combinations, missing imported files and duplicate names. It does not run any command.

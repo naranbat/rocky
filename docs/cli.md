@@ -29,7 +29,7 @@ $ rocky exec project.yaml deploy
 Error: no job `deploy` (available: `login`, `report`)
 ```
 
-Jobs that [`trigger` tasks](run.md#triggering-jobs-from-a-task) queue run after the job, one at a time in the order they were triggered, together with any jobs they trigger. They run even when the job failed. Only the job's own result is printed. If a triggered job fails, `exec` exits `1` with ``Error: triggered job `report`: task `send` exited with code 22``.
+Jobs that [`trigger` tasks](triggers.md#trigger-tasks) queue run after the job, one at a time in the order they were triggered, together with any jobs they trigger. They run even when the job failed. Only the job's own result is printed. If a triggered job fails, `exec` exits `1` with ``Error: triggered job `report`: task `send` exited with code 22``.
 
 `--verbose` (or `-v`) prints each command to stderr just before it runs, with `${VAR}`s filled in, so values from the `env_file` (secrets included) show. Pipe stages are joined with `|`, and an argument with spaces or shell characters is single-quoted:
 
@@ -40,15 +40,15 @@ $ rocky exec project.yaml login --verbose > result.json
 
 ## `rocky run <PROJECT>`
 
-Runs every job of the project that has a [`schedule`](schedules.md), until stopped with Ctrl-C, SIGTERM, SIGHUP or SIGQUIT, or until only finished `at` schedules are left. Each run writes [JSON log lines](run.md#output) to stdout. See [Run](run.md).
+Runs every job of the project that has a [`schedule`](schedules.md), until stopped with Ctrl-C, SIGTERM, SIGHUP or SIGQUIT, or until only finished `at` and `run_on_start`-only schedules are left. Each run writes [JSON log lines](run.md#output) to stdout. See [Run](run.md).
 
-`--socket <PATH>` also listens on a Unix domain socket, so clients can run any job by sending `{"job": "NAME"}`. With it, no job needs a `schedule` and `run` runs until stopped. See [Triggering jobs over a socket](run.md#triggering-jobs-over-a-socket).
+`--socket <PATH>` also listens on a Unix domain socket, so clients can run any job by sending `{"job": "NAME"}`. With it, no job needs a `schedule` and `run` runs until stopped. See [Triggering jobs over a socket](triggers.md#triggering-jobs-over-a-socket).
 
 `--service <NAME>` prefixes the log file names with `NAME`: `.rocky/logs/NAME-YYYY-MM-DD.log`, so services sharing a working directory keep separate files. See [Output](run.md#output).
 
 ## `rocky trigger <SOCKET> <JOB>`
 
-Asks the `rocky run --socket <SOCKET>` listening on `SOCKET` to run `JOB`, any job of its project. It returns once the run is queued and prints one line; the run logs to `run`'s output. See [Triggering jobs over a socket](run.md#triggering-jobs-over-a-socket).
+Asks the `rocky run --socket <SOCKET>` listening on `SOCKET` to run `JOB`, any job of its project. It returns once the run is queued and prints one line; the run logs to `run`'s output. See [Triggering jobs over a socket](triggers.md#triggering-jobs-over-a-socket).
 
 ```
 $ rocky trigger /tmp/rocky.sock report
@@ -75,8 +75,8 @@ Writes a starter file that loads as-is, creating missing parent directories, and
 | Kind | Writes |
 |---|---|
 | `project` | A project with one job, `example`, that runs `echo hello`: `rocky exec <PATH> example` |
-| `job` | A [job file](projects.md#job-and-task-files) with one `echo hello` task, to list under a project's `jobs` |
-| `task` | A [task file](projects.md#job-and-task-files) with one `echo hello` cmd task, to list under a job's `tasks`, e.g. `login: tasks/login.yaml` |
+| `job` | A [job file](files.md) with one `echo hello` task, to list under a project's `jobs` |
+| `task` | A [task file](files.md) with one `echo hello` cmd task, to list under a job's `tasks`, e.g. `login: tasks/login.yaml` |
 
 `--level` sets how much the file shows, for every kind:
 

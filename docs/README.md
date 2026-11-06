@@ -1,39 +1,32 @@
 # rocky documentation
 
-One page per feature. For installing and a first run, see the [project README](../README.md).
+One page per topic. For installing and a first run, see the [project README](../README.md).
 
-## Running things
-
-| Page | What it covers |
-|---|---|
-| [Command line](cli.md) | `rocky exec`, `rocky run`, `rocky trigger`, `rocky validate` and `rocky new`, their flags, output, and exit codes |
-| [Projects](projects.md) | The project file: jobs, tasks, fields, job and task files, validation, and using earlier tasks' output |
-
-## Tasks
+## Getting started
 
 | Page | What it covers |
 |---|---|
-| [Cmd tasks](cmd-tasks.md) | Running programs with `cmd:`, pipes, `stdin`, reading and writing files |
+| [Projects](projects.md) | The project file: project and job fields, `defaults`, execution order, validation and paths |
+| [Writing YAML](yaml.md) | Editor schema, quoting, durations, and syntax that was removed |
 
-## Data between tasks
-
-| Page | What it covers |
-|---|---|
-| [Env](env.md) | `${NAME}` substitution, `.env` files, typed values, dot paths, and lookup order |
-| [Writing YAML](yaml.md) | Quoting rules, editor schema, command arguments and common YAML pitfalls |
-
-## Control flow
+## Writing projects
 
 | Page | What it covers |
 |---|---|
-| [Conditions](conditions.md) | `when` on jobs and tasks, `while` loops, and their operators |
-| [Loops](loops.md) | `for_each` / `as` / `do` over a list |
+| [Tasks](tasks.md) | Task kinds and fields, results, using earlier tasks' output, failures and `allow_failure` |
+| [Cmd tasks](cmd-tasks.md) | Running programs with `cmd:`, pipes, `stdin`, options, `retry`, reading and writing files |
+| [Variables](variables.md) | `${NAME}` substitution, `values`, `.env` files, lookup order, typed values and dot paths |
+| [Conditions](conditions.md) | `when` on jobs and tasks, and condition operators |
+| [Loops](loops.md) | `for_each` and `while` loops |
+| [Job and task files](files.md) | Keeping jobs and tasks in their own files, and reusing them with `with` and `values` |
+| [Triggers](triggers.md) | `trigger` tasks, and running jobs over a socket with `rocky trigger` |
 
-## Operating
+## Running
 
 | Page | What it covers |
 |---|---|
-| [Debugging](debugging.md) | `run`'s JSON log lines |
-| [Run](run.md) | Running a project's scheduled jobs |
-| [Schedules](schedules.md) | `every`, `hourly`, `daily`, `weekly` and `at` |
+| [Command line](cli.md) | `rocky exec`, `run`, `trigger`, `validate` and `new`, their flags, output, and exit codes |
+| [Run](run.md) | Running a project's scheduled jobs, and its JSON log lines |
+| [Schedules](schedules.md) | `every`, `hourly`, `daily`, `weekly`, `at` and `run_on_start` |
 | [Service](service.md) | Running `rocky run` in the background with systemd or launchd |
+| [Debugging](debugging.md) | `validate`, `exec --verbose`, reading `run`'s logs |

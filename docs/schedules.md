@@ -29,7 +29,7 @@ schedule:
   delay: 10s   # optional
 ```
 
-- A duration is a whole number followed by `s`, `m` or `h`: `30s`, `5m`, `2h`. Combined forms (`1h30m`) and other units (`1d`) are not supported; write `90m` or `24h`.
+- A [duration](yaml.md#durations-and-times) is a whole number followed by `s`, `m` or `h`: `30s`, `5m`, `2h`.
 - `every` must be greater than 0.
 - `delay` waits before the first run. Without it, the first run starts as soon as `run` starts. `delay` only works with `every`.
 - If a run takes longer than the interval, the missed runs are skipped, and the next run starts at the next interval.

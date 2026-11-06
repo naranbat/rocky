@@ -110,5 +110,5 @@ After editing the plist, `bootout` and `bootstrap` it again.
 
 - **Stopping:** both service managers send SIGTERM, which stops `rocky` and the commands it runs.
 - **Edits:** task and env file edits apply from the next run; schedule changes need a restart. See [Behaviour](run.md#behaviour). Run `rocky validate` before restarting: a project that doesn't load stops `run` at startup, and the service manager keeps retrying it.
-- **Exit:** without `--socket`, `run` exits on its own once only finished `at` jobs are left. That is a successful exit, so neither example restarts it. With `--socket`, it runs until stopped.
+- **Exit:** without `--socket`, `run` exits on its own once only finished `at` and `run_on_start`-only jobs are left. That is a successful exit, so neither example restarts it. With `--socket`, it runs until stopped.
 - **Logs:** the same JSON lines go to the service manager's log (stdout) and to `.rocky/logs/YYYY-MM-DD.log` in `WorkingDirectory` (`NAME-YYYY-MM-DD.log` with `--service NAME`, to keep services that share a `WorkingDirectory` apart). See [Output](run.md#output).

@@ -39,14 +39,14 @@ Example: the `mixed` job in [`examples/httpbin.yaml`](../examples/httpbin.yaml).
 | `cmd` | A non-empty list of strings: the program, then its arguments. A single string such as `cmd: "ls -la"` is rejected; write `[ls, -la]`. Quote numeric arguments: write `[sleep, "5"]`, not `[sleep, 5]`. |
 | `pipe` | Optional. A list of further commands, each written like `cmd` as a non-empty list of strings, connected by pipes. See [Pipes](#pipes). |
 
-The common task field `allow_failure` is described in [Projects](projects.md#task-fields).
+Fields every task kind shares, such as `when` and `allow_failure`, are described in [Tasks](tasks.md#task-fields).
 
 ## Arguments and substitution
 
 - `${...}` is substituted inside each list item. A value always stays **one** argument, however many spaces or quotes it contains, so it can't inject extra arguments or shell syntax.
 - Strings are inserted as-is. Numbers, objects and arrays are inserted as compact JSON.
 - For pipes, use [`pipe`](#pipes). For redirects or globbing, call a shell yourself: `cmd: [sh, -c, "ls *.json"]`. Don't put `${...}` inside the `sh -c` script, because the shell would interpret the value. Pass it as a positional argument instead (`$1`, `$2`, …; `_` fills `$0`): `cmd: [sh, -c, 'ls "$1"/*.json', _, "${DIR}"]`.
-- Variables are looked up in earlier results (loop variables and `tasks`), then job and project `values`, then the project `env_file`, then the environment. See [Env](env.md#lookup-order).
+- Variables are looked up in the [usual order](variables.md#lookup-order).
 
 ## Pipes
 
@@ -70,7 +70,7 @@ top_titles:
 
 ## `stdin`
 
-- `${...}` is substituted in it. A string is written as-is; any other value (an object, an array, or a field that is exactly `${NAME}` holding one) is written as compact JSON, so `stdin: ${tasks.fetch.stdout}` is ready for `jq`.
+- `${...}` is substituted in it. A string is written as-is; any other value (an object, an array, or a field that is exactly `${NAME}` holding one) is written as compact JSON, so `stdin: ${tasks.fetch.stdout}` is ready for `jq`. See [typed values](variables.md#typed-values).
 - Without `stdin`, the command's standard input is empty (`/dev/null`), so it never waits for keyboard input.
 - A command may exit without reading all of its input; that isn't an error.
 
@@ -85,7 +85,7 @@ top_titles:
 
 Invalid UTF-8 in `stdout` or `stderr` is replaced with `�`.
 
-A non-zero exit code fails the task unless `allow_failure: true`. A command that times out with `allow_failure` has no exit code or output; its result is just `` {"ok": false, "error": "command `x` timed out after 5s"} ``. To check for any failure, test `ok`: `when: {this: tasks.x.ok, eq: false}`. See [Projects](projects.md#failures-and-allow_failure).
+A non-zero exit code fails the task unless `allow_failure: true`. A timeout with `allow_failure` gives `{ok: false, error}` instead of these fields. See [Failures and `allow_failure`](tasks.md#failures-and-allow_failure).
 
 ## Options
 
@@ -101,7 +101,7 @@ build:
 
 | Field | Default | Meaning |
 |---|---|---|
-| `timeout` | none | How long before the command is killed: a duration like the [schedules'](schedules.md#every-and-delay) (`30s`, `5m`, `2h`). The task then fails with ``command `make` timed out after 5m``. Processes the command started itself (e.g. under `sh -c`) are killed too. |
+| `timeout` | none | How long before the command is killed: a [duration](yaml.md#durations-and-times) (`30s`, `5m`, `2h`). The task then fails with ``command `make` timed out after 5m``. Processes the command started itself (e.g. under `sh -c`) are killed too. |
 | `cwd` | your current directory | Directory to run in. `${...}` is substituted first; a relative result is resolved against the directory of the file the task is written in. A missing directory fails the task with `` `cwd` <path> is not a directory ``, even with `allow_failure`. |
 | `stdin` | empty | Written to the command's standard input, like `cmd < file`. See [`stdin`](#stdin). |
 | `env` | none | Map of name → value, added to the environment the command inherits (replacing a variable of the same name). `${...}` is substituted; a string is used as-is and any other value is written as compact JSON, as for `stdin`. A name can't appear twice. |
@@ -135,7 +135,7 @@ check:                          # wait for a status instead of a successful exit
 | Field | Notes |
 |---|---|
 | `attempts` | Required, at least 1. The most times the command runs. |
-| `delay` | Optional. How long to wait before each run after the first: `2s`, `1m` or `1h`. Default: no wait. |
+| `delay` | Optional. How long to wait before each run after the first: a [duration](yaml.md#durations-and-times) such as `2s`, `1m` or `1h`. Default: no wait. |
 | `until` | Optional. A [condition](conditions.md#condition-shape), checked after each run. Without it, a run is enough when it exits `0`. |
 
 - Each run is saved as `tasks.<name>` before `until` is checked, so `until` reads the run that just finished.
