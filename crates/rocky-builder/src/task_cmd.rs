@@ -102,7 +102,7 @@ pub fn rows(root: &Value, path: &Path) -> Vec<Row> {
         .collect();
     if !missing.is_empty() {
         let keys: Vec<&str> = missing.iter().map(|choice| choice.label.as_str()).collect();
-        rows.push(Row::add(
+        rows.push(Row::add_in_label(
             &keys.join(" · "),
             Action::Pick("Add option".to_string(), missing),
         ));

@@ -191,6 +191,11 @@ impl Row {
         Row::field("", Line::styled(format!("+ {label}"), theme::dim()), action)
     }
 
+    /// Like [`Row::add`], but in the label column, starting where field labels do.
+    pub fn add_in_label(label: &str, action: Action) -> Row {
+        Row::field(&format!("+ {label}"), Line::default(), action)
+    }
+
     pub fn label_style(mut self, style: Style) -> Row {
         self.label = self.label.style(style);
         self
@@ -400,6 +405,30 @@ mod tests {
                 line.split_whitespace().collect::<Vec<_>>().join(" ")
             })
             .collect()
+    }
+
+    #[test]
+    fn add_in_label_starts_where_labels_do() {
+        let rows = [
+            Row::field("cmd", Line::raw("echo"), Action::None),
+            Row::add("arg", Action::None),
+            Row::add_in_label("stdin · env", Action::None),
+        ];
+        let mut terminal = Terminal::new(TestBackend::new(40, 3)).unwrap();
+        let mut offset = 0;
+        terminal
+            .draw(|frame| {
+                draw(frame, frame.area(), &rows, None, &mut offset, None);
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let column = |y: u16, text: &str| {
+            (0..40u16)
+                .find(|&x| buffer[(x, y)].symbol() == text)
+                .unwrap()
+        };
+        assert_eq!(column(2, "+"), column(0, "c"));
+        assert!(column(1, "+") > column(0, "c"));
     }
 
     #[test]
