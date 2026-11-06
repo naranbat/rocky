@@ -1,0 +1,18 @@
+# Looping: fetch a list, then POST once per element.
+#   rocky exec loop
+tasks:
+  users:
+    cmd: [curl, -sS, --fail-with-body, --json, '@-', '${BASE}/anything/users']
+    stdin:
+      users:
+        - { id: 1, name: alice }
+        - { id: 2, name: bob }
+
+  notify_all:
+    for_each: tasks.users.stdout.json.users   # must be a list
+    as: USER                      # optional; defaults to ITEM
+    do:
+      notify:
+        cmd: [curl, -sS, --fail-with-body, --json, '@-', '${BASE}/anything/notify/${USER.id}']
+        stdin:
+          name: ${USER.name}

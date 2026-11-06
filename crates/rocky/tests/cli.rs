@@ -17,6 +17,18 @@ fn write(dir: &Path, name: &str, text: &str) -> PathBuf {
     path
 }
 
+/// Writes a project into `dir`: `settings` as `rocky.yaml` unless empty, and each
+/// (name, YAML) of `jobs` as `jobs/<name>.yaml`.
+fn project(dir: &Path, settings: &str, jobs: &[(&str, &str)]) {
+    if !settings.is_empty() {
+        write(dir, "rocky.yaml", settings);
+    }
+    std::fs::create_dir_all(dir.join("jobs")).unwrap();
+    for (name, yaml) in jobs {
+        write(dir, &format!("jobs/{name}.yaml"), yaml);
+    }
+}
+
 fn path_str(path: &Path) -> &str {
     path.to_str().unwrap()
 }
@@ -42,23 +54,20 @@ fn spawn_rocky(args: &[&str], cwd: &Path) -> Child {
         .unwrap()
 }
 
-/// Runs `exec` on job `w` of `file` in `cwd`.
-fn exec_project(file: &Path, cwd: &Path) -> Output {
-    rocky(&["exec", path_str(file), "w"], cwd)
+/// Writes a project of `jobs` into `dir` (see [`project`]) and runs `exec` on its job `w` there.
+fn exec_jobs(dir: &Path, settings: &str, jobs: &[(&str, &str)]) -> Output {
+    project(dir, settings, jobs);
+    rocky(&["exec", "w"], dir)
 }
 
-/// Writes `yaml` as `project.yaml` in `dir` and runs `exec` on its job `w` there.
-fn exec_yaml(dir: &Path, yaml: &str) -> Output {
-    exec_project(&write(dir, "project.yaml", yaml), dir)
+/// Writes a project of `jobs` into `dir` and runs `run` there until it exits.
+fn run_jobs(dir: &Path, jobs: &[(&str, &str)]) -> Output {
+    project(dir, "", jobs);
+    run(dir)
 }
 
-/// Writes `yaml` as `project.yaml` in `dir` and runs `run` on it there until it exits.
-fn run_yaml(dir: &Path, yaml: &str) -> Output {
-    run(&write(dir, "project.yaml", yaml), dir)
-}
-
-fn validate(file: &Path, cwd: &Path) -> Output {
-    rocky(&["validate", path_str(file)], cwd)
+fn validate(dir: &Path) -> Output {
+    rocky(&["validate"], dir)
 }
 
 fn stdout_json(output: &Output) -> Value {
@@ -107,13 +116,14 @@ fn at_in(ms: i64) -> String {
         .to_string()
 }
 
-fn spawn_run(project: &Path, cwd: &Path) -> Child {
-    spawn_rocky(&["run", path_str(project)], cwd)
+/// Starts `run` on the project in `dir`.
+fn spawn_run(dir: &Path) -> Child {
+    spawn_rocky(&["run"], dir)
 }
 
-/// Runs `run` on `project` in `cwd` until it exits.
-fn run(project: &Path, cwd: &Path) -> Output {
-    wait_with_deadline(spawn_run(project, cwd))
+/// Runs `run` on the project in `dir` until it exits.
+fn run(dir: &Path) -> Output {
+    wait_with_deadline(spawn_run(dir))
 }
 
 fn read_all(pipe: Option<impl Read + Send + 'static>) -> JoinHandle<Vec<u8>> {
@@ -220,9 +230,10 @@ fn assert_gone(pid: i32) {
 #[test]
 fn missing_env_file_fails() {
     let dir = tempfile::tempdir().unwrap();
-    let out = exec_yaml(
+    let out = exec_jobs(
         dir.path(),
-        "env_file: missing.env\njobs:\n  w:\n    tasks:\n      e:\n        cmd: [echo]\n",
+        "env_file: missing.env\n",
+        &[("w", "tasks:\n  e:\n    cmd: [echo]\n")],
     );
     assert_eq!(out.status.code(), Some(1));
     let err = stderr(&out);
@@ -233,13 +244,15 @@ fn missing_env_file_fails() {
 #[test]
 fn verbose_exec_prints_substituted_commands_to_stderr() {
     let dir = tempfile::tempdir().unwrap();
-    let file = write(
+    project(
         dir.path(),
-        "project.yaml",
-        "jobs:\n  w:\n    values:\n      NAME: hi there\n    tasks:\n\
-         \x20     t:\n        cmd: [echo, '${NAME}']\n        pipe: [[cat]]\n",
+        "",
+        &[(
+            "w",
+            "values:\n  NAME: hi there\ntasks:\n  t:\n    cmd: [echo, '${NAME}']\n    pipe: [[cat]]\n",
+        )],
     );
-    let out = rocky(&["exec", path_str(&file), "w", "--verbose"], dir.path());
+    let out = rocky(&["exec", "w", "--verbose"], dir.path());
     assert!(out.status.success(), "{}", stderr(&out));
     assert_eq!(stderr(&out), "+ [t] echo 'hi there' | cat\n");
     let result: Value = serde_json::from_slice(&out.stdout).unwrap();
@@ -249,11 +262,14 @@ fn verbose_exec_prints_substituted_commands_to_stderr() {
 #[test]
 fn invalid_condition_fails_at_load_before_any_task() {
     let dir = tempfile::tempdir().unwrap();
-    let out = exec_yaml(
+    let out = exec_jobs(
         dir.path(),
-        "jobs:\n  w:\n    tasks:\n\
-         \x20     first:\n        cmd: [touch, ran]\n        cwd: .\n\
-         \x20     again:\n        when: {this: tasks.first.exit_code, gt: ten}\n        cmd: [echo]\n",
+        "",
+        &[(
+            "w",
+            "tasks:\n  first:\n    cmd: [touch, ran]\n\
+             \x20 again:\n    when: {this: tasks.first.exit_code, gt: ten}\n    cmd: [echo]\n",
+        )],
     );
     assert_eq!(out.status.code(), Some(1));
     let err = stderr(&out);
@@ -268,9 +284,13 @@ fn invalid_condition_fails_at_load_before_any_task() {
 #[test]
 fn job_prints_failing_task_result() {
     let dir = tempfile::tempdir().unwrap();
-    let out = exec_yaml(
+    let out = exec_jobs(
         dir.path(),
-        "jobs:\n  w:\n    tasks:\n      stats:\n        cmd: [sh, -c, 'echo gone; exit 3']\n",
+        "",
+        &[(
+            "w",
+            "tasks:\n  stats:\n    cmd: [sh, -c, 'echo gone; exit 3']\n",
+        )],
     );
     assert_eq!(out.status.code(), Some(1));
     let result: Value = serde_json::from_slice(&out.stdout).unwrap();
@@ -282,23 +302,21 @@ fn job_prints_failing_task_result() {
     assert!(!err.contains("task `stats`:"), "{err}");
 }
 
-/// Run from another directory, so the env file must be found next to the project.
 #[test]
 fn cmd_output_when_and_env_file() {
     let dir = tempfile::tempdir().unwrap();
-    let file = write(
-        dir.path(),
-        "project.yaml",
-        "env_file: .env\n\
-         jobs:\n  w:\n    tasks:\n\
-         \x20     count:\n        cmd: [echo, '{\"n\": 5}']\n\
-         \x20     big:\n        when: {this: tasks.count.stdout.n, gt: 3}\n        cmd: [echo, '${GREETING} ${USER_NAME} n=${tasks.count.stdout.n}']\n\
-         \x20     small:\n        when: {this: tasks.count.stdout.n, lte: 3}\n        cmd: [echo, small]\n",
-    );
     write(dir.path(), ".env", "GREETING=hello\nUSER_NAME=alice\n");
-    let other_cwd = tempfile::tempdir().unwrap();
-
-    let out = exec_project(&file, other_cwd.path());
+    let out = exec_jobs(
+        dir.path(),
+        "env_file: .env\n",
+        &[(
+            "w",
+            "tasks:\n\
+             \x20 count:\n    cmd: [echo, '{\"n\": 5}']\n\
+             \x20 big:\n    when: {this: tasks.count.stdout.n, gt: 3}\n    cmd: [echo, '${GREETING} ${USER_NAME} n=${tasks.count.stdout.n}']\n\
+             \x20 small:\n    when: {this: tasks.count.stdout.n, lte: 3}\n    cmd: [echo, small]\n",
+        )],
+    );
     assert_eq!(
         stdout_json(&out),
         json!({"ok": true, "exit_code": 0, "stdout": "hello alice n=5", "stderr": ""})
@@ -308,9 +326,10 @@ fn cmd_output_when_and_env_file() {
 #[test]
 fn cmd_missing_program_fails_with_task_name() {
     let dir = tempfile::tempdir().unwrap();
-    let out = exec_yaml(
+    let out = exec_jobs(
         dir.path(),
-        "jobs:\n  w:\n    tasks:\n      nope:\n        cmd: [rocky-no-such-program]\n",
+        "",
+        &[("w", "tasks:\n  nope:\n    cmd: [rocky-no-such-program]\n")],
     );
     assert_eq!(out.status.code(), Some(1));
     let log = stderr(&out);
@@ -324,13 +343,17 @@ fn cmd_missing_program_fails_with_task_name() {
 #[test]
 fn job_tasks_read_earlier_results_via_args_and_stdin() {
     let dir = tempfile::tempdir().unwrap();
-    let out = exec_yaml(
+    let out = exec_jobs(
         dir.path(),
-        "jobs:\n  w:\n    tasks:\n\
-         \x20     fetch:\n        cmd: [echo, '{\"token\": \"t1\", \"users\": [\"a\", \"b\", \"c\"]}']\n\
-         \x20     count:\n        cmd: [wc, -c]\n        stdin: ${tasks.fetch.stdout.users}\n\
-         \x20     report:\n        cmd: [cat]\n        stdin:\n          token: Bearer ${tasks.fetch.stdout.token}\n          users: ${tasks.fetch.stdout.users}\n          bytes: ${tasks.count.stdout}\n          prev_exit: ${tasks.fetch.exit_code}\n\
-         \x20     print:\n        when: {this: tasks.report.stdout.bytes, eq: 13}\n        cmd: [echo, 'reported ${tasks.report.stdout}']\n",
+        "",
+        &[(
+            "w",
+            "tasks:\n\
+             \x20 fetch:\n    cmd: [echo, '{\"token\": \"t1\", \"users\": [\"a\", \"b\", \"c\"]}']\n\
+             \x20 count:\n    cmd: [wc, -c]\n    stdin: ${tasks.fetch.stdout.users}\n\
+             \x20 report:\n    cmd: [cat]\n    stdin:\n      token: Bearer ${tasks.fetch.stdout.token}\n      users: ${tasks.fetch.stdout.users}\n      bytes: ${tasks.count.stdout}\n      prev_exit: ${tasks.fetch.exit_code}\n\
+             \x20 print:\n    when: {this: tasks.report.stdout.bytes, eq: 13}\n    cmd: [echo, 'reported ${tasks.report.stdout}']\n",
+        )],
     );
     assert_eq!(
         stdout_json(&out)["stdout"],
@@ -342,13 +365,13 @@ fn job_tasks_read_earlier_results_via_args_and_stdin() {
 fn run_runs_at_job_once_and_exits() {
     let dir = tempfile::tempdir().unwrap();
     let at = at_in(500);
-    let output = run_yaml(
+    let hello = format!("schedule:\n  at: \"{at}\"\ntasks:\n  greet:\n    cmd: [echo, hi]\n");
+    let output = run_jobs(
         dir.path(),
-        &format!(
-            "jobs:\n\
-             \x20 hello:\n    schedule:\n      at: \"{at}\"\n    tasks:\n      greet:\n        cmd: [echo, hi]\n\
-             \x20 manual:\n    tasks:\n      never:\n        cmd: [echo, never]\n"
-        ),
+        &[
+            ("hello", &hello),
+            ("manual", "tasks:\n  never:\n    cmd: [echo, never]\n"),
+        ],
     );
     assert!(output.status.success(), "{}", stderr(&output));
     assert_eq!(stderr(&output), "");
@@ -380,12 +403,17 @@ fn run_runs_at_job_once_and_exits() {
 #[test]
 fn exec_runs_triggered_jobs_after_the_job() {
     let dir = tempfile::tempdir().unwrap();
-    let out = exec_yaml(
+    let out = exec_jobs(
         dir.path(),
-        "jobs:\n\
-         \x20 w:\n    tasks:\n      t: {trigger: b}\n      last: {cmd: [echo, w]}\n\
-         \x20 b:\n    tasks:\n      mark: {cmd: [touch, b-ran], cwd: .}\n      t: {trigger: c}\n\
-         \x20 c:\n    tasks:\n      mark: {cmd: [touch, c-ran], cwd: .}\n",
+        "",
+        &[
+            ("w", "tasks:\n  t: {trigger: b}\n  last: {cmd: [echo, w]}\n"),
+            (
+                "b",
+                "tasks:\n  mark: {cmd: [touch, b-ran]}\n  t: {trigger: c}\n",
+            ),
+            ("c", "tasks:\n  mark: {cmd: [touch, c-ran]}\n"),
+        ],
     );
     assert_eq!(stdout_json(&out)["stdout"], "w");
     assert!(dir.path().join("b-ran").exists());
@@ -395,11 +423,13 @@ fn exec_runs_triggered_jobs_after_the_job() {
 #[test]
 fn exec_fails_when_a_triggered_job_fails() {
     let dir = tempfile::tempdir().unwrap();
-    let out = exec_yaml(
+    let out = exec_jobs(
         dir.path(),
-        "jobs:\n\
-         \x20 w:\n    tasks:\n      t: {trigger: b}\n\
-         \x20 b:\n    tasks:\n      bad: {cmd: [sh, -c, 'exit 3']}\n",
+        "",
+        &[
+            ("w", "tasks:\n  t: {trigger: b}\n"),
+            ("b", "tasks:\n  bad: {cmd: [sh, -c, 'exit 3']}\n"),
+        ],
     );
     assert_eq!(out.status.code(), Some(1));
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "null");
@@ -409,12 +439,8 @@ fn exec_fails_when_a_triggered_job_fails() {
 #[test]
 fn validate_rejects_a_trigger_of_an_unknown_job() {
     let dir = tempfile::tempdir().unwrap();
-    let file = write(
-        dir.path(),
-        "project.yaml",
-        "jobs:\n  w:\n    tasks:\n      t: {trigger: nope}\n",
-    );
-    let out = validate(&file, dir.path());
+    project(dir.path(), "", &[("w", "tasks:\n  t: {trigger: nope}\n")]);
+    let out = validate(dir.path());
     assert_eq!(out.status.code(), Some(1));
     assert_stderr_contains(&out, "no job `nope` (available: `w`)");
 }
@@ -424,13 +450,13 @@ fn validate_rejects_a_trigger_of_an_unknown_job() {
 fn run_runs_triggered_job_and_exits() {
     let dir = tempfile::tempdir().unwrap();
     let at = at_in(500);
-    let output = run_yaml(
+    let hello = format!("schedule:\n  at: \"{at}\"\ntasks:\n  t: {{trigger: slow}}\n");
+    let output = run_jobs(
         dir.path(),
-        &format!(
-            "jobs:\n\
-             \x20 hello:\n    schedule:\n      at: \"{at}\"\n    tasks:\n      t: {{trigger: slow}}\n\
-             \x20 slow:\n    tasks:\n      nap:\n        cmd: [sleep, '1']\n"
-        ),
+        &[
+            ("hello", &hello),
+            ("slow", "tasks:\n  nap:\n    cmd: [sleep, '1']\n"),
+        ],
     );
     assert!(output.status.success(), "{}", stderr(&output));
     let lines: Vec<(Value, Value)> = stdout_lines(&output)
@@ -455,12 +481,8 @@ fn run_reports_unwritable_log_file_and_keeps_printing() {
     let dir = tempfile::tempdir().unwrap();
     write(dir.path(), ".rocky", "not a directory");
     let at = at_in(500);
-    let output = run_yaml(
-        dir.path(),
-        &format!(
-            "jobs:\n  hello:\n    schedule:\n      at: \"{at}\"\n    tasks:\n      greet:\n        cmd: [echo, hi]\n"
-        ),
-    );
+    let hello = format!("schedule:\n  at: \"{at}\"\ntasks:\n  greet:\n    cmd: [echo, hi]\n");
+    let output = run_jobs(dir.path(), &[("hello", &hello)]);
     assert!(output.status.success(), "{}", stderr(&output));
     assert_stderr_contains(&output, "cannot write log file");
     assert_eq!(events(&output), ["task", "done"]);
@@ -469,8 +491,7 @@ fn run_reports_unwritable_log_file_and_keeps_printing() {
 /// SIGINT is tested on `run` and the others on `exec`: both stop the same way.
 #[test]
 fn stop_signals_stop_and_kill_running_commands() {
-    let wait =
-        "      wait:\n        cmd: [sh, -c, 'sleep 30 & echo $! > pid; wait']\n        cwd: .\n";
+    let wait = "  wait:\n    cmd: [sh, -c, 'sleep 30 & echo $! > pid; wait']\n";
     // SIGHUP comes from closing the terminal, which no longer reaches the commands' groups.
     for signal in [
         Signal::SIGINT,
@@ -481,19 +502,12 @@ fn stop_signals_stop_and_kill_running_commands() {
         let dir = tempfile::tempdir().unwrap();
         let mut child = if signal == Signal::SIGINT {
             let at = at_in(500);
-            let project = write(
-                dir.path(),
-                "project.yaml",
-                &format!("jobs:\n  w:\n    schedule:\n      at: \"{at}\"\n    tasks:\n{wait}"),
-            );
-            spawn_run(&project, dir.path())
+            let job = format!("schedule:\n  at: \"{at}\"\ntasks:\n{wait}");
+            project(dir.path(), "", &[("w", &job)]);
+            spawn_run(dir.path())
         } else {
-            let file = write(
-                dir.path(),
-                "project.yaml",
-                &format!("jobs:\n  w:\n    tasks:\n{wait}"),
-            );
-            spawn_rocky(&["exec", path_str(&file), "w"], dir.path())
+            project(dir.path(), "", &[("w", &format!("tasks:\n{wait}"))]);
+            spawn_rocky(&["exec", "w"], dir.path())
         };
         let pid = wait_for_pid(&mut child, &dir.path().join("pid"));
         let rocky = i32::try_from(child.id()).unwrap();
@@ -513,15 +527,10 @@ fn stop_signals_stop_and_kill_running_commands() {
 fn run_keeps_logging_when_stdout_is_closed() {
     let dir = tempfile::tempdir().unwrap();
     let at = at_in(500);
-    let project = write(
-        dir.path(),
-        "project.yaml",
-        &format!(
-            "jobs:\n  hello:\n    schedule:\n      at: \"{at}\"\n    tasks:\n      greet:\n        cmd: [echo, hi]\n"
-        ),
-    );
+    let hello = format!("schedule:\n  at: \"{at}\"\ntasks:\n  greet:\n    cmd: [echo, hi]\n");
+    project(dir.path(), "", &[("hello", &hello)]);
 
-    let mut child = spawn_run(&project, dir.path());
+    let mut child = spawn_run(dir.path());
     drop(child.stdout.take());
     let out = wait_with_deadline(child);
     assert!(out.status.success(), "{}", stderr(&out));
@@ -536,12 +545,10 @@ fn run_keeps_logging_when_stdout_is_closed() {
 fn run_runs_at_late_when_the_start_run_overlaps_it() {
     let dir = tempfile::tempdir().unwrap();
     let at = at_in(500);
-    let output = run_yaml(
-        dir.path(),
-        &format!(
-            "jobs:\n  slow:\n    schedule:\n      at: \"{at}\"\n      run_on_start: true\n    tasks:\n      wait:\n        cmd: [sleep, '1']\n"
-        ),
+    let slow = format!(
+        "schedule:\n  at: \"{at}\"\n  run_on_start: true\ntasks:\n  wait:\n    cmd: [sleep, '1']\n"
     );
+    let output = run_jobs(dir.path(), &[("slow", &slow)]);
     let done = events(&output)
         .iter()
         .filter(|event| *event == "done")
@@ -553,17 +560,14 @@ fn run_runs_at_late_when_the_start_run_overlaps_it() {
 fn run_on_start_and_the_at_run_log_control_flow() {
     let dir = tempfile::tempdir().unwrap();
     let at = at_in(500);
-    let output = run_yaml(
-        dir.path(),
-        &format!(
-            "jobs:\n\
-             \x20 hello:\n    schedule:\n      at: \"{at}\"\n      run_on_start: true\n    values: {{N: 1}}\n    tasks:\n\
-             \x20     hi:\n        when: {{this: N, eq: 1}}\n        cmd: [echo, hi]\n\
-             \x20     bye:\n        when: {{this: N, eq: 2}}\n        cmd: [echo, bye]\n\
-             \x20     list:\n        cmd: [echo, '[1]']\n\
-             \x20     each:\n        for_each: tasks.list.stdout\n        do: {{print: {{cmd: [echo, '${{ITEM}}']}}}}\n"
-        ),
+    let hello = format!(
+        "schedule:\n  at: \"{at}\"\n  run_on_start: true\nvalues: {{N: 1}}\ntasks:\n\
+         \x20 hi:\n    when: {{this: N, eq: 1}}\n    cmd: [echo, hi]\n\
+         \x20 bye:\n    when: {{this: N, eq: 2}}\n    cmd: [echo, bye]\n\
+         \x20 list:\n    cmd: [echo, '[1]']\n\
+         \x20 each:\n    for_each: tasks.list.stdout\n    do: {{print: {{cmd: [echo, '${{ITEM}}']}}}}\n"
     );
+    let output = run_jobs(dir.path(), &[("hello", &hello)]);
     let run = ["task", "skip", "task", "for_each", "task", "done"];
     assert_eq!(events(&output), [run, run].concat());
 }
@@ -571,9 +575,12 @@ fn run_on_start_and_the_at_run_log_control_flow() {
 #[test]
 fn run_on_start_alone_runs_once_and_exits() {
     let dir = tempfile::tempdir().unwrap();
-    let output = run_yaml(
+    let output = run_jobs(
         dir.path(),
-        "jobs:\n  hello:\n    schedule: {run_on_start: true}\n    tasks:\n      greet:\n        cmd: [echo, hi]\n",
+        &[(
+            "hello",
+            "schedule: {run_on_start: true}\ntasks:\n  greet:\n    cmd: [echo, hi]\n",
+        )],
     );
     assert!(output.status.success(), "{}", stderr(&output));
     assert_eq!(events(&output), ["task", "done"]);
@@ -582,7 +589,7 @@ fn run_on_start_alone_runs_once_and_exits() {
 #[test]
 fn run_rejects_a_project_without_a_schedule() {
     let dir = tempfile::tempdir().unwrap();
-    let output = run_yaml(dir.path(), "jobs:\n  a:\n    tasks: {e: {cmd: [echo]}}\n");
+    let output = run_jobs(dir.path(), &[("a", "tasks: {e: {cmd: [echo]}}\n")]);
     assert_eq!(output.status.code(), Some(1));
     assert_stderr_contains(&output, "no job has a `schedule`");
 }
@@ -591,12 +598,10 @@ fn run_rejects_a_project_without_a_schedule() {
 fn run_reports_errored_run_on_stdout() {
     let dir = tempfile::tempdir().unwrap();
     let at = at_in(500);
-    let output = run_yaml(
-        dir.path(),
-        &format!(
-            "jobs:\n  broken:\n    schedule:\n      at: \"{at}\"\n    tasks:\n      e:\n        cmd: [echo, '${{ROCKY_TEST_UNDEFINED}}']\n"
-        ),
+    let broken = format!(
+        "schedule:\n  at: \"{at}\"\ntasks:\n  e:\n    cmd: [echo, '${{ROCKY_TEST_UNDEFINED}}']\n"
     );
+    let output = run_jobs(dir.path(), &[("broken", &broken)]);
     let out = stdout_json(&output);
     assert_eq!(out["job"], "broken");
     assert_eq!(out["event"], "error");
@@ -610,13 +615,23 @@ fn run_reports_errored_run_on_stdout() {
 #[test]
 fn run_every_jobs_run_independently_and_survive_errors_and_failures() {
     let dir = tempfile::tempdir().unwrap();
-    let project = write(
+    project(
         dir.path(),
-        "project.yaml",
-        "jobs:\n\
-         \x20 ok:\n    schedule: {every: 1s}\n    tasks: {ok: {cmd: [echo, ok]}}\n\
-         \x20 broken:\n    schedule: {every: 1s}\n    tasks: {e: {cmd: [echo, '${ROCKY_TEST_UNDEFINED}']}}\n\
-         \x20 failing:\n    schedule: {every: 1s}\n    tasks: {check: {cmd: [sh, -c, 'exit 3']}, never: {cmd: [echo, never]}}\n",
+        "",
+        &[
+            (
+                "ok",
+                "schedule: {every: 1s}\ntasks: {ok: {cmd: [echo, ok]}}\n",
+            ),
+            (
+                "broken",
+                "schedule: {every: 1s}\ntasks: {e: {cmd: [echo, '${ROCKY_TEST_UNDEFINED}']}}\n",
+            ),
+            (
+                "failing",
+                "schedule: {every: 1s}\ntasks: {check: {cmd: [sh, -c, 'exit 3']}, never: {cmd: [echo, never]}}\n",
+            ),
+        ],
     );
 
     let events = |lines: &[Value], job: &str, event: &str| {
@@ -627,7 +642,7 @@ fn run_every_jobs_run_independently_and_survive_errors_and_failures() {
             .collect::<Vec<_>>()
     };
     // Stops between runs of `failing`, so each of its `task` lines has its `done` line.
-    let lines = lines_until(spawn_run(&project, dir.path()), |lines| {
+    let lines = lines_until(spawn_run(dir.path()), |lines| {
         let failing = events(lines, "failing", "done").len();
         failing >= 2
             && events(lines, "ok", "done").len() >= 2
@@ -667,27 +682,25 @@ fn run_every_jobs_run_independently_and_survive_errors_and_failures() {
 #[test]
 fn new_project_runs_and_full_level_validates() {
     let dir = tempfile::tempdir().unwrap();
-    let out = rocky(&["new", "project", "project.yaml"], dir.path());
+    let out = rocky(&["new", "project"], dir.path());
     assert!(out.status.success(), "{}", stderr(&out));
-    assert!(String::from_utf8_lossy(&out.stdout).contains("rocky exec project.yaml example"));
-    let out = rocky(&["exec", "project.yaml", "example"], dir.path());
+    assert!(String::from_utf8_lossy(&out.stdout).contains("rocky exec example"));
+    let out = rocky(&["exec", "example"], dir.path());
     assert_eq!(stdout_json(&out)["stdout"], "hello");
 
-    let out = rocky(
-        &["new", "project", "full.yaml", "--level", "full"],
-        dir.path(),
-    );
+    let out = rocky(&["new", "project", "full", "--level", "full"], dir.path());
     assert!(out.status.success(), "{}", stderr(&out));
-    let out = validate(Path::new("full.yaml"), dir.path());
+    let out = validate(&dir.path().join("full"));
     assert!(out.status.success(), "{}", stderr(&out));
 }
 
 #[test]
 fn new_creates_dirs_and_never_overwrites() {
     let dir = tempfile::tempdir().unwrap();
-    let out = rocky(&["new", "job", "sub/dir/deploy.yaml"], dir.path());
+    let out = rocky(&["new", "job", "deploy"], dir.path());
     assert!(out.status.success(), "{}", stderr(&out));
-    assert!(String::from_utf8_lossy(&out.stdout).contains("deploy: sub/dir/deploy.yaml"));
+    assert!(String::from_utf8_lossy(&out.stdout).contains("rocky exec deploy"));
+    assert!(dir.path().join("jobs/deploy.yaml").exists());
 
     let new_task = || rocky(&["new", "task", "tasks/a.yaml"], dir.path());
     assert!(new_task().status.success());
@@ -726,16 +739,22 @@ fn new_task_writes_a_cmd_task() {
 #[test]
 fn validate_accepts_a_valid_project_without_running_it() {
     let dir = tempfile::tempdir().unwrap();
-    let file = write(
+    project(
         dir.path(),
-        "project.yaml",
-        "jobs:\n  b:\n    schedule: {at: '2000-01-01T00:00:00'}\n    tasks:\n      t:\n        cmd: [touch, ran]\n  a:\n    tasks:\n      g:\n        cmd: [echo]\n",
+        "",
+        &[
+            (
+                "b",
+                "schedule: {at: '2000-01-01T00:00:00'}\ntasks:\n  t:\n    cmd: [touch, ran]\n",
+            ),
+            ("a", "tasks:\n  g:\n    cmd: [echo]\n"),
+        ],
     );
-    let out = validate(&file, dir.path());
+    let out = validate(dir.path());
     assert!(out.status.success(), "{}", stderr(&out));
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
-        format!("{} is valid (jobs: `a`, `b`)\n", file.display())
+        "project is valid (jobs: `a`, `b`)\n"
     );
     assert!(!dir.path().join("ran").exists());
 }
@@ -743,12 +762,15 @@ fn validate_accepts_a_valid_project_without_running_it() {
 #[test]
 fn validate_reports_the_load_error() {
     let dir = tempfile::tempdir().unwrap();
-    let file = write(
+    project(
         dir.path(),
-        "project.yaml",
-        "jobs:\n  w:\n    tasks:\n      touch:\n        when: {this: X, matches: '('}\n        cmd: [touch, ran]\n",
+        "",
+        &[(
+            "w",
+            "tasks:\n  touch:\n    when: {this: X, matches: '('}\n    cmd: [touch, ran]\n",
+        )],
     );
-    let out = validate(&file, dir.path());
+    let out = validate(dir.path());
     assert_eq!(out.status.code(), Some(1));
     assert!(out.stdout.is_empty());
     assert_stderr_contains(&out, "invalid regex `(`");
@@ -756,15 +778,29 @@ fn validate_reports_the_load_error() {
 }
 
 #[test]
+fn a_directory_without_job_files_is_not_a_project() {
+    let dir = tempfile::tempdir().unwrap();
+    for args in [&["validate"][..], &["exec", "w"], &["run"]] {
+        let out = rocky(args, dir.path());
+        assert_eq!(out.status.code(), Some(1), "{args:?}");
+        assert_stderr_contains(&out, "no jobs: add jobs/<name>.yaml");
+    }
+}
+
+#[test]
 fn run_skips_an_at_schedule_in_the_past_and_runs_the_others() {
     let dir = tempfile::tempdir().unwrap();
     let at = at_in(300);
-    let output = run_yaml(
+    let new = format!("schedule: {{at: \"{at}\"}}\ntasks:\n  t:\n    cmd: [touch, new]\n");
+    let output = run_jobs(
         dir.path(),
-        &format!(
-            "jobs:\n  old:\n    schedule: {{at: '2000-01-01T00:00:00'}}\n    tasks:\n      t:\n        cmd: [touch, old]\n\
-             \x20 new:\n    schedule: {{at: \"{at}\"}}\n    tasks:\n      t:\n        cmd: [touch, new]\n"
-        ),
+        &[
+            (
+                "old",
+                "schedule: {at: '2000-01-01T00:00:00'}\ntasks:\n  t:\n    cmd: [touch, old]\n",
+            ),
+            ("new", &new),
+        ],
     );
     assert!(output.status.success(), "{}", stderr(&output));
     let lines = stdout_lines(&output);
@@ -809,17 +845,16 @@ fn requests(stream: &UnixStream, lines: &[&str]) -> Vec<Value> {
 fn run_socket_triggers_jobs_one_run_at_a_time() {
     let dir = tempfile::tempdir().unwrap();
     // Fails if two runs overlap.
-    let project = write(
+    project(
         dir.path(),
-        "project.yaml",
-        "jobs:\n  slow:\n    tasks:\n      t:\n        \
-         cmd: [sh, -c, 'test ! -e busy && touch busy && sleep 0.3 && rm busy']\n        cwd: .\n",
+        "",
+        &[(
+            "slow",
+            "tasks:\n  t:\n    cmd: [sh, -c, 'test ! -e busy && touch busy && sleep 0.3 && rm busy']\n",
+        )],
     );
     let socket = dir.path().join("rocky.sock");
-    let child = spawn_rocky(
-        &["run", path_str(&project), "--socket", path_str(&socket)],
-        dir.path(),
-    );
+    let child = spawn_rocky(&["run", "--socket", path_str(&socket)], dir.path());
     let stream = connect(&socket);
     let mode = std::fs::metadata(&socket).unwrap().permissions().mode();
     assert_eq!(mode & 0o777, 0o600);
@@ -863,13 +898,9 @@ fn run_socket_triggers_jobs_one_run_at_a_time() {
 #[test]
 fn run_socket_replaces_a_stale_socket_but_not_a_live_one() {
     let dir = tempfile::tempdir().unwrap();
-    let project = write(
-        dir.path(),
-        "project.yaml",
-        "jobs:\n  a:\n    tasks: {e: {cmd: [echo]}}\n",
-    );
+    project(dir.path(), "", &[("a", "tasks: {e: {cmd: [echo]}}\n")]);
     let socket = dir.path().join("rocky.sock");
-    let args = ["run", path_str(&project), "--socket", path_str(&socket)];
+    let args = ["run", "--socket", path_str(&socket)];
     let mut first = spawn_rocky(&args, dir.path());
     connect(&socket);
 
@@ -896,11 +927,7 @@ fn run_socket_replaces_a_stale_socket_but_not_a_live_one() {
 #[test]
 fn trigger_queues_a_job_and_reports_errors() {
     let dir = tempfile::tempdir().unwrap();
-    let project = write(
-        dir.path(),
-        "project.yaml",
-        "jobs:\n  a:\n    tasks: {e: {cmd: [echo]}}\n",
-    );
+    project(dir.path(), "", &[("a", "tasks: {e: {cmd: [echo]}}\n")]);
     let socket = dir.path().join("rocky.sock");
     let trigger = |job: &str| rocky(&["trigger", path_str(&socket), job], dir.path());
 
@@ -908,10 +935,7 @@ fn trigger_queues_a_job_and_reports_errors() {
     assert_eq!(missing.status.code(), Some(1));
     assert_stderr_contains(&missing, "socket");
 
-    let child = spawn_rocky(
-        &["run", path_str(&project), "--socket", path_str(&socket)],
-        dir.path(),
-    );
+    let child = spawn_rocky(&["run", "--socket", path_str(&socket)], dir.path());
     connect(&socket);
     let queued = trigger("a");
     assert!(queued.status.success(), "{}", stderr(&queued));

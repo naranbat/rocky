@@ -1,0 +1,21 @@
+# Jobs that start other jobs with `trigger`. Only runs commands. Run from examples/trigger:
+#   rocky exec check    # once
+#   rocky run           # on schedule
+schedule:
+  every: 1m
+tasks:
+  # How full the disk holding the current directory is, as a number: `42%` becomes 42.
+  usage:
+    cmd: [sh, -c, "df -P . | awk 'NR == 2 {print $5 + 0}'"]
+
+  # A trigger with `when`: `alert` (jobs/alert.yaml) only runs when the disk is nearly full.
+  full:
+    when: {this: tasks.usage.stdout, gt: 90}
+    trigger: alert
+
+  # A trigger on its own: `report` runs after every check. `check` goes on without
+  # waiting, so this task's result isn't saved and `say` below runs right away.
+  report: {trigger: report}
+
+  say:
+    cmd: [echo, "disk ${tasks.usage.stdout}% used"]

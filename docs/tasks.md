@@ -12,7 +12,7 @@ Each task is exactly one of the following. Any of them can also have [`when`](co
 | For-each loop | `for_each`, `as`, `do`, `on_failure` | [Loops](loops.md) |
 | While loop | `while`, `attempts`, `do`, `on_failure` | [Loops](loops.md#while) |
 | Trigger | `trigger:` a job name | [Triggers](triggers.md) |
-| Task file | a string: the path of a task file, or `{file, with}` | [Job and task files](files.md) |
+| Task file | a string: the path of a task file, or `{file, with}` | [Task files](files.md) |
 
 ## Task fields
 

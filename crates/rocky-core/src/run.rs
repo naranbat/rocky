@@ -13,8 +13,8 @@ use crate::schedule::{Clock, Schedule};
 use crate::trigger::{Queued, Trigger};
 use crate::{exec, progress, project, socket};
 
-/// Runs every job that has a `schedule` until all schedules are done (only `at` and
-/// `run_on_start`-only jobs ever finish). Every log line is one JSON object on stdout
+/// Runs every job of the project in directory `path` that has a `schedule` until all
+/// schedules are done (only `at` and `run_on_start`-only jobs ever finish). Every log line is one JSON object on stdout
 /// (also appended to `.rocky/logs/<date>.log`) with `job`, `time` and `event` fields. Each run
 /// reloads the project and prints a line per task, skip and loop, then a `done` line
 /// (with `failed_task` and its `reason` if a task failed); a run that errors or panics

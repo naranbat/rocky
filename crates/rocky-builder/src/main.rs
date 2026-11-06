@@ -13,6 +13,7 @@ mod job;
 mod legacy;
 mod new_project;
 mod node;
+mod parts;
 mod project;
 mod recent;
 mod results;
@@ -41,7 +42,7 @@ use ratatui::crossterm::event::{self, Event, KeyEventKind};
 use crate::app::App;
 use crate::recent::Recent;
 
-/// Opens the builder in the terminal, on the project file given as the first argument if any.
+/// Opens the builder in the terminal, on the project directory given as the first argument if any.
 fn main() -> anyhow::Result<()> {
     let path = std::env::args_os().nth(1).map(PathBuf::from);
     let mut app = App::new(path, Recent::load());

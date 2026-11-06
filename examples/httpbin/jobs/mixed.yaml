@@ -1,0 +1,31 @@
+# Requests and other commands together, including writing and reading a file. Any task can read an earlier task's
+# result with ${tasks.NAME.path}.
+#   rocky exec mixed
+schedule:
+  daily: "09:30"                  # local time, every day
+tasks:
+  today:
+    cmd: [date, +%Y-%m-%d]        # program + arguments, run without a shell
+
+  version:
+    cmd: [sh, -c, 'echo "rocky version 1.4.2 (build 77)" | cut -d " " -f 3']     # -> "1.4.2"
+
+  shout:
+    cmd: [tr, a-z, A-Z]
+    stdin: ${USER}                # the command's standard input
+
+  save:
+    cmd: [cat]
+    stdout_file: ../report.json   # relative to this file (in jobs/), not your current directory
+    stdin:                        # written as JSON
+      user: ${tasks.shout.stdout}
+      date: ${tasks.today.stdout}
+      version: ${tasks.version.stdout}
+
+  load:
+    cmd: [cat, report.json]       # JSON stdout is parsed
+    cwd: ..                       # the project directory: relative to this file too
+
+  report:
+    cmd: [curl, -sS, --fail-with-body, --json, '@-', '${BASE}/anything/report']
+    stdin: ${tasks.load.stdout}

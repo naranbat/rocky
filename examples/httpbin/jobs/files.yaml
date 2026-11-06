@@ -1,5 +1,5 @@
-# A job in its own file, used by httpbin.yaml and imports.yaml. Paths are relative to this file.
-#   rocky exec examples/httpbin.yaml files
+# A job that uses a task file, with `timeout`. Paths are relative to this file.
+#   rocky exec files
 tasks:
   login: ../tasks/login.yaml       # a task from its own file
 

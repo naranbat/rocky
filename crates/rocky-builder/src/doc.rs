@@ -1,13 +1,14 @@
-//! The project file being edited: its YAML tree, kept in file order, plus helpers to edit
-//! mappings in place without reordering them.
+//! The project being edited: one YAML tree of its `rocky.yaml` and job files (see
+//! [`crate::parts`]), kept in file order, plus helpers to edit mappings in place without
+//! reordering them.
 
 use std::path::{Path, PathBuf};
 
-use anyhow::Context as _;
 use serde_yaml::{Mapping, Value};
 
-/// An open project file.
+/// An open project.
 pub struct Doc {
+    /// The project directory.
     pub path: PathBuf,
     pub root: Value,
     /// The text last read from or written to disk, to tell whether there are unsaved edits.
@@ -16,16 +17,13 @@ pub struct Doc {
 
 impl Doc {
     pub fn open(path: &Path) -> anyhow::Result<Doc> {
-        let text = std::fs::read_to_string(path)
-            .with_context(|| format!("cannot read {}", path.display()))?;
-        let root: Value = serde_yaml::from_str(&text)
-            .with_context(|| format!("cannot parse {}", path.display()))?;
+        let root = crate::parts::read(path)?;
         let mut doc = Doc {
-            path: path.to_path_buf(),
+            path: std::path::absolute(path)?,
             root,
             saved: String::new(),
         };
-        // Compare against our own serialization, so opening a file isn't an unsaved edit.
+        // Compare against our own serialization, so opening a project isn't an unsaved edit.
         doc.saved = doc.text()?;
         Ok(doc)
     }
@@ -44,16 +42,16 @@ impl Doc {
         text != self.saved
     }
 
+    /// Writes the files that changed since the last save.
     pub fn save(&mut self, text: String) -> anyhow::Result<()> {
-        std::fs::write(&self.path, &text)
-            .with_context(|| format!("cannot write {}", self.path.display()))?;
+        crate::parts::write(&self.path, &self.saved, &text)?;
         self.saved = text;
         Ok(())
     }
 
-    /// The directory relative paths in the project resolve against.
+    /// The project directory.
     pub fn dir(&self) -> &Path {
-        self.path.parent().unwrap_or(Path::new(""))
+        &self.path
     }
 
     /// The `jobs` mapping, created if missing.
@@ -212,27 +210,25 @@ pub fn map_of<const N: usize>(entries: [(&str, Value); N]) -> Value {
 mod tests {
     use super::*;
 
-    const YAML: &str = "\
-jobs:
-  zeta:
-    legacy_field: kept
-    tasks:
-      second: {cmd: [echo, b]}
-      first: {cmd: [echo, a]}
-  alpha: jobs/a.yaml
+    const ZETA: &str = "\
+legacy_field: kept
+tasks:
+  second: {cmd: [echo, b]}
+  first: {cmd: [echo, a]}
 ";
 
     fn doc() -> (Doc, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("project.yaml");
-        std::fs::write(&path, YAML).unwrap();
-        (Doc::open(&path).unwrap(), dir)
+        std::fs::create_dir(dir.path().join("jobs")).unwrap();
+        std::fs::write(dir.path().join("jobs/zeta.yaml"), ZETA).unwrap();
+        std::fs::write(dir.path().join("jobs/alpha.yaml"), "tasks: {}\n").unwrap();
+        (Doc::open(dir.path()).unwrap(), dir)
     }
 
     #[test]
     fn round_trip_keeps_order_and_unknown_fields() {
         let (doc, _dir) = doc();
-        assert_eq!(doc.job_names(), ["zeta", "alpha"]);
+        assert_eq!(doc.job_names(), ["alpha", "zeta"]);
         let text = doc.text().unwrap();
         assert!(text.find("second").unwrap() < text.find("first").unwrap());
         assert!(text.contains("legacy_field: kept"));
@@ -245,9 +241,10 @@ jobs:
         let jobs = doc.jobs_mut();
         assert!(rename(jobs, "zeta", "beta"));
         assert!(!rename(jobs, "beta", "alpha"));
-        assert_eq!(keys(jobs), ["beta", "alpha"]);
-        move_entry(jobs, 0, 1);
         assert_eq!(keys(jobs), ["alpha", "beta"]);
+        move_entry(jobs, 0, 1);
+        assert_eq!(keys(jobs), ["beta", "alpha"]);
+        move_entry(jobs, 1, 0);
         jobs.insert(Value::from("gamma"), Value::Null);
         move_entry(jobs, 2, 0);
         assert_eq!(keys(jobs), ["gamma", "alpha", "beta"]);

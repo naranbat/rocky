@@ -1,0 +1,5 @@
+# No schedule: only runs when `check` triggers it. A triggered job can't read `check`'s
+# results, so it looks up what it needs itself.
+tasks:
+  warn:
+    cmd: [sh, -c, "echo 'disk almost full:' >&2; df -h ."]

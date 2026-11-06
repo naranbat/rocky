@@ -1,0 +1,25 @@
+# List, "log in", then use their results.
+#   rocky exec login
+# When `rocky run` runs this job. `rocky exec` checks this but doesn't run it.
+schedule:
+  every: 5m                       # every 30s, 5m, 2h...
+  delay: 10s                      # optional: wait before the first run
+tasks:
+  list:                           # -G -d: a query; --fail-with-body: a 4xx/5xx exits non-zero
+    cmd: [curl, -sS, --fail-with-body, -G, '${BASE}/get', -d, page=2, -H, 'Accept: application/json']
+
+  login:
+    cmd: [curl, -sS, --fail-with-body, --json, '@-', '${BASE}/anything/login']   # --json sends stdin as the body
+    stdin:                        # written as JSON
+      token: demo-token           # httpbin echoes the JSON body under `json`
+
+  whoami:
+    cmd:
+      - curl
+      - -sS
+      - --fail-with-body
+      - -H
+      - 'Authorization: Bearer ${tasks.login.stdout.json.token}'
+      - -H
+      - 'X-Page: ${tasks.list.stdout.args.page}'
+      - ${BASE}/headers

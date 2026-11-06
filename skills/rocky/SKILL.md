@@ -1,22 +1,22 @@
 ---
 name: rocky
-description: Write, validate and run rocky projects, YAML files of jobs whose tasks run commands in order, pass output between tasks, run tasks conditionally, loop, and run on schedules. Use when the user wants to automate repeatable work with rocky, edits a rocky project, job or task YAML file, or runs `rocky exec`, `rocky run`, `rocky trigger`, `rocky validate` or `rocky new`.
+description: Write, validate and run rocky projects, directories of YAML job files whose tasks run commands in order, pass output between tasks, run tasks conditionally, loop, and run on schedules. Use when the user wants to automate repeatable work with rocky, edits a rocky `rocky.yaml`, job or task YAML file, or runs `rocky exec`, `rocky run`, `rocky trigger`, `rocky validate` or `rocky new`.
 ---
 
 # rocky
 
-rocky runs **projects**: a YAML file of named **jobs**. A job is a map of named **tasks** that run one at a time, in the order written. A task runs a command (no shell), and later tasks read earlier tasks' output. `rocky exec` runs one job once; `rocky run` runs jobs on their `schedule`.
+rocky runs **projects**: a directory where every `jobs/NAME.yaml` file is one **job** named `NAME`, plus an optional `rocky.yaml` of shared settings. Every command works on the project in the **current directory**. A job is a map of named **tasks** that run one at a time, in the order written. A task runs a command (no shell), and later tasks read earlier tasks' output. `rocky exec` runs one job once; `rocky run` runs jobs on their `schedule`.
 
 ## Workflow
 
 ```sh
-rocky new project project.yaml               # starter project with job `example`
-rocky new project full.yaml --level full     # every field, with comments: the full reference
-rocky new job jobs/deploy.yaml               # a job in its own file
+rocky new project [DIR]                      # starter project: jobs/example.yaml in DIR (default .)
+rocky new project full --level full          # every field, with comments: the full reference
+rocky new job deploy                         # jobs/deploy.yaml
 rocky new task tasks/login.yaml              # a task in its own file
-rocky validate project.yaml                  # load-time checks only, runs nothing
-rocky exec project.yaml JOB                  # run JOB once, print last task's result as JSON
-rocky exec project.yaml JOB --verbose        # also print each command to stderr before it runs
+rocky validate                               # load-time checks only, runs nothing
+rocky exec JOB                               # run jobs/JOB.yaml once, print last task's result as JSON
+rocky exec JOB --verbose                     # also print each command to stderr before it runs
 ```
 
 1. Write or edit the YAML.
@@ -30,39 +30,43 @@ There is **no dry run**: `exec` runs the real commands. Before executing a job w
 ## Example
 
 ```yaml
-values:                          # fixed values, read as ${NAME}; names are UPPERCASE
+# rocky.yaml (optional)
+values:                      # fixed values, read as ${NAME}; names are UPPERCASE
   BASE: https://httpbin.org
-jobs:
-  report:
-    schedule: {daily: "09:30"}   # only used by `rocky run`
-    tasks:
-      today:
-        cmd: [date, +%Y-%m-%d]   # program + arguments, no shell
-      users:
-        cmd: [curl, -sS, --fail-with-body, --json, '@-', '${BASE}/anything/users']
-        stdin:                   # non-string stdin is written as JSON
-          users: [{id: 1, name: alice}, {id: 2, name: bob}]
-      notify_all:
-        for_each: tasks.users.stdout.json.users   # a path; ${} optional
-        as: USER
-        do:
-          notify:
-            cmd: [echo, 'hi ${USER.name} on ${tasks.today.stdout}']
-      ok:
-        when: {this: tasks.notify.exit_code, eq: 0}
-        cmd: [echo, done]
+```
+
+```yaml
+# jobs/report.yaml: job `report`
+schedule: {daily: "09:30"}   # only used by `rocky run`
+tasks:
+  today:
+    cmd: [date, +%Y-%m-%d]   # program + arguments, no shell
+  users:
+    cmd: [curl, -sS, --fail-with-body, --json, '@-', '${BASE}/anything/users']
+    stdin:                   # non-string stdin is written as JSON
+      users: [{id: 1, name: alice}, {id: 2, name: bob}]
+  notify_all:
+    for_each: tasks.users.stdout.json.users   # a path; ${} optional
+    as: USER
+    do:
+      notify:
+        cmd: [echo, 'hi ${USER.name} on ${tasks.today.stdout}']
+  ok:
+    when: {this: tasks.notify.exit_code, eq: 0}
+    cmd: [echo, done]
 ```
 
 ## Projects and jobs
 
-| Level | Fields |
+| File | Fields |
 |---|---|
-| project | `jobs` (required), `values`, `env_file` (only here; relative to the project file), `defaults` |
-| job | `tasks` (required, non-empty map), `schedule`, `values` (win over project values), `defaults` (win over project defaults) |
+| `rocky.yaml` (optional) | `values`, `env_file` (only here; relative to the project directory), `defaults`. No `jobs` |
+| `jobs/NAME.yaml` (at least one) | `tasks` (required, non-empty map), `schedule`, `values` (win over `rocky.yaml` values), `defaults` (win over `rocky.yaml` defaults) |
 
 - Unknown keys anywhere are a load error.
 - `defaults: {timeout, cwd, env, retry}` fills those fields on every cmd task (nested ones and task files too) that doesn't set them; `env` merges by name. A default `cwd` is relative to the file the defaults are in. Use it instead of repeating `timeout`/`cwd: .`/`env` on each task.
-- Relative paths (`cwd`, `stdout_file`, task and job files) resolve against the file they're written in; `env_file` and job file paths against the project file. Commands **without** `cwd` run in the current directory.
+- Every `*.yaml` directly in `jobs/` is a job, so keep task files elsewhere (e.g. `tasks/`). To run a job with other values or a schedule, copy its file.
+- Relative paths (`cwd`, `stdout_file`, task files) resolve against the file they're written in, so a job reaches `tasks/login.yaml` as `../tasks/login.yaml`; `env_file` against the project directory. Commands **without** `cwd` run in the current directory.
 
 ## Tasks
 
@@ -73,7 +77,7 @@ A task is exactly one kind. Any task can also have `when`.
 | cmd | `cmd`, optionally `pipe` (see [Cmd tasks](#cmd-tasks)) |
 | loop | `for_each`/`as`/`do` or `while`/`attempts`/`do`, optionally `on_failure` (see [Loops](#loops)) |
 | trigger | `trigger: JOB`; no other fields but `when` (see [Triggers](#triggers)) |
-| task file | a path, or `{file: path, with: {...}, when: ...}` (see [Job and task files](#job-and-task-files)) |
+| task file | a path, or `{file: path, with: {...}, when: ...}` (see [Task files](#task-files)) |
 
 - Tasks are a **map**, never a list. The key is the name; there is no `name` field. Keys are identifiers (`user_id`), `tasks` is reserved, and keys are unique within one map.
 - There is no `if`/`then`/`else` or `switch`; use `when` on each task.
@@ -164,16 +168,14 @@ wait:                                # while: checked before each iteration
 
 Loops have no `cmd`, `timeout` or `allow_failure` (that's for cmd tasks); a loop uses `on_failure: next` to skip a failing iteration. Nothing runs in parallel. Results set inside loops stay available afterwards.
 
-## Job and task files
+## Task files
 
-- Job file: `jobs: {report: jobs/report.yaml}`; the file holds `tasks`, `schedule`, `values`, `defaults`.
-- Reuse one job file as several jobs: `jobs: {news: {file: jobs/fetch.yaml, schedule: {every: 1h}, values: {TARGET: https://x}}}`. Only `file`, `schedule`, `values` are allowed there.
-- Task file: `tasks: {login: tasks/login.yaml}`; the file holds one task of any kind, no `name`.
-- Reuse a task file with different inputs: `tasks: {as_bob: {file: tasks/login.yaml, with: {USER: bob}}}`. Only `file`, `with` and `when` are allowed there; the inputs win over job values while the file runs and their `${...}` is expanded when the task starts, e.g. `with: {USER: '${ITEM}'}`.
+- Task file: `tasks: {login: ../tasks/login.yaml}`; the file holds one task of any kind, no `name`.
+- Reuse a task file with different inputs: `tasks: {as_bob: {file: ../tasks/login.yaml, with: {USER: bob}}}`. Only `file`, `with` and `when` are allowed there; the inputs win over job values while the file runs and their `${...}` is expanded when the task starts, e.g. `with: {USER: '${ITEM}'}`.
 
 ## Triggers
 
-`trigger: JOB` queues a run of another job of the project (scheduled or not) and the job goes on without waiting. It saves no result and can't fail.
+`trigger: JOB` queues a run of another job of the project (`jobs/JOB.yaml`) (scheduled or not) and the job goes on without waiting. It saves no result and can't fail.
 
 - In `rocky run`, the queued run starts right away (after any run of that job already going).
 - In `rocky exec`, queued jobs run after the job, in order, even if it failed; only the job's own result is printed.
@@ -194,9 +196,9 @@ A job's `schedule` has exactly one of:
 `run_on_start: true` (not with `every`) also runs once at startup; on its own it runs the job once at startup. Times are local.
 
 ```sh
-rocky run project.yaml                            # runs scheduled jobs until stopped
-rocky run project.yaml --socket /tmp/rocky.sock   # also accept requests; no schedule needed
-rocky run project.yaml --service NAME             # log files named NAME-YYYY-MM-DD.log
+rocky run                                         # runs scheduled jobs until stopped
+rocky run --socket /tmp/rocky.sock                # also accept requests; no schedule needed
+rocky run --service NAME                          # log files named NAME-YYYY-MM-DD.log
 rocky trigger /tmp/rocky.sock report              # queue a run of `report`
 ```
 
@@ -210,7 +212,7 @@ rocky trigger /tmp/rocky.sock report              # queue a run of `report`
 - Invalid file: load error on stderr, nothing runs, exit `1`. Read the `Caused by:` lines; they name the job and task.
 - Stopped by a signal: `128 + signal` (Ctrl-C is `130`); running commands are killed.
 
-stdout only ever holds results, so `rocky exec p.yaml job | jq .stdout` is safe.
+stdout only ever holds results, so `rocky exec job | jq .stdout` is safe.
 
 ## Full documentation
 

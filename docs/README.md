@@ -6,7 +6,7 @@ One page per topic. For installing and a first run, see the [project README](../
 
 | Page | What it covers |
 |---|---|
-| [Projects](projects.md) | The project file: project and job fields, `defaults`, execution order, validation and paths |
+| [Projects](projects.md) | The project directory: `jobs/`, `rocky.yaml` and job fields, `defaults`, execution order, validation and paths |
 | [Writing YAML](yaml.md) | Editor schema, quoting, durations, and syntax that was removed |
 
 ## Writing projects
@@ -18,7 +18,7 @@ One page per topic. For installing and a first run, see the [project README](../
 | [Variables](variables.md) | `${NAME}` substitution, `values`, `.env` files, lookup order, typed values and dot paths |
 | [Conditions](conditions.md) | `when` on tasks, and condition operators |
 | [Loops](loops.md) | `for_each` and `while` loops |
-| [Job and task files](files.md) | Keeping jobs and tasks in their own files, and reusing them with `with` and `values` |
+| [Task files](files.md) | Keeping tasks in their own files, and reusing them with `with` |
 | [Triggers](triggers.md) | `trigger` tasks, and running jobs over a socket with `rocky trigger` |
 
 ## Running

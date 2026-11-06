@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand};
 use nix::sys::signal::Signal;
@@ -17,22 +17,20 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Run one job of a project.
+    /// Run one job of the project in the current directory.
     ///
-    /// Runs `cmd` tasks in order, where later tasks read earlier results as `${tasks.NAME...}`. Prints the last result.
+    /// Runs the `cmd` tasks of `jobs/<JOB>.yaml` in order, where later tasks read earlier results as `${tasks.NAME...}`. Prints the last result.
     Exec {
-        file: PathBuf,
-        /// The job to run.
+        /// The job to run: the name of its file in `jobs/`, without `.yaml`.
         job: String,
         /// Print each command to stderr before it runs, with `${VAR}`s filled in.
         #[arg(short, long)]
         verbose: bool,
     },
-    /// Run a project's scheduled jobs.
+    /// Run the scheduled jobs of the project in the current directory.
     ///
     /// Runs until stopped, or until only finished `at` schedules are left. Prints one JSON line per task, skip, loop and run, also appended to `.rocky/logs/<date>.log` (`<service>-<date>.log` with `--service`).
     Run {
-        file: PathBuf,
         /// Also run any job of the project when a client of this Unix socket sends `{"job": "NAME"}`.
         #[arg(long)]
         socket: Option<PathBuf>,
@@ -49,10 +47,10 @@ enum Command {
         /// The job to run.
         job: String,
     },
-    /// Check a project for errors without running it.
+    /// Check the project in the current directory for errors without running it.
     ///
-    /// Loads the project and its job and task files, and reports whether they are valid. Sends no requests and runs no commands.
-    Validate { file: PathBuf },
+    /// Loads `rocky.yaml`, every job file in `jobs/` and their task files, and reports whether they are valid. Sends no requests and runs no commands.
+    Validate,
     /// Create a starter project, job or task file.
     ///
     /// Never overwrites a file.
@@ -76,10 +74,13 @@ enum Level {
 
 #[derive(Subcommand)]
 enum NewKind {
-    /// A project with one job, `example`.
-    Project { path: PathBuf },
-    /// A job file, to list in a project's `jobs`.
-    Job { path: PathBuf },
+    /// A project with one job, `example`, in a directory (default: the current one).
+    Project {
+        #[arg(default_value = ".")]
+        dir: PathBuf,
+    },
+    /// A job file, `jobs/<NAME>.yaml` in the current directory.
+    Job { name: String },
     /// A task file, to list under a job's `tasks` (`name: path`).
     Task { path: PathBuf },
 }
@@ -87,9 +88,10 @@ enum NewKind {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     match Cli::parse().command {
-        Command::Exec { file, job, verbose } => {
+        Command::Exec { job, verbose } => {
+            let root = Path::new(".");
             let (trigger, mut queue) = Trigger::channel();
-            let project = project::load(&file)?;
+            let project = project::load(root)?;
             let outcome = until_stopped(exec::exec(
                 project,
                 &job,
@@ -104,7 +106,7 @@ async fn main() -> anyhow::Result<()> {
                 let mut failed = failure(&outcome);
                 // Jobs that `trigger` tasks queued, one at a time, and those they queue in turn.
                 while let Some(queued) = queue.recv().await {
-                    let project = project::load(&file)?;
+                    let project = project::load(root)?;
                     let outcome = exec::exec(
                         project,
                         &queued.job,
@@ -125,32 +127,28 @@ async fn main() -> anyhow::Result<()> {
                 anyhow::bail!(failure);
             }
         }
-        Command::Run {
-            file,
-            socket,
-            service,
-        } => {
+        Command::Run { socket, service } => {
             if let Some(name) = service {
                 progress::set_service(name);
             }
-            until_stopped(run::run(&file, socket.as_deref())).await?
+            let root = Path::new(".");
+            until_stopped(run::run(root, socket.as_deref())).await?
         }
         Command::Trigger { socket, job } => {
             socket::send(&socket, &job).await?;
             println!("queued `{job}`");
         }
-        Command::Validate { file } => {
-            let project = project::load(&file)?;
-            println!(
-                "{} is valid (jobs: {})",
-                file.display(),
-                project.job_names()
-            );
+        Command::Validate => {
+            let project = project::load(Path::new("."))?;
+            println!("project is valid (jobs: {})", project.job_names());
         }
         Command::New { kind, level } => {
             let (kind, path) = match kind {
-                NewKind::Project { path } => (new::Kind::Project, path),
-                NewKind::Job { path } => (new::Kind::Job, path),
+                NewKind::Project { dir } => (new::Kind::Project, dir),
+                NewKind::Job { name } => (
+                    new::Kind::Job,
+                    PathBuf::from(project::JOBS_DIR).join(format!("{name}.yaml")),
+                ),
                 NewKind::Task { path } => (new::Kind::Task, path),
             };
             let level = match level {

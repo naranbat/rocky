@@ -2,25 +2,25 @@
 
 ## Check the project
 
-`rocky validate <PROJECT>` loads the project and its job and task files and runs every [load-time check](projects.md#validation) without running a command. Some problems only show up when a job runs: a missing `env_file`, an undefined variable.
+`rocky validate` loads the project in the current directory, its `rocky.yaml`, job and task files, and runs every [load-time check](projects.md#validation) without running a command. Some problems only show up when a job runs: a missing `env_file`, an undefined variable.
 
 ## See what `exec` runs
 
 `exec` prints only the result of the last task that ran, on stdout. It doesn't show the tasks before it. `--verbose` (or `-v`) prints each command to stderr just before it runs, with `${VAR}`s filled in (secrets included):
 
 ```
-$ rocky exec project.yaml login --verbose > result.json
+$ rocky exec login --verbose > result.json
 + [login] curl -s -H 'Authorization: Bearer abc123' https://example.com/login | jq .token
 ```
 
-See [`rocky exec`](cli.md#rocky-exec-project-job).
+See [`rocky exec`](cli.md#rocky-exec-job).
 
 ## Read `run`'s log lines
 
 `run` writes one JSON line on **stdout** per task as it finishes, plus a line per skipped task, loop and `while` check, and a line when the run ends. `exec` doesn't write them. They are easy to filter with `jq`:
 
 ```
-$ rocky run project.yaml | jq -c '{event, task, ok}'
+$ rocky run | jq -c '{event, task, ok}'
 {"event":"task","task":"stats","ok":true}
 {"event":"task","task":"big","ok":true}
 {"event":"skip","task":"warn","ok":null}

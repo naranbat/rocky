@@ -1,0 +1,5 @@
+# The env file's values as ${NAME}.
+#   rocky exec user
+tasks:
+  user:
+    cmd: [curl, -sS, --fail-with-body, -H, 'Authorization: Bearer ${API_TOKEN}', https://httpbin.org/anything/users/42]

@@ -172,7 +172,7 @@ D: {cmd: [echo]}
             "jobs:\n  j:\n    tasks:\n{}",
             indent(&serde_yaml::to_string(&map).unwrap())
         );
-        crate::validate::check(std::path::Path::new("project.yaml"), &text).unwrap();
+        crate::validate::check(std::path::Path::new("project"), &text).unwrap();
     }
 
     #[test]

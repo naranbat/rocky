@@ -1,31 +1,31 @@
 # Command line
 
-`rocky` has five subcommands. `exec`, `run` and `validate` take a [project](projects.md) file as their first positional argument; `trigger` asks a running `run` to run a job; `new` writes starter files.
+`rocky` has five subcommands. `exec`, `run` and `validate` work on the [project](projects.md) in the **current directory**: its `jobs/` and optional `rocky.yaml`. `trigger` asks a running `run` to run a job; `new` writes starter files.
 
 ```sh
-rocky exec <PROJECT> <JOB>
-rocky exec <PROJECT> <JOB> --verbose
-rocky run <PROJECT>
-rocky run <PROJECT> --socket <PATH>
-rocky run <PROJECT> --service <NAME>
+rocky exec <JOB>
+rocky exec <JOB> --verbose
+rocky run
+rocky run --socket <PATH>
+rocky run --service <NAME>
 rocky trigger <SOCKET> <JOB>
-rocky validate <PROJECT>
-rocky new project <PATH>
-rocky new job <PATH>
+rocky validate
+rocky new project [DIR]
+rocky new job <NAME>
 rocky new task <PATH>
-rocky new <KIND> <PATH> --level full
+rocky new <KIND> ... --level full
 rocky --help          # or -h, also per subcommand: rocky exec --help
 rocky --version       # or -V
 ```
 
-## `rocky exec <PROJECT> <JOB>`
+## `rocky exec <JOB>`
 
-Runs one job of a project once and prints the result of the **last task that ran** as pretty-printed JSON on stdout. Job `schedule`s are checked but not run.
+Runs one job of the project, `jobs/<JOB>.yaml`, once and prints the result of the **last task that ran** as pretty-printed JSON on stdout. Job `schedule`s are checked but not run.
 
 The job name is required. An unknown name fails before anything runs and lists the names there are:
 
 ```
-$ rocky exec project.yaml deploy
+$ rocky exec deploy
 Error: no job `deploy` (available: `login`, `report`)
 ```
 
@@ -34,11 +34,11 @@ Jobs that [`trigger` tasks](triggers.md#trigger-tasks) queue run after the job, 
 `--verbose` (or `-v`) prints each command to stderr just before it runs, with `${VAR}`s filled in, so values from the `env_file` (secrets included) show. Pipe stages are joined with `|`, and an argument with spaces or shell characters is single-quoted:
 
 ```
-$ rocky exec project.yaml login --verbose > result.json
+$ rocky exec login --verbose > result.json
 + [login] curl -s -H 'Authorization: Bearer abc123' https://example.com/login | jq .token
 ```
 
-## `rocky run <PROJECT>`
+## `rocky run`
 
 Runs every job of the project that has a [`schedule`](schedules.md), until stopped with Ctrl-C, SIGTERM, SIGHUP or SIGQUIT, or until only finished `at` and `run_on_start`-only schedules are left. Each run writes [JSON log lines](run.md#output) to stdout. See [Run](run.md).
 
@@ -59,38 +59,36 @@ Error: no job `deploy` (available: `poll`, `report`)
 
 If nothing listens on `SOCKET`, it fails with ``Error: socket <SOCKET>`` and the cause on a `Caused by:` line.
 
-## `rocky validate <PROJECT>`
+## `rocky validate`
 
-Loads the project and its job and task files and runs every [load-time check](projects.md#validation), without running commands. A valid project prints one line and exits `0`; an invalid one prints the load error on stderr and exits `1`.
+Loads the project's `rocky.yaml`, job files and task files and runs every [load-time check](projects.md#validation), without running commands. A valid project prints one line and exits `0`; an invalid one prints the load error on stderr and exits `1`.
 
 ```
-$ rocky validate project.yaml
-project.yaml is valid (jobs: `login`, `report`)
+$ rocky validate
+project is valid (jobs: `login`, `report`)
 ```
 
-## `rocky new <KIND> <PATH>`
+## `rocky new <KIND>`
 
-Writes a starter file that loads as-is, creating missing parent directories, and prints how to use it. It never overwrites: an existing file fails with ``Error: <PATH> already exists``.
+Writes starter files that load as-is, creating missing directories, and prints how to use them. It never overwrites: an existing file fails with ``Error: <PATH> already exists``.
 
 | Kind | Writes |
 |---|---|
-| `project` | A project with one job, `example`, that runs `echo hello`: `rocky exec <PATH> example` |
-| `job` | A [job file](files.md) with one `echo hello` task, to list under a project's `jobs` |
-| `task` | A [task file](files.md) with one `echo hello` cmd task, to list under a job's `tasks`, e.g. `login: tasks/login.yaml` |
+| `project [DIR]` | A project in `DIR` (default: the current directory) with one job, `jobs/example.yaml`, that runs `echo hello`: `rocky exec example` there |
+| `job <NAME>` | `jobs/NAME.yaml` in the current directory, a [job](projects.md#job-files) with one `echo hello` task: `rocky exec NAME` |
+| `task <PATH>` | A [task file](files.md) with one `echo hello` cmd task, to list under a job's `tasks`, e.g. `login: ../tasks/login.yaml` |
 
 `--level` sets how much the file shows, for every kind:
 
 | Level | Writes |
 |---|---|
 | `basic` (default) | The smallest file that runs, as in the table above |
-| `full` | Every field, each with a comment. A full project or job has a `schedule`, `values`, `defaults`, a `curl` request, cmd tasks with `when`, a `for_each` loop and a `while` loop. A full task is a cmd task with all of its fields. Fields that need another file (`env_file`, a task file with or without `with`) or another job (`trigger`) are commented out, so the file still loads and runs as-is. Its tasks use `${USER}` from the environment |
+| `full` | Every field, each with a comment. A full project also writes a `rocky.yaml` with `values` and `defaults`. A full job has a `schedule`, `values`, `defaults`, a `curl` request, cmd tasks with `when`, a `for_each` loop and a `while` loop. A full task is a cmd task with all of its fields. Fields that need another file (`env_file`, a task file with or without `with`) or another job (`trigger`) are commented out, so the file still loads and runs as-is. Its tasks use `${USER}` from the environment |
 
 ```
-$ rocky new job jobs/deploy.yaml
+$ rocky new job deploy
 created jobs/deploy.yaml
-add it to a project:
-  jobs:
-    deploy: jobs/deploy.yaml
+run it from the project directory: rocky exec deploy
 ```
 
 ## Output streams
@@ -102,15 +100,16 @@ add it to a project:
 
 | Situation | stdout | stderr | Exit code |
 |---|---|---|---|
-| Success | last task's result, or `null` if no cmd task ran (`validate`: ``<PROJECT> is valid (jobs: …)``) | — | `0` |
+| Success | last task's result, or `null` if no cmd task ran (`validate`: ``project is valid (jobs: …)``) | — | `0` |
 | A task fails (non-zero exit) without `allow_failure` | that task's result | ``Error: task `name` exited with code 3`` | `1` |
 | `exec`: a triggered job's task fails | the job's own result | ``Error: triggered job `x`: task `name` exited with code 3`` | `1` |
 | Any other task error | — | ``Error: task `name` failed`` plus `Caused by:` lines, e.g. ``variable `NAME` is not defined (checked tasks, loop items, values, env_file, environment)``, ``failed to start command `x` `` or ``command `x` timed out after 5s`` | `1` |
 | Invalid file (bad YAML, unknown field, invalid task, condition or schedule) | — | the load error; nothing runs | `1` |
 | `exec` or `run` stopped with Ctrl-C (SIGINT), SIGTERM, SIGHUP or SIGQUIT | — | — | 128 + the signal number (`130`, `143`, `129`, `131`); running commands, and the processes they started, are killed |
 | Unknown job name | — | ``Error: no job `x` (available: `a`, `b`)`` | `1` |
+| No job files in `jobs/` (or no `jobs/`) | — | ``Error: invalid project: no jobs: add jobs/<name>.yaml`` | `1` |
 | `trigger`: nothing listens on the socket | — | ``Error: socket <SOCKET>`` plus a `Caused by:` line | `1` |
 
 Tasks are labelled by their key in error messages, at any depth: a task `notify` inside a loop's `do` is ``task `notify` ``.
 
-> YAML errors in any file (project, job or task file) are reported as `invalid YAML in <path>`, with the cause on a `Caused by:` line.
+> YAML errors in any file (`rocky.yaml`, a job or a task file) are reported as `invalid YAML in <path>`, with the cause on a `Caused by:` line.

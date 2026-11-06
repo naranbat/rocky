@@ -23,7 +23,7 @@ tasks:
     cmd: [curl, -sS, --fail-with-body, '${BASE}/done']
 ```
 
-Example: the `loop` job in [`examples/httpbin.yaml`](../examples/httpbin.yaml).
+Example: [`examples/httpbin/jobs/loop.yaml`](../examples/httpbin/jobs/loop.yaml).
 
 | Field | Notes |
 |---|---|

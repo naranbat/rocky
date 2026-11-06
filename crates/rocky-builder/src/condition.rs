@@ -384,7 +384,7 @@ mod tests {
             node::set(&mut root, &at, Some(value));
             let when = doc::flow(&root["when"]);
             let text = format!("jobs:\n  a:\n    tasks:\n      t: {{cmd: [echo], when: {when}}}\n");
-            crate::validate::check(std::path::Path::new("project.yaml"), &text)
+            crate::validate::check(std::path::Path::new("project"), &text)
                 .unwrap_or_else(|error| panic!("{}: {error:?}\n{text}", choice.label));
         }
     }

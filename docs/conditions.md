@@ -21,7 +21,7 @@ tasks:
     cmd: [curl, -sS, --fail-with-body, '${BASE}/done']
 ```
 
-Example: the `conditional` job in [`examples/httpbin.yaml`](../examples/httpbin.yaml). Run it as is to run `big`, or set `COUNT` to `5` in [`examples/httpbin.env`](../examples/httpbin.env) to run `warn` instead.
+Example: [`examples/httpbin/jobs/conditional.yaml`](../examples/httpbin/jobs/conditional.yaml). Run it as is to run `big`, or set `COUNT` to `5` in [`examples/httpbin/httpbin.env`](../examples/httpbin/httpbin.env) to run `warn` instead.
 
 ## Where `when` goes
 

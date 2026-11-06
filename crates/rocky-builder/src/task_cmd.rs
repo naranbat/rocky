@@ -57,7 +57,7 @@ pub fn rows(root: &Value, path: &Path) -> Vec<Row> {
     for (key, field, hint) in [
         ("timeout", Field::Optional, ""),
         ("stdin", Field::Flow, "text, or YAML sent as JSON"),
-        ("cwd", Field::Optional, "relative to the project file"),
+        ("cwd", Field::Optional, "relative to the job file"),
         (
             "stdout_file",
             Field::Optional,

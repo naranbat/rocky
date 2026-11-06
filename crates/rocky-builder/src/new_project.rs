@@ -9,12 +9,14 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph};
 use rocky_core::new::Level;
+use rocky_core::project::SETTINGS_FILE;
 
 use crate::home::{expand, tilde};
 use crate::input::Input;
 use crate::theme;
 
-const FILE: &str = "project.yaml";
+/// The starter job file, relative to the project folder.
+const JOB_FILE: &str = "jobs/example.yaml";
 
 /// The form's fields, top to bottom.
 const NAME: usize = 0;
@@ -74,16 +76,19 @@ impl NewProject {
         if self.location.text.trim().is_empty() {
             return Some("Choose a location.".to_string());
         }
-        let path = self.folder().join(FILE);
-        path.exists()
-            .then(|| format!("{} already exists.", tilde(&path)))
+        [JOB_FILE, SETTINGS_FILE]
+            .iter()
+            .map(|file| self.folder().join(file))
+            .find(|path| path.exists())
+            .map(|path| format!("{} already exists.", tilde(&path)))
     }
 
+    /// Writes the project and returns its folder.
     fn create(&self) -> Result<PathBuf, String> {
-        let path = self.folder().join(FILE);
+        let folder = self.folder();
         let level = if self.full { Level::Full } else { Level::Basic };
-        rocky_core::new::project(level, &path, self.env_file)
-            .map(|()| path)
+        rocky_core::new::project(level, &folder, self.env_file)
+            .map(|_| folder)
             .map_err(|error| error.chain())
     }
 
@@ -226,15 +231,23 @@ impl NewProject {
                 "env_file, empty"
             }
         });
+        if self.full || self.env_file {
+            let settings = if self.full {
+                "values, env_file, defaults"
+            } else {
+                "env_file: .env"
+            };
+            lines.push(tree_line("├─", SETTINGS_FILE, settings));
+        }
         let branch = if env.is_some() { "├─" } else { "└─" };
-        lines.push(tree_line(branch, FILE, what));
+        lines.push(tree_line(branch, JOB_FILE, what));
         if let Some(env) = env {
             lines.push(tree_line("└─", ".env", env));
         }
         lines.push(Line::raw(""));
         let level = if self.full { " --level full" } else { "" };
         lines.push(Line::styled(
-            format!("rocky new project {}{level}", tilde(&folder.join(FILE))),
+            format!("rocky new project {}{level}", tilde(&folder)),
             theme::dim(),
         ));
         let problem = self
@@ -268,7 +281,7 @@ impl NewProject {
 
 fn tree_line(branch: &str, file: &str, what: &str) -> Line<'static> {
     Line::from(vec![
-        Span::raw(format!("  {branch} {file:<14}")),
+        Span::raw(format!("  {branch} {file:<18}")),
         Span::styled(what.to_string(), theme::dim()),
     ])
 }
@@ -290,7 +303,7 @@ mod tests {
         sheet.full = true;
         assert_eq!(sheet.problem(), None);
         let path = sheet.create().unwrap();
-        assert_eq!(path, dir.path().join("automation/project.yaml"));
+        assert_eq!(path, dir.path().join("automation"));
         assert!(dir.path().join("automation/.env").is_file());
         rocky_core::project::load(&path).unwrap();
         assert!(sheet.problem().unwrap().contains("already exists"));

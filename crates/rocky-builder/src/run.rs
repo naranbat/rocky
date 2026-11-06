@@ -5,7 +5,6 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use rocky_core::exec::{self, Log};
-use rocky_core::project;
 use rocky_core::trigger::Trigger;
 use serde_json::{Value, json};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
@@ -26,7 +25,7 @@ pub struct Run {
 }
 
 impl Run {
-    /// Starts running `job` of the project whose file is at `path`, with `text` as its
+    /// Starts running `job` of the project in directory `path`, with `text` as its
     /// contents. With `until`, the job's tasks after that one don't run.
     pub fn start(path: &Path, text: &str, job: &str, until: Option<&str>) -> Run {
         let (sender, events) = unbounded_channel();
@@ -114,7 +113,7 @@ async fn run(
 ) -> Result<Option<String>, String> {
     let log = Log::Send(sender.clone());
     let (trigger, mut queue) = Trigger::channel();
-    let mut project = project::load_str(path, text).map_err(|error| error.chain())?;
+    let mut project = crate::parts::load(path, text).map_err(|error| error.chain())?;
     if let Some(until) = until
         && let Some(tasks) = project.jobs.get_mut(job).map(|job| &mut job.tasks)
         && let Some(index) = tasks.iter().position(|task| task.name == until)
@@ -127,7 +126,7 @@ async fn run(
     drop(trigger);
     let mut failed = failure(job, &outcome);
     while let Some(queued) = queue.recv().await {
-        let project = project::load_str(path, text).map_err(|error| error.chain())?;
+        let project = crate::parts::load(path, text).map_err(|error| error.chain())?;
         let outcome = exec::exec(project, &queued.job, &log, false, &queued.trigger)
             .await
             .map_err(|error| error.chain())?;
@@ -168,7 +167,7 @@ jobs:
 
     #[test]
     fn runs_the_job_then_triggered_jobs() {
-        let mut run = Run::start(Path::new("project.yaml"), YAML, "main", None);
+        let mut run = Run::start(Path::new("."), YAML, "main", None);
         wait(&mut run);
         let results = &run.results;
         assert!(matches!(
@@ -183,7 +182,7 @@ jobs:
 
     #[test]
     fn until_stops_after_that_task() {
-        let mut run = Run::start(Path::new("project.yaml"), YAML, "main", Some("first"));
+        let mut run = Run::start(Path::new("."), YAML, "main", Some("first"));
         wait(&mut run);
         assert!(run.results.task("main", "first").is_some());
         assert!(run.results.task("main", "last").is_none());
@@ -193,7 +192,7 @@ jobs:
     #[test]
     fn stop_ends_a_running_job() {
         let yaml = "jobs:\n  slow:\n    tasks:\n      wait: {cmd: [sleep, '30']}\n";
-        let mut run = Run::start(Path::new("project.yaml"), yaml, "slow", None);
+        let mut run = Run::start(Path::new("."), yaml, "slow", None);
         run.stop();
         wait(&mut run);
         assert!(matches!(&run.results.end, Some(crate::results::End::Error(e)) if e == "stopped"));

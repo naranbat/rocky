@@ -12,7 +12,7 @@ use crate::vars;
 pub fn rows(root: &Value) -> Vec<Row> {
     let top = Path::default();
     let mut rows = vec![
-        Row::heading("PROJECT", "shared by every job, job files included"),
+        Row::heading("PROJECT", "rocky.yaml · shared by every job"),
         Row::heading(
             "VALUES",
             "read as ${NAME} by every job; a job's own value wins",

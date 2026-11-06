@@ -1,0 +1,4 @@
+# No schedule: runs after every `check`.
+tasks:
+  biggest:
+    cmd: [sh, -c, "du -sk ./* 2>/dev/null | sort -rn | head -n 3"]

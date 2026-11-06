@@ -1,0 +1,15 @@
+# Tolerating a timeout: `allow_failure` keeps going and the result is just `{ok: false, error: ...}`.
+#   rocky exec health
+tasks:
+  ping:
+    cmd: [curl, -sS, --fail-with-body, '${BASE}/delay/3']   # httpbin waits 3s before answering
+    timeout: 1s                   # set to 5s to run `ok` instead of `failed`
+    allow_failure: true
+
+  failed:
+    when: { this: tasks.ping.ok, eq: false }   # false after a non-zero exit or a timeout
+    cmd: [echo, 'ping failed: ${tasks.ping.error}']
+
+  ok:
+    when: { this: tasks.ping.ok, eq: true }
+    cmd: [echo, 'ping reached ${tasks.ping.stdout.url}']

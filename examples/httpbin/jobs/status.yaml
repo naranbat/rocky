@@ -1,7 +1,7 @@
-# A job in its own file, used by imports.yaml.
-#   rocky exec examples/imports.yaml health
+# A status check on a schedule.
+#   rocky exec status
 schedule:
-  every: 5m                          # `rocky run examples/imports.yaml` runs it every 5 minutes
+  every: 5m                          # `rocky run` runs it every 5 minutes
 
 tasks:
   status:

@@ -18,7 +18,7 @@ use crate::scheduler;
 use crate::theme;
 
 /// The project opened by Open example, from this source tree.
-const EXAMPLE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples/httpbin.yaml");
+const EXAMPLE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples/httpbin");
 
 /// What the start screen asked for.
 pub enum Pick {
@@ -133,7 +133,7 @@ impl Start {
                 let cwd = std::env::current_dir().unwrap_or_default();
                 self.mode = Mode::Open(Input::new(&format!("{}/", tilde(&cwd))));
             }
-            KeyCode::Char('e') if Path::new(EXAMPLE).is_file() => {
+            KeyCode::Char('e') if Path::new(EXAMPLE).is_dir() => {
                 return Some(Pick::Open(PathBuf::from(EXAMPLE)));
             }
             KeyCode::Char('r') => return Some(Pick::Refresh),
@@ -178,7 +178,7 @@ impl Start {
                 let area = Rect::new(main.x + (main.width - width) / 2, main.y + 2, width, 3);
                 frame.render_widget(Clear, area);
                 let block = Block::bordered()
-                    .title(Span::styled(" Open a project file ", theme::bold()))
+                    .title(Span::styled(" Open a project folder ", theme::bold()))
                     .title_bottom(Line::styled(" enter open · esc cancel ", theme::dim()))
                     .border_style(theme::accent());
                 let inner = block.inner(area);
@@ -224,7 +224,7 @@ impl Start {
         if recent.entries.is_empty() {
             frame.render_widget(
                 Paragraph::new(Line::styled(
-                    "No recent projects yet: create one (n) or open a project file (o).",
+                    "No recent projects yet: create one (n) or open a project folder (o).",
                     theme::dim(),
                 )),
                 rows,
@@ -287,10 +287,10 @@ fn sidebar(rocky: Option<&Path>) -> Vec<Line<'static>> {
     lines.extend(key(
         "o",
         "Open project…",
-        "Type the path of a project .yaml",
+        "Type the path of a project folder",
     ));
-    if Path::new(EXAMPLE).is_file() {
-        lines.extend(key("e", "Open example", "examples/httpbin.yaml"));
+    if Path::new(EXAMPLE).is_dir() {
+        lines.extend(key("e", "Open example", "examples/httpbin"));
     }
     lines.extend(key(
         "↵",
@@ -358,14 +358,10 @@ fn row(entry: &Entry, now: &Zoned, selected: bool) -> Vec<Line<'static>> {
     ]
 }
 
-/// A project's name: its folder for `project.yaml`, else the file's name without `.yaml`.
+/// A project's name: its folder's.
 fn name(path: &Path) -> String {
-    let part = if path.file_name().is_some_and(|file| file == "project.yaml") {
-        path.parent().and_then(Path::file_name)
-    } else {
-        path.file_stem()
-    };
-    part.map(|part| part.to_string_lossy().into_owned())
+    path.file_name()
+        .map(|part| part.to_string_lossy().into_owned())
         .unwrap_or_else(|| path.display().to_string())
 }
 
@@ -404,12 +400,18 @@ mod tests {
     #[test]
     fn draws_the_list_and_the_form() {
         let dir = tempfile::tempdir().unwrap();
-        let valid = dir.path().join("valid.yaml");
-        let invalid = dir.path().join("invalid.yaml");
-        std::fs::write(&valid, "jobs:\n  a: {tasks: {t: {cmd: [echo]}}}\n").unwrap();
-        std::fs::write(&invalid, "jobs:\n  a: {tasks: {t: {cmd: []}}}\n").unwrap();
+        let valid = dir.path().join("valid");
+        let invalid = dir.path().join("invalid");
+        for (project, cmd) in [(&valid, "[echo]"), (&invalid, "[]")] {
+            std::fs::create_dir_all(project.join("jobs")).unwrap();
+            std::fs::write(
+                project.join("jobs/a.yaml"),
+                format!("tasks: {{t: {{cmd: {cmd}}}}}\n"),
+            )
+            .unwrap();
+        }
         let mut recent = Recent::none();
-        for path in [&valid, &invalid, &dir.path().join("gone.yaml")] {
+        for path in [&valid, &invalid, &dir.path().join("gone")] {
             recent.record(path).unwrap();
         }
         let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
@@ -426,7 +428,7 @@ mod tests {
             assert!(start.handle(KeyEvent::from(key), &recent).is_none());
         }
         let filtered = screen(&mut terminal, &mut start);
-        assert!(filtered.contains("invalid.yaml") && !filtered.contains("gone.yaml"));
+        assert!(filtered.contains("invalid") && !filtered.contains("gone"));
         start.handle(KeyEvent::from(KeyCode::Esc), &recent);
         start.handle(KeyEvent::from(KeyCode::Char('n')), &recent);
         assert!(screen(&mut terminal, &mut start).contains("New project"));
@@ -434,8 +436,7 @@ mod tests {
 
     #[test]
     fn names_and_times() {
-        assert_eq!(name(Path::new("/w/automation/project.yaml")), "automation");
-        assert_eq!(name(Path::new("/src/examples/httpbin.yaml")), "httpbin");
+        assert_eq!(name(Path::new("/w/automation")), "automation");
         let now: Zoned = "2026-11-06T15:00:00[UTC]".parse().unwrap();
         let at = |text: &str| ago(text.parse::<Timestamp>().unwrap(), &now);
         assert_eq!(at("2026-11-06T14:59:30Z"), "just now");

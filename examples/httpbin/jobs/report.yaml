@@ -1,5 +1,5 @@
-# A job in its own file, used by imports.yaml. Paths are relative to this file.
-#   rocky exec examples/imports.yaml report
+# A report built from a task file and two commands. Paths are relative to this file.
+#   rocky exec report
 tasks:
   login: ../tasks/login.yaml         # a task from its own file
 

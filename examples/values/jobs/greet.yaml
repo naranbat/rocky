@@ -1,0 +1,10 @@
+# A job's own values win over rocky.yaml's.
+#   rocky exec greet
+values:
+  GREETING: hi            # wins over the project's GREETING in this job
+tasks:
+  say:
+    cmd: [echo, '${GREETING} from ${SITE.name}, ${SITE.retries} retries']
+  site:
+    cmd: [cat]
+    stdin: ${SITE}        # exactly ${NAME}: the whole object, as JSON

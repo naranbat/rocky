@@ -1,20 +1,14 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/naranbat/rocky/main/schema/rocky.schema.json",
-  "title": "Rocky project",
-  "description": "A Rocky project containing named jobs and tasks.",
-  "type": "object",
+  "title": "Rocky project settings",
+  "description": "A Rocky project's optional rocky.yaml: settings shared by every job in jobs/. Job files use job.schema.json.",
+  "type": ["object", "null"],
   "additionalProperties": false,
-  "required": ["jobs"],
   "properties": {
     "values": { "$ref": "#/$defs/variables" },
     "env_file": { "type": "string" },
-    "defaults": { "$ref": "#/$defs/defaults" },
-    "jobs": {
-      "type": "object",
-      "minProperties": 1,
-      "additionalProperties": { "$ref": "#/$defs/jobSource" }
-    }
+    "defaults": { "$ref": "#/$defs/defaults" }
   },
   "$defs": {
     "duration": {
@@ -48,13 +42,6 @@
         "retry": { "$ref": "#/$defs/retry" }
       }
     },
-    "jobSource": {
-      "oneOf": [
-        { "type": "string", "description": "Path to a job file." },
-        { "$ref": "#/$defs/job" },
-        { "$ref": "#/$defs/jobFile" }
-      ]
-    },
     "job": {
       "type": "object",
       "additionalProperties": false,
@@ -64,16 +51,6 @@
         "values": { "$ref": "#/$defs/variables" },
         "defaults": { "$ref": "#/$defs/defaults" },
         "tasks": { "$ref": "#/$defs/nonEmptyTaskMap" }
-      }
-    },
-    "jobFile": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["file"],
-      "properties": {
-        "file": { "type": "string" },
-        "schedule": { "$ref": "#/$defs/schedule" },
-        "values": { "$ref": "#/$defs/variables" }
       }
     },
     "schedule": {

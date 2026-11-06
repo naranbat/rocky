@@ -3,34 +3,33 @@
 A cmd task runs a program and produces `{ok, exit_code, stdout, stderr}`. It runs the program **directly**, not through a shell. Its `stdin`, if any, is the command's standard input.
 
 ```yaml
-jobs:
+# jobs/titles.yaml
+tasks:
+  show:
+    cmd: [curl, -sS, --fail-with-body, https://httpbin.org/json]   # JSON output is parsed
+
+  # Process it with jq. A JSON value as stdin is written as compact JSON,
+  # and jq's JSON output is parsed, so `tasks.titles.stdout` is an array.
   titles:
-    tasks:
-      show:
-        cmd: [curl, -sS, --fail-with-body, https://httpbin.org/json]   # JSON output is parsed
+    cmd: [jq, -c, '[.slideshow.slides[].title]']
+    stdin: ${tasks.show.stdout}
 
-      # Process it with jq. A JSON value as stdin is written as compact JSON,
-      # and jq's JSON output is parsed, so `tasks.titles.stdout` is an array.
-      titles:
-        cmd: [jq, -c, '[.slideshow.slides[].title]']
-        stdin: ${tasks.show.stdout}
+  # Need a pipe? List the programs after `cmd` under `pipe`; no shell is involved.
+  slug:
+    cmd: [printf, "%s", "${tasks.show.stdout.slideshow.title}"]
+    pipe:
+      - [tr, " ", -]
 
-      # Need a pipe? List the programs after `cmd` under `pipe`; no shell is involved.
-      slug:
-        cmd: [printf, "%s", "${tasks.show.stdout.slideshow.title}"]
-        pipe:
-          - [tr, " ", -]
-
-      # A non-zero exit doesn't have to stop the job.
-      config:
-        cmd: [test, -f, config.toml]
-        allow_failure: true
-      note:
-        when: { this: tasks.config.exit_code, ne: 0 }
-        cmd: [echo, "config.toml not found, using defaults"]
+  # A non-zero exit doesn't have to stop the job.
+  config:
+    cmd: [test, -f, config.toml]
+    allow_failure: true
+  note:
+    when: { this: tasks.config.exit_code, ne: 0 }
+    cmd: [echo, "config.toml not found, using defaults"]
 ```
 
-Example: the `mixed` job in [`examples/httpbin.yaml`](../examples/httpbin.yaml).
+Example: [`examples/httpbin/jobs/mixed.yaml`](../examples/httpbin/jobs/mixed.yaml).
 
 ## Fields
 
@@ -108,7 +107,7 @@ build:
 | `capture_stdout` | `true` | `false` sends stdout to `/dev/null` instead of keeping it in memory, and the result's `stdout` is `null`. Use it for commands with large output you don't need. `stderr` and `exit_code` are still kept. |
 | `stdout_file` | none | Write stdout to this file instead of keeping it; the result's `stdout` is `null`. See [Reading and writing files](#reading-and-writing-files). Can't be combined with `capture_stdout`. |
 
-Example of `env`: [`examples/cmd-env.yaml`](../examples/cmd-env.yaml).
+Example of `env`: [`examples/env/jobs/greet.yaml`](../examples/env/jobs/greet.yaml).
 
 `pipe`, `cwd`, `stdin`, `env`, `capture_stdout`, `stdout_file` and [`retry`](#retry) only work on cmd tasks; on any other task they are an error.
 
@@ -168,7 +167,7 @@ load:
 
 ## Environment
 
-- Without `cwd`, commands run in **your current directory**, not the project file's directory.
+- Without `cwd`, commands run in **your current directory**, which is the project directory when you run `rocky` from there, not the job file's directory.
 - They inherit the environment of `rocky`. Env file values are **not** exported to them; list the ones a command needs under [`env`](#options), or pass them as arguments or `stdin`.
 - Without `timeout`, a command that never exits blocks the job until `rocky` is stopped (Ctrl-C, SIGTERM, SIGHUP or SIGQUIT), which kills it and everything it started.
 - A program that can't be found or started fails the task with ``failed to start command `x` ``, even with `allow_failure`.

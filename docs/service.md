@@ -6,7 +6,7 @@ Install `rocky` first, and use its absolute path below, since service managers d
 
 ```sh
 cargo install --path crates/rocky     # installs ~/.cargo/bin/rocky
-rocky validate /path/to/project.yaml
+cd /path/to/project && rocky validate
 ```
 
 ## Linux (systemd)
@@ -19,7 +19,7 @@ Description=rocky scheduler
 
 [Service]
 WorkingDirectory=/home/me/automation
-ExecStart=/home/me/.cargo/bin/rocky run project.yaml --socket %t/rocky.sock
+ExecStart=/home/me/.cargo/bin/rocky run --socket %t/rocky.sock
 Environment=PATH=/home/me/.cargo/bin:/usr/local/bin:/usr/bin:/bin
 Restart=on-failure
 SuccessExitStatus=143
@@ -28,7 +28,7 @@ SuccessExitStatus=143
 WantedBy=default.target
 ```
 
-- `WorkingDirectory` is where `.rocky/logs/` is written and where a relative project path is resolved.
+- `WorkingDirectory` is the project directory: `rocky run` loads `jobs/` and `rocky.yaml` from it, and writes `.rocky/logs/` there.
 - `PATH` is where the commands your tasks run (`curl`, `jq`, ...) are looked up.
 - `%t` is `$XDG_RUNTIME_DIR`, e.g. `/run/user/1000`.
 - `SuccessExitStatus=143`: `rocky` exits with 143 (128 + SIGTERM) when stopped, which systemd would otherwise mark as `failed`.
@@ -64,7 +64,6 @@ Create `~/Library/LaunchAgents/com.example.rocky.plist`:
   <array>
     <string>/Users/me/.cargo/bin/rocky</string>
     <string>run</string>
-    <string>project.yaml</string>
     <string>--socket</string>
     <string>/tmp/rocky.sock</string>
   </array>

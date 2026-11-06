@@ -68,15 +68,15 @@ impl Validation {
     }
 }
 
-/// Core's verdict on `text` as the contents of the project file at `path`.
+/// Core's verdict on `text` as the tree of the project in directory `path`.
 pub fn check(path: &Path, text: &str) -> Result<(), Problem> {
-    rocky_core::project::load_str(path, text)
+    crate::parts::load(path, text)
         .map(|_| ())
         .map_err(|error| locate(&error))
 }
 
 /// Finds the job and task an error is about: from `job` / `task` wrappers, from the leading
-/// `` `name` `` of an invalid-task message, or from the `jobs.J.tasks.T` path of a YAML error.
+/// `` `name` `` of an invalid-task message, or from the `tasks.T` path of a job file's YAML error.
 fn locate(error: &Error) -> Problem {
     let mut problem = Problem {
         job: None,
@@ -99,9 +99,7 @@ fn locate(error: &Error) -> Problem {
                 break;
             }
             Error::Yaml { source, .. } => {
-                let (job, task) = yaml_path(&source.to_string());
-                problem.job = job;
-                problem.task = task;
+                problem.task = yaml_task(&source.to_string());
                 break;
             }
             _ => break,
@@ -116,20 +114,15 @@ fn quoted_name(message: &str) -> Option<String> {
     rest.find('`').map(|end| rest[..end].to_string())
 }
 
-/// The job and innermost task named by a YAML error's leading `jobs.J.tasks.T.do.U: …` path.
-fn yaml_path(message: &str) -> (Option<String>, Option<String>) {
+/// The innermost task named by a YAML error's leading `tasks.T.do.U: …` path.
+fn yaml_task(message: &str) -> Option<String> {
     let path = message.split(": ").next().unwrap_or_default();
     let parts: Vec<&str> = path.split('.').collect();
-    if parts.first() != Some(&"jobs") {
-        return (None, None);
-    }
-    let job = parts.get(1).map(|job| job.to_string());
-    let task = parts
+    parts
         .windows(2)
         .rev()
         .find(|pair| pair[0] == "tasks" || pair[0] == "do")
-        .map(|pair| pair[1].to_string());
-    (job, task)
+        .map(|pair| pair[1].to_string())
 }
 
 #[cfg(test)]
@@ -137,7 +130,7 @@ mod tests {
     use super::*;
 
     fn problem(yaml: &str) -> Problem {
-        check(Path::new("project.yaml"), yaml).unwrap_err()
+        check(Path::new("project"), yaml).unwrap_err()
     }
 
     #[test]
@@ -175,7 +168,7 @@ mod tests {
 
     #[test]
     fn first_check_is_immediate_then_debounced() {
-        let path = Path::new("project.yaml");
+        let path = Path::new("project");
         let mut validation = Validation::default();
         validation.update(path, "jobs: {}\n", false);
         assert!(validation.problem().is_some());

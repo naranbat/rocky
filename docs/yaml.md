@@ -1,21 +1,19 @@
 # Writing YAML
 
-Rocky project, job and task files use YAML. `rocky validate <PROJECT>` checks both YAML syntax and Rocky's fields without running commands: unknown fields, wrong YAML types, invalid conditions and schedules, bad task combinations, missing imported files and duplicate names. See [Validation](projects.md#validation).
+Rocky's `rocky.yaml`, job and task files use YAML. `rocky validate` checks both YAML syntax and Rocky's fields without running commands: unknown fields, wrong YAML types, invalid conditions and schedules, bad task combinations, missing imported files and duplicate names. See [Validation](projects.md#validation).
 
 ## Editor schema
 
-The repository includes [`schema/rocky.schema.json`](../schema/rocky.schema.json), which provides completion and early validation in editors that support JSON Schema for YAML. For the YAML Language Server, put this comment at the top of a project file and adjust the relative path as needed:
+The repository includes [`schema/job.schema.json`](../schema/job.schema.json) for job files and [`schema/rocky.schema.json`](../schema/rocky.schema.json) for `rocky.yaml`, which provide completion and early validation in editors that support JSON Schema for YAML. For the YAML Language Server, put this comment at the top of a job file and adjust the path as needed:
 
 ```yaml
-# yaml-language-server: $schema=./schema/rocky.schema.json
-jobs:
-  example:
-    tasks:
-      hello:
-        cmd: [echo, hello]
+# yaml-language-server: $schema=../schema/job.schema.json
+tasks:
+  hello:
+    cmd: [echo, hello]
 ```
 
-The comment is ignored by Rocky. Job and task files are validated when their project loads; the published schema describes complete project files.
+The comment is ignored by Rocky. Task files are validated when their project loads; the schemas don't cover them on their own.
 
 ## Quoting
 

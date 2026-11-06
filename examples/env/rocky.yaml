@@ -1,0 +1,4 @@
+# Values from an env file (path relative to this file), shared by every job. Run from this directory:
+#   rocky exec user
+#   rocky exec greet
+env_file: example.env

@@ -1,0 +1,7 @@
+# Fixed values: these are seen by every job, a job's own only by its tasks. Run from this directory:
+#   rocky exec greet
+values:
+  GREETING: hello
+  SITE:
+    name: rocky
+    retries: 3

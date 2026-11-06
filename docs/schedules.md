@@ -3,12 +3,14 @@
 A job's optional `schedule` tells [`rocky run`](run.md) when to run it. It has exactly one of `every`, `hourly`, `daily`, `weekly` or `at`, or only [`run_on_start: true`](#run_on_start). `rocky exec` checks it but doesn't run it.
 
 ```yaml
-jobs:
-  poll:
-    schedule: {every: 5m}
-    tasks: {date: {cmd: [date]}}
-  report: jobs/report.yaml                   # its `schedule` goes in the job file
-  manual: {tasks: {date: {cmd: [date]}}}     # not scheduled: `exec` only
+# jobs/poll.yaml
+schedule: {every: 5m}
+tasks: {date: {cmd: [date]}}
+```
+
+```yaml
+# jobs/manual.yaml: not scheduled, `exec` only
+tasks: {date: {cmd: [date]}}
 ```
 
 A job has at most one schedule.
@@ -61,7 +63,7 @@ An `at` time that is already in the past when `run` starts is not an error: with
 
 ## Errors
 
-Schedules are checked whenever the project loads, by `exec` and `validate` as well as `run`. The message is reported inside a YAML error with the line, e.g. ``invalid YAML in project.yaml`` caused by ``jobs.poll: invalid schedule: `5 min` is not a duration like `30s`, `5m` or `2h` at line 3 column 5``. A schedule in a job file is reported under ``job `NAME` `` as ``invalid YAML in <job file>``, without a line.
+Schedules are checked whenever the project loads, by `exec` and `validate` as well as `run`. The message is reported under ``job `NAME` `` inside a YAML error, e.g. ``invalid YAML in ./jobs/poll.yaml`` caused by ``invalid schedule: `5 min` is not a duration like `30s`, `5m` or `2h` ``.
 
 | Problem | Message |
 |---|---|

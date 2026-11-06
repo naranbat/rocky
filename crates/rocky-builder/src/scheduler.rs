@@ -58,13 +58,10 @@ pub fn find_rocky() -> Option<PathBuf> {
 }
 
 impl Scheduler {
-    /// Starts `rocky run <project> --socket .rocky/rocky.sock` with `rocky`, in the
-    /// project's folder.
-    pub fn start(rocky: &Path, project: &Path) -> anyhow::Result<Scheduler> {
-        let dir = project.parent().unwrap_or(Path::new("")).to_path_buf();
-        let loaded = std::fs::read_to_string(project)
-            .with_context(|| format!("cannot read {}", project.display()))?;
-        let schedules = rocky_core::project::load_str(project, &loaded)
+    /// Starts `rocky run --socket .rocky/rocky.sock` with `rocky`, in the project
+    /// directory `dir`.
+    pub fn start(rocky: &Path, dir: &Path) -> anyhow::Result<Scheduler> {
+        let schedules = rocky_core::project::load(dir)
             .map_err(|error| anyhow::anyhow!(error.chain()))?
             .jobs
             .into_iter()
@@ -73,17 +70,11 @@ impl Scheduler {
         std::fs::create_dir_all(dir.join(".rocky"))
             .with_context(|| format!("cannot create {}", dir.join(".rocky").display()))?;
         let socket = dir.join(".rocky/rocky.sock");
-        let file = project.file_name().map(PathBuf::from).unwrap_or_default();
         let mut child = Command::new(rocky)
             .arg("run")
-            .arg(&file)
             .arg("--socket")
             .arg(".rocky/rocky.sock")
-            .current_dir(if dir.as_os_str().is_empty() {
-                Path::new(".")
-            } else {
-                &dir
-            })
+            .current_dir(dir)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -304,14 +295,14 @@ exec sleep 30
         let rocky = dir.path().join("rocky");
         std::fs::write(&rocky, FAKE).unwrap();
         std::fs::set_permissions(&rocky, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let project = dir.path().join("project.yaml");
+        std::fs::create_dir(dir.path().join("jobs")).unwrap();
         std::fs::write(
-            &project,
-            "jobs:\n  main:\n    schedule: {every: 1h}\n    tasks:\n      a: {cmd: [echo]}\n",
+            dir.path().join("jobs/main.yaml"),
+            "schedule: {every: 1h}\ntasks:\n  a: {cmd: [echo]}\n",
         )
         .unwrap();
 
-        let mut scheduler = Scheduler::start(&rocky, &project).unwrap();
+        let mut scheduler = Scheduler::start(&rocky, dir.path()).unwrap();
         wait_until(&mut scheduler, |s| {
             s.shown("main").is_some_and(|run| {
                 run.results.end.is_some()

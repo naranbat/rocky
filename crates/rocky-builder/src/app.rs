@@ -226,9 +226,10 @@ impl App {
         let job = self.job().unwrap_or_default().to_string();
         let jobs = doc.job_names();
         let scheduler = self.scheduler.as_ref().map(|(s, _)| s);
+        let jobs_dir = doc.dir().join(rocky_core::project::JOBS_DIR);
         let mut ed = Edit {
             jobs: &jobs,
-            dir: doc.dir(),
+            dir: &jobs_dir,
             previews: &mut self.previews,
             job: &job,
             run: shown(self.run.as_ref(), scheduler, &job),
@@ -1219,6 +1220,11 @@ mod tests {
         app.focus = rows.iter().position(pick).expect("no such row");
     }
 
+    /// Writes the project tree `yaml` into `dir` as its `rocky.yaml` and job files.
+    fn write_project(dir: &Path, yaml: &str) {
+        crate::parts::write(dir, "", yaml).unwrap();
+    }
+
     fn label_is(name: &str) -> impl Fn(&Row) -> bool + '_ {
         move |row| row.label.content.trim() == name
     }
@@ -1268,22 +1274,19 @@ mod tests {
         let mut viewed = 0;
         for entry in std::fs::read_dir(examples).unwrap() {
             let path = entry.unwrap().path();
-            if path
-                .extension()
-                .is_some_and(|extension| extension == "yaml")
-            {
+            if path.join("jobs").is_dir() {
                 view_all(&path);
                 viewed += 1;
             }
         }
-        assert!(viewed > 5);
+        assert!(viewed >= 5);
     }
 
     /// Without a project, the start screen draws, and a path that doesn't exist shows why
     /// it can't be opened.
     #[test]
     fn start_screen_reports_a_bad_path() {
-        let mut app = App::new(Some(PathBuf::from("/no/such/project.yaml")), Recent::none());
+        let mut app = App::new(Some(PathBuf::from("/no/such/project")), Recent::none());
         let screen = draw(&mut app, &mut terminal());
         assert!(app.doc.is_none());
         assert!(matches!(&app.message, Some(Err(error)) if error.contains("no/such")));
@@ -1295,10 +1298,9 @@ mod tests {
     #[test]
     fn draws_old_syntax_with_its_problem() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("project.yaml");
         let yaml = "jobs:\n  j:\n    tasks:\n      route: {if: {this: A, eq: 1}, then: {b: {cmd: [echo]}}}\n";
-        std::fs::write(&path, yaml).unwrap();
-        let mut app = App::new(Some(path), Recent::none());
+        write_project(dir.path(), yaml);
+        let mut app = App::new(Some(dir.path().to_path_buf()), Recent::none());
         let mut terminal = terminal();
         assert!(draw(&mut app, &mut terminal).contains("problem"));
         let problem = app.validation.problem().unwrap();
@@ -1318,7 +1320,6 @@ mod tests {
     #[test]
     fn draws_a_run_to_the_end() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("project.yaml");
         let yaml = "\
 jobs:
   main:
@@ -1335,8 +1336,8 @@ jobs:
     tasks:
       only: {cmd: [echo, done]}
 ";
-        std::fs::write(&path, yaml).unwrap();
-        let mut app = App::new(Some(path), Recent::none());
+        write_project(dir.path(), yaml);
+        let mut app = App::new(Some(dir.path().to_path_buf()), Recent::none());
         let mut terminal = terminal();
         app.select(Selection::Job("main".to_string()));
         draw(&mut app, &mut terminal);
@@ -1384,9 +1385,8 @@ jobs:
             "cmd: [echo, 'hello ${WHO}']\n",
         )
         .unwrap();
-        let path = dir.path().join("project.yaml");
-        std::fs::write(
-            &path,
+        write_project(
+            dir.path(),
             "\
 values: {BASE: 'https://example.com'}
 defaults: {timeout: 30s, env: {A: b}, retry: {attempts: 2, delay: 1s}}
@@ -1403,31 +1403,28 @@ jobs:
         do:
           pause: {cmd: [sleep, '0']}
       alice:
-        file: tasks/greet.yaml
+        file: ../tasks/greet.yaml
         with: {WHO: alice}
         when: [{this: '${tasks.check.ok}', eq: true}, {this: '${tasks.check.stdout}', gt: 1, lt: 300}]
-      bob: tasks/greet.yaml
+      bob: ../tasks/greet.yaml
   once:
     schedule: {at: '2030-01-01T09:00:00'}
     tasks:
       go: {trigger: weekly}
 ",
-        )
-        .unwrap();
-        view_all(&path);
+        );
+        view_all(dir.path());
     }
 
     /// Reorders, removes, opens and edits tasks with keys, then saves.
     #[test]
     fn edits_tasks_with_keys_and_saves() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("project.yaml");
-        std::fs::write(
-            &path,
+        write_project(
+            dir.path(),
             "values: {WHO: bob}\njobs:\n  main:\n    tasks:\n      a: {cmd: [echo, hi]}\n      b: {cmd: [echo]}\n",
-        )
-        .unwrap();
-        let mut app = App::new(Some(path.clone()), Recent::none());
+        );
+        let mut app = App::new(Some(dir.path().to_path_buf()), Recent::none());
         let mut terminal = terminal();
         draw(&mut app, &mut terminal);
         let tasks = |app: &App| {
@@ -1476,7 +1473,7 @@ jobs:
         assert_eq!(tasks(&app), ["greet", "command"]);
 
         ctrl(&mut app, 's');
-        let saved = std::fs::read_to_string(&path).unwrap();
+        let saved = std::fs::read_to_string(dir.path().join("jobs/main.yaml")).unwrap();
         assert!(
             saved.contains("printf") && saved.contains("command"),
             "{saved}"
@@ -1491,9 +1488,8 @@ jobs:
     #[test]
     fn manages_jobs_from_the_sidebar() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("project.yaml");
-        std::fs::write(&path, "jobs:\n  a: {tasks: {t: {cmd: [echo]}}}\n").unwrap();
-        let mut app = App::new(Some(path), Recent::none());
+        write_project(dir.path(), "jobs:\n  a: {tasks: {t: {cmd: [echo]}}}\n");
+        let mut app = App::new(Some(dir.path().to_path_buf()), Recent::none());
         press(&mut app, KeyCode::Char('a'));
         ctrl(&mut app, 'u');
         type_text(&mut app, "nightly");

@@ -9,19 +9,22 @@ export REGION="eu-west-1"   # `export` and quotes are allowed
 ```
 
 ```yaml
-env_file: example.env        # relative to the project file
-jobs:
-  user:
-    tasks:
-      fetch:
-        cmd: [curl, -sS, --fail-with-body, -H, 'Authorization: Bearer ${API_TOKEN}', https://httpbin.org/anything]
-      region:
-        cmd: [sh, -c, 'echo "deploying to $REGION"']
-        env:                 # a command sees env file values only when listed here
-          REGION: ${REGION}
+# rocky.yaml
+env_file: example.env        # relative to the project directory
 ```
 
-Examples: [`examples/env-file.yaml`](../examples/env-file.yaml) and [`examples/cmd-env.yaml`](../examples/cmd-env.yaml) with [`examples/example.env`](../examples/example.env).
+```yaml
+# jobs/user.yaml
+tasks:
+  fetch:
+    cmd: [curl, -sS, --fail-with-body, -H, 'Authorization: Bearer ${API_TOKEN}', https://httpbin.org/anything]
+  region:
+    cmd: [sh, -c, 'echo "deploying to $REGION"']
+    env:                     # a command sees env file values only when listed here
+      REGION: ${REGION}
+```
+
+Example: [`examples/env/`](../examples/env/), with [`example.env`](../examples/env/example.env).
 
 A value you'd hard-code goes in [`values`](#values), and a value that changes between machines or is secret goes in the env file.
 
@@ -30,26 +33,29 @@ A value you'd hard-code goes in [`values`](#values), and a value that changes be
 Fixed values written in the YAML, read as `${NAME}`.
 
 ```yaml
+# rocky.yaml
 values:                      # the project's: seen by every task of every job
   GREETING: hello
   SITE:
     name: rocky
     retries: 3
-jobs:
-  greet:
-    values:                  # the job's: seen by this job's tasks only
-      GREETING: hi           # wins over the project's GREETING in this job
-    tasks:
-      say:
-        cmd: [echo, '${GREETING} from ${SITE.name}, ${SITE.retries} retries']
 ```
 
-Example: [`examples/values.yaml`](../examples/values.yaml).
+```yaml
+# jobs/greet.yaml
+values:                      # the job's: seen by this job's tasks only
+  GREETING: hi               # wins over the project's GREETING in this job
+tasks:
+  say:
+    cmd: [echo, '${GREETING} from ${SITE.name}, ${SITE.retries} retries']
+```
 
-- `values` can go at the top level of a project and in a job, inline or in a job file. Tasks nested in loops, and task files, see their job's values. A [task file entry](files.md#reusing-a-task-file) can instead set runtime inputs under `with` for that file while it runs.
+Example: [`examples/values/`](../examples/values/).
+
+- `values` can go in `rocky.yaml` and in a job file. Tasks nested in loops, and task files, see their job's values. A [task file entry](files.md#reusing-a-task-file) can instead set runtime inputs under `with` for that file while it runs.
 - A value can be a string, number, boolean, list or object, and keeps its JSON type (see [typed values](#typed-values)). Use a dot path to read inside one: `${SITE.name}`.
 - Project and job values are used as written: `${...}` inside a value is not expanded. A [task file entry's](files.md#reusing-a-task-file) `with` inputs are expanded when that task starts.
-- A job value with the same name as a project value replaces it for that job. A job entry that [reuses a job file](files.md#reusing-a-job-file) can set `values` too; they replace the file's.
+- A job value with the same name as a project value replaces it for that job.
 
 ## Env file
 
@@ -57,7 +63,7 @@ Use an `env_file` to keep secrets such as API tokens out of the YAML that you co
 
 ### Where it can go
 
-Only at the top level of a project, with a path relative to the project file. It applies to every task of every job. Job files and task files can't have one: `env_file` there is an unknown field.
+Only in `rocky.yaml`, with a path relative to the project directory. It applies to every task of every job. Job files and task files can't have one: `env_file` there is an unknown field.
 
 ### Format
 

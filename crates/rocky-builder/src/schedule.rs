@@ -270,7 +270,7 @@ mod tests {
                     "jobs:\n  a:\n    schedule: {}\n    tasks:\n      t: {{cmd: [echo]}}\n",
                     doc::flow(&schedule)
                 );
-                crate::validate::check(std::path::Path::new("project.yaml"), &text)
+                crate::validate::check(std::path::Path::new("project"), &text)
                     .unwrap_or_else(|error| panic!("{kind}: {error:?}\n{text}"));
             }
         }

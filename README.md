@@ -1,6 +1,6 @@
 # Rocky
 
-A CLI for automating repeatable work. A project is a YAML file of named jobs; each job runs its tasks (commands) in order, and later tasks can read earlier tasks' output. Run a job once with `rocky exec`, or keep `rocky run` going to run jobs on a schedule or on request from `rocky trigger`.
+A CLI for automating repeatable work. A project is a directory with one YAML file per job in `jobs/` (and an optional `rocky.yaml` of shared settings); each job runs its tasks (commands) in order, and later tasks can read earlier tasks' output. Run a job once with `rocky exec`, or keep `rocky run` going to run jobs on a schedule or on request from `rocky trigger`.
 
 ## Install
 
@@ -14,27 +14,29 @@ cargo build --release      # binary at target/release/rocky
 
 ## Quick start
 
-Create a project from the template, then add a second task that reads the first one's output:
+Create a project from the template, then add a second task to `jobs/example.yaml` that reads the first one's output:
 
 ```sh
-rocky new project project.yaml
+mkdir automation && cd automation
+rocky new project                  # writes jobs/example.yaml
 ```
 
 ```yaml
-jobs:
-  example:
-    tasks:
-      hello:
-        cmd: [echo, hello]           # program + arguments, no shell involved
-      shout:
-        cmd: [tr, a-z, A-Z]
-        stdin: ${tasks.hello.stdout} # output of the earlier task
+# jobs/example.yaml: job `example`
+tasks:
+  hello:
+    cmd: [echo, hello]             # program + arguments, no shell involved
+  shout:
+    cmd: [tr, a-z, A-Z]
+    stdin: ${tasks.hello.stdout}   # output of the earlier task
 ```
 
 ```sh
-rocky validate project.yaml        # check it without running anything
-rocky exec project.yaml example    # run the job once
+rocky validate                     # check it without running anything
+rocky exec example                 # run the job once
 ```
+
+Every `rocky` command works on the project in the current directory.
 
 `exec` prints the result of the last task as JSON:
 
@@ -47,15 +49,15 @@ rocky exec project.yaml example    # run the job once
 }
 ```
 
-Larger projects are in [`examples/`](examples/).
+Larger projects are in [`examples/`](examples/), one directory each.
 
 ## Running jobs
 
 ```sh
-rocky exec project.yaml example --verbose        # print each command before it runs
-rocky run project.yaml                           # run scheduled jobs until stopped
-rocky run project.yaml --socket /tmp/rocky.sock  # ...and accept requests on a socket
-rocky trigger /tmp/rocky.sock example            # ask a running `run` to run a job
+rocky exec example --verbose         # print each command before it runs
+rocky run                            # run scheduled jobs until stopped
+rocky run --socket /tmp/rocky.sock   # ...and accept requests on a socket
+rocky trigger /tmp/rocky.sock example   # ask a running `run` to run a job
 ```
 
 See [Command line](docs/cli.md) for every flag, [Schedules](docs/schedules.md) for when jobs run, and [Service](docs/service.md) to keep `rocky run` going in the background.
@@ -63,10 +65,10 @@ See [Command line](docs/cli.md) for every flag, [Schedules](docs/schedules.md) f
 ## Templates
 
 ```sh
-rocky new project project.yaml             # a project with one job
-rocky new job jobs/deploy.yaml             # a job in its own file
-rocky new task tasks/login.yaml            # a task in its own file
-rocky new project full.yaml --level full   # every field, with comments
+rocky new project                       # a project with one job, here
+rocky new job deploy                    # jobs/deploy.yaml
+rocky new task tasks/login.yaml         # a task in its own file
+rocky new project full --level full     # every field, with comments, in full/
 ```
 
 ## Agent skill
@@ -85,7 +87,7 @@ OpenCode also reads `~/.claude/skills/`, so the first link covers both.
 All pages are in [`docs/`](docs/README.md).
 
 - **Getting started:** [Projects](docs/projects.md), [Writing YAML](docs/yaml.md)
-- **Writing projects:** [Tasks](docs/tasks.md), [Cmd tasks](docs/cmd-tasks.md), [Variables](docs/variables.md), [Conditions](docs/conditions.md), [Loops](docs/loops.md), [Job and task files](docs/files.md), [Triggers](docs/triggers.md)
+- **Writing projects:** [Tasks](docs/tasks.md), [Cmd tasks](docs/cmd-tasks.md), [Variables](docs/variables.md), [Conditions](docs/conditions.md), [Loops](docs/loops.md), [Task files](docs/files.md), [Triggers](docs/triggers.md)
 - **Running:** [Command line](docs/cli.md), [Run](docs/run.md), [Schedules](docs/schedules.md), [Service](docs/service.md), [Debugging](docs/debugging.md)
 
 ## Limitations

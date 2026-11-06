@@ -121,16 +121,16 @@ impl Recent {
     }
 }
 
-/// What the project at `path` holds now.
+/// What the project in directory `path` holds now.
 pub fn summarize(path: &Path) -> Summary {
-    let Ok(text) = std::fs::read_to_string(path) else {
+    if !path.is_dir() {
         return Summary {
             jobs: 0,
             scheduled: 0,
             status: Status::Missing,
         };
-    };
-    let (jobs, scheduled, status) = match rocky_core::project::load_str(path, &text) {
+    }
+    let (jobs, scheduled, status) = match rocky_core::project::load(path) {
         Ok(project) => {
             let scheduled = project
                 .jobs
@@ -140,14 +140,11 @@ pub fn summarize(path: &Path) -> Summary {
             (project.jobs.len(), scheduled, Status::Valid)
         }
         Err(error) => {
-            let (jobs, scheduled) = count_jobs(&text);
+            let (jobs, scheduled) = count_jobs(path);
             (jobs, scheduled, Status::Invalid(error.chain()))
         }
     };
-    let socket = path
-        .parent()
-        .unwrap_or(Path::new(""))
-        .join(".rocky/rocky.sock");
+    let socket = path.join(".rocky/rocky.sock");
     let status = if UnixStream::connect(socket).is_ok() {
         Status::Running
     } else {
@@ -160,9 +157,9 @@ pub fn summarize(path: &Path) -> Summary {
     }
 }
 
-/// The jobs of a project that doesn't load, and those with a `schedule` written inline.
-fn count_jobs(text: &str) -> (usize, usize) {
-    let root: Value = serde_yaml::from_str(text).unwrap_or_default();
+/// The jobs of a project that doesn't load, and those with a `schedule`.
+fn count_jobs(dir: &Path) -> (usize, usize) {
+    let root = crate::parts::read(dir).unwrap_or_default();
     let Some(jobs) = root.get("jobs").and_then(Value::as_mapping) else {
         return (0, 0);
     };
@@ -181,14 +178,15 @@ mod tests {
     fn records_newest_first_and_survives_a_reload() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("config/recent");
-        let a = dir.path().join("a/project.yaml");
-        let b = dir.path().join("b/project.yaml");
-        std::fs::create_dir_all(a.parent().unwrap()).unwrap();
+        let a = dir.path().join("a");
+        let b = dir.path().join("b");
+        std::fs::create_dir_all(a.join("jobs")).unwrap();
         std::fs::write(
-            &a,
-            "jobs:\n  x: {schedule: {every: 1m}, tasks: {t: {cmd: [echo]}}}\n  y: {tasks: {t: {cmd: [echo]}}}\n",
+            a.join("jobs/x.yaml"),
+            "schedule: {every: 1m}\ntasks: {t: {cmd: [echo]}}\n",
         )
         .unwrap();
+        std::fs::write(a.join("jobs/y.yaml"), "tasks: {t: {cmd: [echo]}}\n").unwrap();
 
         let mut recent = Recent::at(Some(file.clone()));
         recent.record(&a).unwrap();
@@ -207,13 +205,13 @@ mod tests {
     #[test]
     fn an_invalid_project_still_counts_its_jobs() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("project.yaml");
+        std::fs::create_dir(dir.path().join("jobs")).unwrap();
         std::fs::write(
-            &path,
-            "jobs:\n  x: {schedule: {every: 1m}, tasks: {t: {cmd: []}}}\n",
+            dir.path().join("jobs/x.yaml"),
+            "schedule: {every: 1m}\ntasks: {t: {cmd: []}}\n",
         )
         .unwrap();
-        let summary = summarize(&path);
+        let summary = summarize(dir.path());
         assert_eq!((summary.jobs, summary.scheduled), (1, 1));
         assert!(matches!(summary.status, Status::Invalid(error) if error.contains("cmd")));
     }

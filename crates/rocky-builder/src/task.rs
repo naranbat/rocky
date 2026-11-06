@@ -120,7 +120,7 @@ impl Kind {
                 "trigger",
                 Value::from(jobs.first().cloned().unwrap_or_default()),
             )]),
-            Kind::File => doc::map_of([("file", Value::from("tasks/task.yaml"))]),
+            Kind::File => doc::map_of([("file", Value::from("../tasks/task.yaml"))]),
         }
     }
 }
@@ -379,6 +379,6 @@ mod tests {
             doc::map_of([("main", doc::map_of([("tasks", Value::Mapping(map))]))]),
         )]);
         let text = serde_yaml::to_string(&project).unwrap();
-        crate::validate::check(std::path::Path::new("project.yaml"), &text).unwrap();
+        crate::validate::check(std::path::Path::new("project"), &text).unwrap();
     }
 }

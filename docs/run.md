@@ -1,34 +1,33 @@
 # Run
 
-`rocky run <project>` runs every job of the [project](projects.md) that has a [`schedule`](schedules.md), until stopped with Ctrl-C, SIGTERM, SIGHUP or SIGQUIT, or until only finished `at` and `run_on_start`-only schedules are left. Jobs without a `schedule` are skipped; run them with `rocky exec`, a [`trigger` task](triggers.md#trigger-tasks), or over a [socket](triggers.md#triggering-jobs-over-a-socket).
+`rocky run` runs every job of the [project](projects.md) in the current directory that has a [`schedule`](schedules.md), until stopped with Ctrl-C, SIGTERM, SIGHUP or SIGQUIT, or until only finished `at` and `run_on_start`-only schedules are left. Jobs without a `schedule` are skipped; run them with `rocky exec`, a [`trigger` task](triggers.md#trigger-tasks), or over a [socket](triggers.md#triggering-jobs-over-a-socket).
 
 To keep `run` going in the background, see [Service](service.md).
 
 ```yaml
-jobs:
-  poll:
-    schedule:
-      every: 5m
-      delay: 10s                     # optional: wait before the first run
-    tasks:
-      fetch:
-        cmd: [curl, -sS, --fail-with-body, https://httpbin.org/get]
+# jobs/poll.yaml
+schedule:
+  every: 5m
+  delay: 10s                     # optional: wait before the first run
+tasks:
+  fetch:
+    cmd: [curl, -sS, --fail-with-body, https://httpbin.org/get]
+```
 
-  morning-report:
-    schedule:
-      daily: "09:30"
-    tasks:
-      greet:
-        cmd: [echo, "${USER}"]
-
-  migrate: jobs/migrate.yaml     # a job file; its `schedule` (e.g. `at: "2027-10-10T09:30:00"`) is in the file
+```yaml
+# jobs/morning-report.yaml
+schedule:
+  daily: "09:30"
+tasks:
+  greet:
+    cmd: [echo, "${USER}"]
 ```
 
 ```sh
-rocky run examples/httpbin.yaml
+cd examples/httpbin && rocky run
 ```
 
-Example: [`examples/httpbin.yaml`](../examples/httpbin.yaml) schedules `login`, `mixed` and `conditional`; `health`, `loop`, `poll` and `files` are not scheduled.
+Example: [`examples/httpbin/`](../examples/httpbin/) schedules `login`, `mixed`, `conditional` and `status`; `health`, `loop`, `poll`, `files` and `report` are not scheduled.
 
 ## Startup checks
 

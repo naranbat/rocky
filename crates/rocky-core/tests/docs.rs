@@ -49,4 +49,10 @@ fn project_schema_is_valid_json() {
         "https://json-schema.org/draft/2020-12/schema"
     );
     assert!(schema["$defs"]["taskSource"].is_object());
+    assert!(schema["$defs"]["job"].is_object());
+
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schema/job.schema.json");
+    let job: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(job["$ref"], "rocky.schema.json#/$defs/job");
 }

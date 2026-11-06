@@ -9,7 +9,7 @@ use crate::validate::Problem;
 pub struct Edit<'a> {
     /// The project's job names, for trigger pickers.
     pub jobs: &'a [String],
-    /// The project file's directory, for task file previews.
+    /// The job files' directory, which task file paths are relative to, for previews.
     pub dir: &'a Path,
     /// Task file contents by path, read once per validation.
     pub previews: &'a mut HashMap<PathBuf, String>,
@@ -21,7 +21,7 @@ pub struct Edit<'a> {
 }
 
 impl Edit<'_> {
-    /// The text of `file` (relative to the project), or why it can't be read.
+    /// The text of `file` (relative to the job file), or why it can't be read.
     pub fn preview(&mut self, file: &str) -> &str {
         let path = self.dir.join(file);
         self.previews.entry(path.clone()).or_insert_with(|| {

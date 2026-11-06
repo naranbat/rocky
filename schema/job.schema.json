@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/naranbat/rocky/main/schema/job.schema.json",
+  "title": "Rocky job",
+  "description": "One job of a Rocky project: a file in its jobs/ directory, named by the file.",
+  "$ref": "rocky.schema.json#/$defs/job"
+}
