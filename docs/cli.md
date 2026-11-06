@@ -83,7 +83,7 @@ Writes a starter file that loads as-is, creating missing parent directories, and
 | Level | Writes |
 |---|---|
 | `basic` (default) | The smallest file that runs, as in the table above |
-| `full` | Every field, each with a comment. A full project or job has a `schedule`, `values`, a `curl` request, cmd tasks with `when`, a `for_each` loop and a `while` loop. A full task is a cmd task with all of its fields. Fields that need another file (`env_file`, a task file) are commented out, so the file still loads and runs as-is. Its tasks use `${USER}` from the environment |
+| `full` | Every field, each with a comment. A full project or job has a `schedule`, `values`, `defaults`, a job `when`, a `curl` request, cmd tasks with `when`, a `for_each` loop and a `while` loop. A full task is a cmd task with all of its fields. Fields that need another file (`env_file`, a task file with or without `with`) or another job (`trigger`) are commented out, so the file still loads and runs as-is. Its tasks use `${USER}` from the environment |
 
 ```
 $ rocky new job jobs/deploy.yaml

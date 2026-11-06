@@ -141,8 +141,10 @@ const FULL_CONTROL: &str = "
       status:                           # httpbin picks 200 or 503 at random
         cmd: [curl, -sS, -o, /dev/null, -w, '%{http_code}', 'https://httpbin.org/status/200,503']
 
-  # A task file: one task kept in its own file, relative to this file.
+  # A task file: one task kept in its own file, relative to this file. Give it inputs of
+  # its own with `with`, read as ${NAME} inside the file; only `file`, `with` and `when` go here.
   # notify: tasks/notify.yaml
+  # notify_bob: {file: tasks/notify.yaml, with: {USER: bob}}
 
   # A trigger: queues a run of another job of the project and goes on without waiting
   # (`exec` runs it after this job). Nothing is saved as tasks.NAME.
@@ -209,6 +211,7 @@ fn full_tasks() -> String {
          LIMITS: {{retries: 3}}             # an object: read inside it with ${{LIMITS.retries}}\n\
          defaults:                           # timeout, cwd, env, retry for this job's cmd tasks; a task's own win\n  \
          env: {{LOG_LEVEL: info}}           # merged by name with each task's `env`\n\
+         when: {{this: REGION, matches: ^eu-}}  # run the job only if this holds (no tasks.* yet); else skip it\n\
          tasks:\n  \
          # An HTTP request with curl. Later tasks read its result by name; JSON output is parsed:\n  \
          # ${{tasks.login.stdout.json.token}}.\n  \
@@ -269,6 +272,7 @@ mod tests {
         let mut project = project::load(&project_file).unwrap();
         let example = project.take("example").unwrap();
         assert_eq!(example.schedule.is_some(), matches!(level, Level::Full));
+        assert_eq!(example.when.is_some(), matches!(level, Level::Full));
         if matches!(level, Level::Full) {
             assert_eq!(example.values["REGION"], "eu-west-1");
             assert_eq!(example.values["LIMITS"]["retries"], 3);
@@ -286,6 +290,7 @@ mod tests {
         let mut project = project::load(&project_file).unwrap();
         let w = project.take("w").unwrap();
         assert_eq!(w.schedule.is_some(), matches!(level, Level::Full));
+        assert_eq!(w.when.is_some(), matches!(level, Level::Full));
         if matches!(level, Level::Full) {
             assert_eq!(w.values["REGION"], "eu-west-1");
         }
