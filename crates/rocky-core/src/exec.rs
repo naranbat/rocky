@@ -450,7 +450,7 @@ async fn execute(
             let path = task.dir.join(substitute(&path.to_string_lossy())?);
             let file = tokio::fs::File::create(&path)
                 .await
-                .map_err(|source| Error::Io { path, source })?;
+                .map_err(|source| Error::Write { path, source })?;
             Stdout::File(file.into_std().await)
         }
         None if task.capture_stdout == Some(false) => Stdout::Discard,
@@ -860,7 +860,7 @@ mod tests {
         .await;
         assert_eq!(name, "save");
         assert!(
-            matches!(&err, Error::Io { path, .. } if path.ends_with("nope/out.txt")),
+            matches!(&err, Error::Write { path, .. } if path.ends_with("nope/out.txt")),
             "{err}"
         );
     }
