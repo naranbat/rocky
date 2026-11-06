@@ -29,7 +29,7 @@ enum Command {
     },
     /// Run the scheduled jobs of the project in the current directory.
     ///
-    /// Runs until stopped, or, without `--socket`, until no job has runs left: only finished `at` and `run_on_start`-only schedules, or stopped ones. Prints one JSON line per event (task, skip, loop, trigger, finished run, error), also appended to `.rocky/logs/<date>.log` (`<service>-<date>.log` with `--service`).
+    /// Runs until stopped, or, without `--socket`, until no job has runs left: only finished `at` and `run_on_start`-only schedules, or stopped ones. Prints one JSON line per event (`task`, `skip`, `for_each`, `while`, `trigger`, `triggered`, `done`, `error`, `stopped`, `skipped`), also appended to `.rocky/logs/<date>.log` (`<service>-<date>.log` with `--service`).
     Run {
         /// Also run any job of the project when a client of this Unix socket sends `{"job": "NAME"}`.
         #[arg(long)]
