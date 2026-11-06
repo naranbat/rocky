@@ -1,6 +1,8 @@
 //! The schedule picker: one tab per schedule kind, and that kind's fields.
 
 use eframe::egui::{self, RichText};
+use jiff::Zoned;
+use rocky_core::schedule::Schedule;
 use serde_yaml::{Mapping, Value};
 
 use crate::chips;
@@ -120,8 +122,59 @@ pub fn editor(ui: &mut egui::Ui, ed: &mut Edit, job: &mut Mapping) {
                     RichText::new(format!("schedule: {}", doc::flow(schedule))).color(theme::WHILE),
                 );
             });
+            theme::hint(ui, &next_runs(schedule, &Zoned::now()));
         }
     });
+}
+
+/// When `rocky run` would next run a job with `schedule`, counting from `now`, as
+/// `Next runs · Fri 6 Nov 09:30 · Mon 9 Nov 09:30`, or why the schedule is invalid.
+fn next_runs(schedule: &Value, now: &Zoned) -> String {
+    let parsed = match serde_yaml::from_value::<Schedule>(schedule.clone()) {
+        Ok(parsed) => parsed,
+        Err(error) => return format!("Invalid schedule: {error}"),
+    };
+    let format = |time: &Zoned| time.strftime("%a %-d %b %H:%M").to_string();
+    let mut runs = Vec::new();
+    match parsed {
+        Schedule::OnStart => return "Runs once, when `rocky run` starts".to_string(),
+        Schedule::Every { interval, delay } => {
+            let mut next = now.checked_add(delay).ok();
+            for _ in 0..2 {
+                let Some(time) = next else { break };
+                runs.push(format(&time));
+                next = time.checked_add(interval).ok();
+            }
+            if delay.is_zero()
+                && let Some(first) = runs.first_mut()
+            {
+                *first = "at start".to_string();
+            }
+        }
+        Schedule::Clock {
+            clock,
+            run_on_start,
+        } => {
+            if run_on_start {
+                runs.push("at start".to_string());
+            }
+            let mut from = now.clone();
+            while runs.len() < 3 {
+                match clock.next_after(&from) {
+                    Ok(Some(time)) => {
+                        runs.push(format(&time));
+                        from = time;
+                    }
+                    Ok(None) => break,
+                    Err(error) => return format!("Invalid schedule: {}", error.chain()),
+                }
+            }
+        }
+    }
+    if runs.is_empty() {
+        return "No more runs: the time has passed".to_string();
+    }
+    format!("Next runs · {}", runs.join(" · "))
 }
 
 /// The fields of a schedule of `kind`.
@@ -221,6 +274,26 @@ mod tests {
     use super::*;
 
     #[test]
+    fn lists_next_runs() {
+        let now: Zoned = "2026-11-06T10:00:00[UTC]".parse().unwrap();
+        let weekly: Value =
+            serde_yaml::from_str("{weekly: {days: [mon, fri], time: '09:30'}}").unwrap();
+        assert_eq!(
+            next_runs(&weekly, &now),
+            "Next runs · Mon 9 Nov 09:30 · Fri 13 Nov 09:30 · Mon 16 Nov 09:30"
+        );
+        let every: Value = serde_yaml::from_str("{every: 5m, delay: 1m}").unwrap();
+        assert_eq!(
+            next_runs(&every, &now),
+            "Next runs · Fri 6 Nov 10:01 · Fri 6 Nov 10:06"
+        );
+        let past: Value = serde_yaml::from_str("{at: '2020-01-01T00:00:00'}").unwrap();
+        assert_eq!(next_runs(&past, &now), "No more runs: the time has passed");
+        let bad: Value = serde_yaml::from_str("{daily: '25:00'}").unwrap();
+        assert!(next_runs(&bad, &now).starts_with("Invalid schedule"));
+    }
+
+    #[test]
     fn templates_are_valid_schedules() {
         for kind in KINDS {
             for run_on_start in [false, true] {
@@ -233,7 +306,7 @@ mod tests {
                     doc::flow(&schedule)
                 );
                 crate::validate::check(std::path::Path::new("project.yaml"), &text)
-                    .unwrap_or_else(|error| panic!("{kind}: {error}\n{text}"));
+                    .unwrap_or_else(|error| panic!("{kind}: {error:?}\n{text}"));
             }
         }
     }

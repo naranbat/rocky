@@ -7,6 +7,7 @@ use crate::doc::{self, Doc};
 use crate::job;
 use crate::project;
 use crate::theme;
+use crate::validate::Problem;
 
 /// What the main area shows.
 #[derive(Clone, PartialEq)]
@@ -16,7 +17,12 @@ pub enum Selection {
 }
 
 /// Draws the sidebar. Returns `true` when it changed the document (a job was added).
-pub fn show(ui: &mut egui::Ui, doc: &mut Doc, selection: &mut Selection) -> bool {
+pub fn show(
+    ui: &mut egui::Ui,
+    doc: &mut Doc,
+    selection: &mut Selection,
+    problem: Option<&Problem>,
+) -> bool {
     let mut changed = false;
     ui.add_space(8.0);
     theme::hint(ui, "PROJECT");
@@ -66,7 +72,8 @@ pub fn show(ui: &mut egui::Ui, doc: &mut Doc, selection: &mut Selection) -> bool
                 continue;
             };
             let selected = *selection == Selection::Job(name.clone());
-            if job_item(ui, name, job, selected).clicked() {
+            let broken = problem.is_some_and(|problem| problem.job.as_ref() == Some(name));
+            if job_item(ui, name, job, selected, broken).clicked() {
                 *selection = Selection::Job(name.clone());
             }
         }
@@ -103,8 +110,15 @@ fn row(ui: &mut egui::Ui, label: &str, value: &str, selected: bool) -> egui::Res
     .on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
-/// One job in the list: its name, and a dot (filled when scheduled) with its summary.
-fn job_item(ui: &mut egui::Ui, name: &str, job: &Value, selected: bool) -> egui::Response {
+/// One job in the list: its name, and a dot (filled when scheduled, a cross when it has a
+/// problem) with its summary.
+fn job_item(
+    ui: &mut egui::Ui,
+    name: &str,
+    job: &Value,
+    selected: bool,
+    broken: bool,
+) -> egui::Response {
     let scheduled = job.get("schedule").is_some();
     let frame = if selected {
         egui::Frame::new()
@@ -121,7 +135,9 @@ fn job_item(ui: &mut egui::Ui, name: &str, job: &Value, selected: bool) -> egui:
             ui.label(RichText::new(name).strong());
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
-                let (dot, color) = if scheduled {
+                let (dot, color) = if broken {
+                    ("✖", theme::ERROR)
+                } else if scheduled {
                     ("●", theme::OK)
                 } else {
                     ("○", theme::DIM)

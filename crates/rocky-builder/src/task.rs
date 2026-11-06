@@ -8,7 +8,9 @@ use crate::chips;
 use crate::condition;
 use crate::doc;
 use crate::edit::Edit;
+use crate::legacy;
 use crate::run_view;
+use crate::scope;
 use crate::theme;
 use crate::{task_cmd, task_file, task_loop, task_trigger};
 
@@ -151,52 +153,98 @@ pub fn icon(ui: &mut egui::Ui, kind: Kind) {
 /// What a card asked its list to do.
 enum Action {
     Delete,
-    MoveUp,
-    MoveDown,
     Rename(String),
+    /// Replace an old-syntax branch or switch with plain tasks.
+    Convert,
+}
+
+/// A card being dragged by its handle: which list it is in, and where.
+#[derive(Clone, Copy, PartialEq)]
+struct Dragged {
+    list: egui::Id,
+    from: usize,
 }
 
 /// Edits a task list: `tasks` of a job or `do` of a loop. `top` is false for loop bodies,
-/// which are drawn more compactly and can't hold another loop's numbering.
+/// which are drawn without step numbers or run buttons.
 pub fn list(ui: &mut egui::Ui, ed: &mut Edit, tasks: &mut Value, top: bool) {
     let tasks = doc::as_map(tasks);
     let names = doc::keys(tasks);
+    let list_id = ui.scope_id().with("tasks");
     let mut action = None;
+    let mut moved = None;
     for (index, name) in names.iter().enumerate() {
+        let legacy = tasks
+            .get(name.as_str())
+            .filter(|task| legacy::is_legacy(task))
+            .map(|_| legacy::conflict(tasks, name));
         let Some(task) = tasks.get_mut(name.as_str()) else {
             continue;
         };
-        ui.push_id(("task", index), |ui| {
+        let drag = Dragged {
+            list: list_id,
+            from: index,
+        };
+        let row = ui.push_id(("task", index), |ui| {
             ui.horizontal_top(|ui| {
                 if top {
                     number(ui, index + 1, task.get("when").is_some());
                 }
                 ui.vertical(|ui| {
-                    if let Some(act) = card(ui, ed, name, task, index, names.len(), top) {
-                        action = Some((index, name.clone(), act));
+                    if let Some(act) = card(ui, ed, name, task, top, drag, legacy) {
+                        action = Some((name.clone(), act));
                     }
                 });
-            });
+            })
+            .response
         });
+        if let Some(from) = drop_target(ui, &row.inner, list_id, index) {
+            moved = Some((from, index));
+        }
+        // Later cards can read what this task leaves in `tasks.NAME`.
+        let result = ed
+            .run
+            .and_then(|run| run.results.task(ed.job, name))
+            .and_then(|run| run.last.as_ref())
+            .map(|event| &event["result"]);
+        if let Some(task) = tasks.get(name.as_str()) {
+            let vars = scope::task(name, task, result);
+            ed.scope.extend(vars);
+        }
         ui.add_space(4.0);
     }
+    if let Some((from, to)) = moved {
+        doc::move_entry(tasks, from, to);
+        ed.changed = true;
+    }
     match action {
-        Some((_, name, Action::Delete)) => {
+        Some((name, Action::Delete)) => {
             doc::set(tasks, &name, None);
             ed.changed = true;
         }
-        Some((index, _, Action::MoveUp)) if index > 0 => {
-            doc::swap_with_next(tasks, index - 1);
-            ed.changed = true;
-        }
-        Some((index, _, Action::MoveDown)) => {
-            doc::swap_with_next(tasks, index);
-            ed.changed = true;
-        }
-        Some((_, old, Action::Rename(new))) => ed.changed |= doc::rename(tasks, &old, &new),
-        _ => {}
+        Some((old, Action::Rename(new))) => ed.changed |= doc::rename(tasks, &old, &new),
+        Some((name, Action::Convert)) => ed.changed |= legacy::convert(tasks, &name),
+        None => {}
     }
     add_row(ui, ed, tasks, top);
+}
+
+/// While a card of this list is dragged over the card at `index`, marks where it would
+/// land; when it is dropped there, returns where it came from.
+fn drop_target(ui: &egui::Ui, row: &egui::Response, list: egui::Id, index: usize) -> Option<usize> {
+    let hovered = row.dnd_hover_payload::<Dragged>()?;
+    if hovered.list != list || hovered.from == index {
+        return None;
+    }
+    let y = if hovered.from > index {
+        row.rect.top() - 2.0
+    } else {
+        row.rect.bottom() + 2.0
+    };
+    ui.painter()
+        .hline(row.rect.x_range(), y, Stroke::new(2.0, theme::ACCENT));
+    row.dnd_release_payload::<Dragged>()
+        .map(|dropped| dropped.from)
 }
 
 /// The step number to the left of a top-level card.
@@ -215,19 +263,23 @@ fn number(ui: &mut egui::Ui, n: usize, highlighted: bool) {
         });
 }
 
-/// One task card. Returns what the list should do with it, if anything.
+/// One task card. Returns what the list should do with it, if anything. `legacy` is set
+/// for a task in the removed `if` / `switch` syntax: `None` when it can be converted, or why not.
 fn card(
     ui: &mut egui::Ui,
     ed: &mut Edit,
     name: &str,
     task: &mut Value,
-    index: usize,
-    count: usize,
     top: bool,
+    drag: Dragged,
+    legacy: Option<Option<String>>,
 ) -> Option<Action> {
     let kind = Kind::of(task);
     let mut action = None;
-    let border = if task.get("when").is_some() {
+    let problem = ed.problem.filter(|problem| problem.is_on(ed.job, name));
+    let border = if problem.is_some() {
+        theme::ERROR
+    } else if task.get("when").is_some() {
         theme::ACCENT.gamma_multiply(0.6)
     } else {
         theme::BORDER
@@ -235,6 +287,12 @@ fn card(
     theme::card().stroke(Stroke::new(1.0, border)).show(ui, |ui| {
         ui.set_width(ui.available_width());
         ui.horizontal(|ui| {
+            ui.dnd_drag_source(ui.scope_id().with("drag"), drag, |ui| {
+                ui.label(RichText::new("⠿").color(theme::DIM))
+                    .on_hover_cursor(egui::CursorIcon::Grab);
+            })
+            .response
+            .on_hover_text("Drag to reorder");
             if let Some(new) = kind_picker(ui, kind) {
                 let when = task.get("when").cloned();
                 *task = new.template(ed.jobs);
@@ -262,14 +320,17 @@ fn card(
                 {
                     ed.run_until = Some(name.to_string());
                 }
-                if ui.add_enabled(index + 1 < count, egui::Button::new("↓").small()).on_hover_text("Move down").clicked() {
-                    action = Some(Action::MoveDown);
-                }
-                if ui.add_enabled(index > 0, egui::Button::new("↑").small()).on_hover_text("Move up").clicked() {
-                    action = Some(Action::MoveUp);
-                }
             });
         });
+        if let Some(problem) = problem {
+            theme::problem(ui, &problem.message);
+        }
+        if let Some(conflict) = legacy {
+            if old_syntax(ui, name, task, conflict.as_deref()) {
+                action = Some(Action::Convert);
+            }
+            return;
+        }
         if let Some(map) = task.as_mapping_mut() {
             condition::when_block(ui, ed, map, "otherwise skipped");
         }
@@ -289,6 +350,52 @@ fn card(
         }
     });
     action
+}
+
+/// The warning on an old-syntax task, what it would become, and its Convert button.
+/// Returns `true` when Convert was clicked.
+fn old_syntax(ui: &mut egui::Ui, name: &str, task: &Value, conflict: Option<&str>) -> bool {
+    let mut convert = false;
+    let field = if task.get("if").is_some() {
+        "if"
+    } else {
+        "switch"
+    };
+    egui::Frame::new()
+        .fill(theme::ACCENT_BG)
+        .stroke(Stroke::new(1.0, theme::ACCENT.gamma_multiply(0.5)))
+        .corner_radius(6)
+        .inner_margin(egui::Margin::same(8))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal_wrapped(|ui| {
+                ui.label(
+                    RichText::new(format!(
+                        "⚠ Old syntax · `{field}` in task `{name}`. if / then / else and switch were removed."
+                    ))
+                    .color(theme::ACCENT),
+                );
+            });
+            let flat = legacy::flatten(name, task);
+            for (inner, task) in &flat {
+                let when = task.get("when").map(doc::flow).unwrap_or_default();
+                theme::hint(ui, &format!("becomes {inner} · when {when}"));
+            }
+            ui.horizontal(|ui| {
+                let button = egui::Button::new(RichText::new("Convert to when").color(theme::ACCENT));
+                if ui
+                    .add_enabled(conflict.is_none() && !flat.is_empty(), button)
+                    .on_hover_text("Each task gets the conditions it ran under; they are checked when it is reached")
+                    .clicked()
+                {
+                    convert = true;
+                }
+                if let Some(conflict) = conflict {
+                    ui.label(RichText::new(conflict).color(theme::ERROR).size(12.0));
+                }
+            });
+        });
+    convert
 }
 
 /// The kind dropdown in a card's header. Returns the newly picked kind.

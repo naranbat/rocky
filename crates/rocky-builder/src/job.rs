@@ -46,6 +46,12 @@ pub fn editor(ui: &mut egui::Ui, ed: &mut Edit, name: &str, job: &mut Value) -> 
         job => job.get("file").map(doc::scalar_text),
     };
     let action = header(ui, name, job, file.as_deref());
+    if let Some(problem) = ed
+        .problem
+        .filter(|p| p.job.as_deref() == Some(name) && p.task.is_none())
+    {
+        theme::problem(ui, &problem.message);
+    }
     if let Some(run) = ed.run {
         run_view::job_status(ui, run, name);
     }

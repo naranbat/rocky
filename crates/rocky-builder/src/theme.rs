@@ -129,3 +129,20 @@ pub fn badge(ui: &mut egui::Ui, text: &str, color: Color32) -> egui::Response {
 pub fn hint(ui: &mut egui::Ui, text: &str) {
     ui.label(egui::RichText::new(text).color(DIM).size(12.0));
 }
+
+/// A validation problem, in red, inside the card or job it is about.
+pub fn problem(ui: &mut egui::Ui, message: &str) {
+    Frame::new()
+        .fill(ERROR_BG)
+        .stroke(Stroke::new(1.0, ERROR.gamma_multiply(0.5)))
+        .corner_radius(6)
+        .inner_margin(Margin::symmetric(8, 6))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(
+                egui::RichText::new(format!("⊘ {message}"))
+                    .color(ERROR)
+                    .size(12.0),
+            );
+        });
+}

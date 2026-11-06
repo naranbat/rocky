@@ -7,6 +7,7 @@ use crate::chips;
 use crate::condition;
 use crate::doc;
 use crate::edit::Edit;
+use crate::scope;
 use crate::task;
 use crate::theme;
 
@@ -15,7 +16,7 @@ pub fn for_each(ui: &mut egui::Ui, ed: &mut Edit, map: &mut Mapping) {
         ui.set_width(ui.available_width());
         ui.horizontal(|ui| {
             ui.label(RichText::new("for each in").color(theme::DIM));
-            chips::str_field(ui, ed, map, "for_each", "tasks.NAME.stdout", 140.0);
+            chips::var_field(ui, ed, map, "for_each", "tasks.NAME.stdout", 140.0);
             ui.label(RichText::new("as").color(theme::DIM));
             chips::str_field(ui, ed, map, "as", "ITEM", 40.0);
         });
@@ -25,7 +26,12 @@ pub fn for_each(ui: &mut egui::Ui, ed: &mut Edit, map: &mut Mapping) {
         );
     });
     on_failure(ui, ed, map, "skip to next item");
+    let item = doc::get_str(map, "as").unwrap_or("ITEM").to_string();
+    let at = ed.scope.len();
+    ed.scope.push(scope::loop_item(&item));
     body(ui, ed, map, theme::FOR_EACH);
+    // The item is gone after the loop; what its tasks left in `tasks.*` stays.
+    ed.scope.remove(at);
 }
 
 pub fn while_loop(ui: &mut egui::Ui, ed: &mut Edit, map: &mut Mapping) {

@@ -11,6 +11,7 @@ use crate::edit::Edit;
 use crate::job;
 use crate::project;
 use crate::run::Run;
+use crate::scope;
 use crate::sidebar::{self, Selection};
 use crate::theme;
 use crate::validate::Validation;
@@ -142,7 +143,7 @@ impl App {
                         .inner_margin(egui::Margin::symmetric(16, 8)),
                 )
                 .show(ui, |ui| {
-                    ui.label(RichText::new(format!("⚠ {error}")).color(theme::ERROR));
+                    ui.label(RichText::new(format!("⚠ {}", error.message)).color(theme::ERROR));
                 });
         }
         egui::Panel::bottom("status")
@@ -163,7 +164,7 @@ impl App {
                     .inner_margin(egui::Margin::symmetric(12, 8)),
             )
             .show(ui, |ui| {
-                changed |= sidebar::show(ui, doc, &mut self.selection)
+                changed |= sidebar::show(ui, doc, &mut self.selection, self.validation.problem())
             });
 
         let jobs = doc.job_names();
@@ -172,6 +173,7 @@ impl App {
             Selection::Job(name) => name.clone(),
             Selection::Project => String::new(),
         };
+        let scope = scope::base(&doc.root, &job, &dir, &mut self.previews);
         let mut ed = Edit {
             changed,
             jobs: &jobs,
@@ -181,6 +183,8 @@ impl App {
             run: self.run.as_ref(),
             can_run,
             run_until: None,
+            problem: self.validation.problem(),
+            scope,
         };
         egui::CentralPanel::default()
             .frame(
@@ -484,6 +488,26 @@ mod tests {
             }
         }
         assert!(viewed > 5);
+    }
+
+    /// An old-syntax task is invalid, flagged on its card, and drawn with its fix; viewing
+    /// it changes nothing.
+    #[test]
+    fn draws_old_syntax_with_its_problem() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("project.yaml");
+        let yaml = "jobs:\n  j:\n    tasks:\n      route: {if: {this: A, eq: 1}, then: {b: {cmd: [echo]}}}\n";
+        std::fs::write(&path, yaml).unwrap();
+        let ctx = egui::Context::default();
+        let mut app = App::with_context(&ctx, Some(path));
+        for _ in 0..2 {
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| app.draw(ui));
+            output.textures_delta.clear();
+        }
+        let problem = app.validation.problem().unwrap();
+        assert!(problem.is_on("j", "route"));
+        let doc = app.doc.as_ref().unwrap();
+        assert!(!doc.is_dirty(&doc.text().unwrap()));
     }
 
     /// Draws a job while it runs and after, with results on every card.

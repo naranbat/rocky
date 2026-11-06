@@ -230,7 +230,7 @@ fn leaf_editor(ui: &mut egui::Ui, ed: &mut Edit, condition: &mut Value) -> bool 
     let map = doc::as_map(condition);
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
-        chips::str_field(ui, ed, map, "this", "tasks.NAME.stdout", 120.0);
+        chips::var_field(ui, ed, map, "this", "tasks.NAME.stdout", 120.0);
         ui.label(RichText::new("is").color(theme::DIM));
         let present: Vec<&str> = OPERATORS
             .iter()

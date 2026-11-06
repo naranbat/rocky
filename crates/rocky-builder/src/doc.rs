@@ -155,13 +155,14 @@ pub fn rename(map: &mut Mapping, old: &str, new: &str) -> bool {
     true
 }
 
-/// Swaps the entry at `index` with its neighbor `index + 1`.
-pub fn swap_with_next(map: &mut Mapping, index: usize) {
-    if index + 1 >= map.len() {
+/// Moves the entry at `from` to position `to`, shifting the ones between.
+pub fn move_entry(map: &mut Mapping, from: usize, to: usize) {
+    if from >= map.len() || to >= map.len() {
         return;
     }
     let mut entries: Vec<(Value, Value)> = std::mem::take(map).into_iter().collect();
-    entries.swap(index, index + 1);
+    let entry = entries.remove(from);
+    entries.insert(to, entry);
     *map = entries.into_iter().collect();
 }
 
@@ -239,14 +240,20 @@ jobs:
     }
 
     #[test]
-    fn rename_and_swap_keep_positions() {
+    fn rename_and_move_keep_positions() {
         let (mut doc, _dir) = doc();
         let jobs = doc.jobs_mut();
         assert!(rename(jobs, "zeta", "beta"));
         assert!(!rename(jobs, "beta", "alpha"));
         assert_eq!(keys(jobs), ["beta", "alpha"]);
-        swap_with_next(jobs, 0);
+        move_entry(jobs, 0, 1);
         assert_eq!(keys(jobs), ["alpha", "beta"]);
+        jobs.insert(Value::from("gamma"), Value::Null);
+        move_entry(jobs, 2, 0);
+        assert_eq!(keys(jobs), ["gamma", "alpha", "beta"]);
+        move_entry(jobs, 0, 2);
+        assert_eq!(keys(jobs), ["alpha", "beta", "gamma"]);
+        set(jobs, "gamma", None);
         set(jobs, "alpha", None);
         assert_eq!(keys(jobs), ["beta"]);
         assert!(doc.is_dirty(&doc.text().unwrap()));

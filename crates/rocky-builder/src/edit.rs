@@ -3,7 +3,9 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use crate::complete::Var;
 use crate::run::Run;
+use crate::validate::Problem;
 
 pub struct Edit<'a> {
     /// Set by any widget that changed the document this frame.
@@ -21,6 +23,11 @@ pub struct Edit<'a> {
     pub can_run: bool,
     /// Set by a card's ▶: run the job up to this task.
     pub run_until: Option<String>,
+    /// Why the document is invalid, shown on the card or job it is about.
+    pub problem: Option<&'a Problem>,
+    /// The variables a `${…}` can read where the editor is drawing now; task lists add each
+    /// task's after drawing it, so a card only offers earlier tasks.
+    pub scope: Vec<Var>,
 }
 
 impl Edit<'_> {

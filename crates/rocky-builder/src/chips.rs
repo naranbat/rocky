@@ -9,6 +9,8 @@ use eframe::egui::{
 };
 use serde_yaml::{Mapping, Value};
 
+use crate::autocomplete;
+use crate::complete::{Mode, Var};
 use crate::doc;
 use crate::edit::Edit;
 use crate::theme;
@@ -24,23 +26,43 @@ pub fn text(
     min_width: f32,
     color: Option<Color32>,
 ) -> Option<String> {
+    field(ui, salt, current, hint, min_width, color, None)
+}
+
+/// Like [`text`], suggesting `vars` for `${…}` (or, in [`Mode::Whole`], for the whole field).
+fn field(
+    ui: &mut egui::Ui,
+    salt: impl egui::AsIdSalt,
+    current: &str,
+    hint: &str,
+    min_width: f32,
+    color: Option<Color32>,
+    complete: Option<(&[Var], Mode)>,
+) -> Option<String> {
     let id = ui.scope_id().with(salt);
+    let field = id.with("field");
     let mut buffer: String = ui
         .data_mut(|data| data.get_temp(id))
         .unwrap_or_else(|| current.to_string());
+    let mut picked =
+        complete.is_some_and(|(vars, mode)| autocomplete::keys(ui, field, &mut buffer, vars, mode));
     let mut layouter = |ui: &egui::Ui, text: &dyn TextBuffer, _wrap: f32| -> Arc<Galley> {
         ui.fonts_mut(|fonts| fonts.layout_job(highlight(text.as_str(), color)))
     };
     let output = TextEdit::singleline(&mut buffer)
-        .id(id.with("field"))
+        .id(field)
         .hint_text(RichText::new(hint).color(theme::DIM))
         .desired_width(min_width)
         .clip_text(false)
         .margin(Margin::symmetric(6, 3))
         .layouter(&mut layouter)
         .show(ui);
-    let changed = output.response.changed();
-    if output.response.has_focus() {
+    if let Some((vars, mode)) = complete {
+        let cursor = output.cursor_range.map(|range| range.primary.index.0);
+        picked |= autocomplete::popup(ui, field, &mut buffer, vars, mode, &output.response, cursor);
+    }
+    let changed = output.response.changed() || picked;
+    if output.response.has_focus() || picked {
         ui.data_mut(|data| data.insert_temp(id, buffer.clone()));
     } else {
         ui.data_mut(|data| data.remove::<String>(id));
@@ -111,7 +133,25 @@ pub fn str_field(
     width: f32,
 ) {
     let current = doc::get_str(map, key).unwrap_or_default().to_string();
-    if let Some(new) = text(ui, key, &current, hint, width, None) {
+    let complete = Some((ed.scope.as_slice(), Mode::Inline));
+    if let Some(new) = field(ui, key, &current, hint, width, None, complete) {
+        doc::set(map, key, (!new.is_empty()).then(|| Value::from(new)));
+        ed.changed = true;
+    }
+}
+
+/// A field whose whole text is a variable path (`this`, `for_each`), with suggestions.
+pub fn var_field(
+    ui: &mut egui::Ui,
+    ed: &mut Edit,
+    map: &mut Mapping,
+    key: &str,
+    hint: &str,
+    width: f32,
+) {
+    let current = doc::get_str(map, key).unwrap_or_default().to_string();
+    let complete = Some((ed.scope.as_slice(), Mode::Whole));
+    if let Some(new) = field(ui, key, &current, hint, width, None, complete) {
         doc::set(map, key, (!new.is_empty()).then(|| Value::from(new)));
         ed.changed = true;
     }
@@ -129,7 +169,8 @@ pub fn scalar_field(
         _ => None,
     };
     let current = doc::scalar_text(value);
-    if let Some(new) = text(ui, salt, &current, "value", 40.0, color) {
+    let complete = Some((ed.scope.as_slice(), Mode::Inline));
+    if let Some(new) = field(ui, salt, &current, "value", 40.0, color, complete) {
         *value = doc::parse_scalar(&new);
         ed.changed = true;
     }
@@ -166,7 +207,8 @@ pub fn args(ui: &mut egui::Ui, ed: &mut Edit, command: &mut Value) {
             let current = doc::scalar_text(item);
             let color = (index == 0).then_some(theme::CMD);
             let hint = if index == 0 { "program" } else { "arg" };
-            if let Some(new) = text(ui, ("arg", index), &current, hint, 16.0, color) {
+            let complete = Some((ed.scope.as_slice(), Mode::Inline));
+            if let Some(new) = field(ui, ("arg", index), &current, hint, 16.0, color, complete) {
                 *item = Value::from(new);
                 ed.changed = true;
             }
@@ -273,4 +315,60 @@ pub fn row<R>(ui: &mut egui::Ui, label: &str, contents: impl FnOnce(&mut egui::U
         contents(ui)
     })
     .inner
+}
+
+#[cfg(test)]
+mod tests {
+    use eframe::egui::{Event, Key, Modifiers, RawInput};
+
+    use super::*;
+
+    fn var(path: &str) -> Var {
+        Var {
+            path: path.to_string(),
+            detail: String::new(),
+            group: "G".to_string(),
+        }
+    }
+
+    fn key(key: Key) -> Event {
+        Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        }
+    }
+
+    /// Types into a focused field and picks a suggestion with ↓ and ↵.
+    #[test]
+    fn typing_dollar_brace_suggests_and_inserts() {
+        let ctx = egui::Context::default();
+        let vars = [var("BASE"), var("BATCH"), var("tasks.login.ok")];
+        let mut value = String::from("x ");
+        let frame = |events: Vec<Event>, value: &mut String| {
+            let input = RawInput {
+                events,
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(input, |ui| {
+                let id = ui.scope_id().with("f").with("field");
+                ui.memory_mut(|memory| memory.request_focus(id));
+                if let Some(new) =
+                    field(ui, "f", value, "", 40.0, None, Some((&vars, Mode::Inline)))
+                {
+                    *value = new;
+                }
+            });
+            output.textures_delta.clear();
+        };
+        frame(vec![], &mut value);
+        frame(vec![key(Key::End)], &mut value);
+        frame(vec![Event::Text("${BA".to_string())], &mut value);
+        assert_eq!(value, "x ${BA");
+        frame(vec![key(Key::ArrowDown)], &mut value);
+        frame(vec![key(Key::Enter)], &mut value);
+        assert_eq!(value, "x ${BATCH}");
+    }
 }

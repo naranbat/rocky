@@ -1,16 +1,20 @@
 #![forbid(unsafe_code)]
 
 mod app;
+mod autocomplete;
 mod chips;
+mod complete;
 mod condition;
 mod doc;
 mod edit;
 mod job;
+mod legacy;
 mod project;
 mod results;
 mod run;
 mod run_view;
 mod schedule;
+mod scope;
 mod sidebar;
 mod task;
 mod task_cmd;
