@@ -57,7 +57,7 @@ pub fn rows(root: &Value, path: &Path, label: &str, note: &str, removable: bool)
         let add = |what: &str, joined: Value| {
             Row::field(
                 "",
-                Line::styled(indent(1, &format!("+ {what}")), theme::dim()),
+                Line::styled(indent(1, &format!("+ {what}")), theme::accent()),
                 Action::Set(path.clone(), Some(joined)),
             )
         };
@@ -193,7 +193,7 @@ fn group_rows(
     let add = |what: &str, action: Action| {
         Row::field(
             "",
-            Line::styled(indent(depth + 1, &format!("+ {what}")), theme::dim()),
+            Line::styled(indent(depth + 1, &format!("+ {what}")), theme::accent()),
             action,
         )
     };

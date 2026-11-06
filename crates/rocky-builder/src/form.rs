@@ -188,12 +188,16 @@ impl Row {
 
     /// A `+ label` row that runs `action`.
     pub fn add(label: &str, action: Action) -> Row {
-        Row::field("", Line::styled(format!("+ {label}"), theme::dim()), action)
+        Row::field(
+            "",
+            Line::styled(format!("+ {label}"), theme::accent()),
+            action,
+        )
     }
 
     /// Like [`Row::add`], but in the label column, starting where field labels do.
     pub fn add_in_label(label: &str, action: Action) -> Row {
-        Row::field(&format!("+ {label}"), Line::default(), action)
+        Row::field(&format!("+ {label}"), Line::default(), action).label_style(theme::accent())
     }
 
     pub fn label_style(mut self, style: Style) -> Row {
