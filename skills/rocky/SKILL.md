@@ -53,20 +53,33 @@ jobs:
         cmd: [echo, done]
 ```
 
-## Projects, jobs, tasks
+## Projects and jobs
 
 | Level | Fields |
 |---|---|
 | project | `jobs` (required), `values`, `env_file` (only here; relative to the project file), `defaults` |
 | job | `tasks` (required, non-empty map), `schedule`, `values` (win over project values), `defaults` (win over project defaults), `when` (skip the whole job unless it holds) |
-| task | exactly one kind: cmd (`cmd`), loop (`for_each` or `while`), trigger (`trigger: JOB`, queues a run of another job and goes on; no other fields but `when`), or a task file: a path, or `{file: path, with: {...}, when: ...}`. Any task can have `when`. There is no `if`/`then`/`else` or `switch`. |
 
-- Tasks are a **map**, never a list. The key is the name; there is no `name` field. Keys are identifiers (`user_id`), `tasks` is reserved, and keys are unique within one map.
 - Unknown keys anywhere are a load error.
 - `defaults: {timeout, cwd, env, retry}` fills those fields on every cmd task (nested ones and task files too) that doesn't set them; `env` merges by name. A default `cwd` is relative to the file the defaults are in. Use it instead of repeating `timeout`/`cwd: .`/`env` on each task.
-- Job file: `jobs: {report: jobs/report.yaml}`; the file holds `tasks`, `schedule`, `values`, `defaults`. Task file: `tasks: {login: tasks/login.yaml}`; the file holds one task, no `name`. Reuse it with different inputs: `tasks: {as_bob: {file: tasks/login.yaml, with: {USER: bob}}}`. Only `file`, `with` and `when` are allowed there; the inputs win over job values while the file runs and their `${...}` is expanded when the task starts, e.g. `with: {USER: '${ITEM}'}`.
-- Reuse one job file as several jobs: `jobs: {news: {file: jobs/fetch.yaml, schedule: {every: 1h}, values: {TARGET: https://x}}}`. Only `file`, `schedule`, `values` are allowed there.
-- Relative paths (`cwd`, task and job files) resolve against the file they're written in; `env_file` and job file paths against the project file. Commands **without** `cwd` run in the current directory.
+- Relative paths (`cwd`, `stdout_file`, task and job files) resolve against the file they're written in; `env_file` and job file paths against the project file. Commands **without** `cwd` run in the current directory.
+
+## Tasks
+
+A task is exactly one kind. Any task can also have `when`.
+
+| Kind | Keys |
+|---|---|
+| cmd | `cmd`, optionally `pipe` (see [Cmd tasks](#cmd-tasks)) |
+| loop | `for_each`/`as`/`do` or `while`/`attempts`/`do`, optionally `on_failure` (see [Loops](#loops)) |
+| trigger | `trigger: JOB`; no other fields but `when` (see [Triggers](#triggers)) |
+| task file | a path, or `{file: path, with: {...}, when: ...}` (see [Job and task files](#job-and-task-files)) |
+
+- Tasks are a **map**, never a list. The key is the name; there is no `name` field. Keys are identifiers (`user_id`), `tasks` is reserved, and keys are unique within one map.
+- There is no `if`/`then`/`else` or `switch`; use `when` on each task.
+- A cmd task's result is saved as `tasks.<key>`: `{ok, exit_code, stdout, stderr}`. Later tasks read it with a dot path, e.g. `${tasks.login.stdout.user.id}`. `ok` is `false` after any failure (non-zero exit, timeout, exhausted `retry`).
+- A non-zero exit stops the job unless `allow_failure: true`. A timeout under `allow_failure` saves `{ok: false, error: "..."}` instead. Test for any failure with `{this: tasks.x.ok, eq: false}`.
+- Undefined variables, missing programs and a missing `cwd` stop the job even with `allow_failure`.
 
 ## Cmd tasks
 
@@ -83,9 +96,9 @@ jobs:
 | `retry` | `{attempts: 5, delay: 2s, until: COND}`: run again until it exits 0 (or `until` holds), at most `attempts` times. Use it for polling instead of `while`. |
 | `allow_failure` | `true` keeps the job going after a non-zero exit or timeout. |
 
-Result, saved as `tasks.<key>`: `{ok, exit_code, stdout, stderr}`. `stdout` is parsed as JSON when the whole output is valid JSON, otherwise text with trailing newlines trimmed. A timeout under `allow_failure` saves `{ok: false, error: "..."}` instead. Test for any failure with `{this: tasks.x.ok, eq: false}`.
+`stdout` is parsed as JSON when the whole output is valid JSON, otherwise text with trailing newlines trimmed.
 
-No shell is involved. To write a file, use `stdout_file` (relative to the YAML file; result `stdout` is `null`):
+No shell is involved. To write a file, use `stdout_file`:
 
 ```yaml
 save:
@@ -101,25 +114,45 @@ For HTTP use `curl -sS --fail-with-body` so 4xx/5xx exit non-zero; `--json '@-'`
 ## Variables
 
 - `${NAME}` or a dot path `${tasks.login.stdout.user.id}`, `${ITEMS.0.id}` (numeric segment = array index).
-- Expanded in `cmd`/`pipe` arguments, `cwd`, strings in `stdin` and `env` values, and condition operator values (except `matches`). Each `${...}` stays one argument.
+- Expanded in `cmd`/`pipe` arguments, `cwd`, strings in `stdin` and `env` values, task-file `with` inputs, and condition operator values (except `matches`). Each `${...}` stays one argument. Project and job `values` are not expanded.
 - Lookup order: loop variables and `tasks.*` → task-file `with` inputs → job `values` → project `values` → `env_file` → process environment. Undefined fails the task.
 - `env_file` lines are `KEY=value` strings, for secrets. They only fill `${...}`; a command sees one in its environment only if listed under `env`: `env: {TOKEN: '${API_TOKEN}'}`.
 - A `stdin` field, condition operand or task-file `with` input that is exactly `${NAME}` keeps its JSON type (number, list, object); anywhere else values render as text.
-- Quote `${...}` inside flow collections (`{...}` or `[...]`), quote numeric command arguments, and quote times, dates and strings containing YAML punctuation.
 - `$${` is a literal `${`. In `sh -c` scripts reading a variable from `env`, write `$NAME`.
 - `values` names and `as` names must be uppercase (`A-Z`, `0-9`, `_`).
 
-## Control flow
+## Writing YAML
 
-`when`/`while` (`this:`) and `for_each` name one variable: `tasks.x.stdout` and `${tasks.x.stdout}` are the same (inside `{...}`, quote the `${}` form).
+- Quote `${...}` inside flow collections (`{...}` or `[...]`), quote numeric command arguments (`[sleep, "5"]`), and quote times, dates and strings containing YAML punctuation.
+- Durations are a whole number and one unit, `s`, `m` or `h`: `90m`, not `1h30m`, `1.5m` or `30`.
+- Removed forms fail to load: integer-second durations, `weekly` and `time` as siblings (use `weekly: {days, time}`), `values` next to a task `file` (use `with`), `if`/`switch` (use `when`), `max` on `while` (use `attempts`).
+
+## Conditions
+
+`when` skips a job or task unless its condition holds. A skipped task saves no result, so `tasks.NAME` stays undefined (test with `exists`). The same conditions are used by `while` and `retry`'s `until`.
 
 ```yaml
-big:                                 # when: runs only if it holds, else is skipped
+big:                                 # runs only if it holds, else is skipped
   when: {this: tasks.stats.stdout.count, gt: 10}
   cmd: [echo, big]
 small:                               # no else: write the opposite condition
   when: {this: tasks.stats.stdout.count, lte: 10}
   cmd: [echo, small]
+```
+
+`{this: PATH, OP: value}` with one or more of `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `contains`, `matches` (regex), `exists` (`true`/`false`, can't be combined). Combine with `all: [...]`, `any: [...]`, `not: cond`, or a bare list (= `all`). Numeric strings compare as numbers (`"200"` eq `200`).
+
+`this` and `for_each` name one variable: `tasks.x.stdout` and `${tasks.x.stdout}` are the same (inside `{...}`, quote the `${}` form).
+
+## Loops
+
+```yaml
+each:                                # for_each: value must be a JSON list
+  for_each: tasks.users.stdout.items
+  as: USER                           # default ITEM
+  on_failure: next                   # a failing `do` task skips to the next element (default: stop)
+  do:
+    ping: {cmd: [echo, '${USER.id}']}
 
 wait:                                # while: checked before each iteration
   while: {this: tasks.check.stdout, ne: 200}
@@ -127,18 +160,24 @@ wait:                                # while: checked before each iteration
   do:
     pause: {cmd: [sleep, '5']}
     check: {cmd: [curl, -sS, -o, /dev/null, -w, '%{http_code}', '${BASE}/health']}
-
-each:                                # for_each: value must be a JSON list
-  for_each: tasks.users.stdout.items
-  as: USER                           # default ITEM
-  on_failure: next                   # a failing `do` task skips to the next element (default: stop)
-  do:
-    ping: {cmd: [echo, '${USER.id}']}
 ```
 
-Conditions: `{this: PATH, OP: value}` with one or more of `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `contains`, `matches` (regex), `exists` (`true`/`false`, can't be combined). Combine with `all: [...]`, `any: [...]`, `not: cond`, or a bare list (= `all`). Numeric strings compare as numbers (`"200"` eq `200`).
+Loops have no `cmd`, `timeout` or `allow_failure` (that's for cmd tasks); a loop uses `on_failure: next` to skip a failing iteration. Nothing runs in parallel. Results set inside loops stay available afterwards.
 
-Loops have no `cmd`, `timeout` or `allow_failure` (that's for cmd tasks); a loop uses `on_failure: next` to skip a failing iteration. A skipped task saves no result, so `tasks.NAME` stays undefined (test with `exists`). Nothing runs in parallel. Results set inside loops stay available afterwards.
+## Job and task files
+
+- Job file: `jobs: {report: jobs/report.yaml}`; the file holds `tasks`, `schedule`, `values`, `defaults`, `when`.
+- Reuse one job file as several jobs: `jobs: {news: {file: jobs/fetch.yaml, schedule: {every: 1h}, values: {TARGET: https://x}}}`. Only `file`, `schedule`, `values` are allowed there.
+- Task file: `tasks: {login: tasks/login.yaml}`; the file holds one task of any kind, no `name`.
+- Reuse a task file with different inputs: `tasks: {as_bob: {file: tasks/login.yaml, with: {USER: bob}}}`. Only `file`, `with` and `when` are allowed there; the inputs win over job values while the file runs and their `${...}` is expanded when the task starts, e.g. `with: {USER: '${ITEM}'}`.
+
+## Triggers
+
+`trigger: JOB` queues a run of another job of the project (scheduled or not) and the job goes on without waiting. It saves no result and can't fail.
+
+- In `rocky run`, the queued run starts right away (after any run of that job already going).
+- In `rocky exec`, queued jobs run after the job, in order, even if it failed; only the job's own result is printed.
+- A job that triggers itself without a `when` never stops.
 
 ## Schedules and `rocky run`
 
@@ -146,21 +185,22 @@ A job's `schedule` has exactly one of:
 
 | Field | Example |
 |---|---|
-| `every` (+ optional `delay`) | `{every: 5m, delay: 10s}`; units `s`, `m`, `h` only (`90m`, not `1h30m`) |
+| `every` (+ optional `delay`) | `{every: 5m, delay: 10s}` |
 | `hourly` | `{hourly: 15}` (minute 0-59) |
 | `daily` | `{daily: "09:30"}`, quoted |
 | `weekly` | `{weekly: {days: [mon, fri], time: "09:30"}}` |
 | `at` | `{at: "2027-10-10T09:30:00"}`, local time, no `Z` |
 
-`run_on_start: true` (not with `every`) also runs once at startup. Times are local.
+`run_on_start: true` (not with `every`) also runs once at startup; on its own it runs the job once at startup. Times are local.
 
 ```sh
 rocky run project.yaml                            # runs scheduled jobs until stopped
 rocky run project.yaml --socket /tmp/rocky.sock   # also accept requests; no schedule needed
+rocky run project.yaml --service NAME             # log files named NAME-YYYY-MM-DD.log
 rocky trigger /tmp/rocky.sock report              # queue a run of `report`
 ```
 
-`run` writes one JSON log line per event to stdout and to `.rocky/logs/YYYY-MM-DD.log` in the current directory. The project is re-read on each run; schedules only at startup. To keep it running in the background, see the systemd/launchd notes in rocky's `docs/service.md`.
+`run` writes one JSON log line per event to stdout and to `.rocky/logs/YYYY-MM-DD.log` in the current directory. The project is re-read on each run; schedules only at startup. A job never overlaps itself. Without `--socket`, `run` exits once only finished `at` and `run_on_start`-only jobs are left.
 
 ## Errors and exit codes
 
@@ -171,3 +211,7 @@ rocky trigger /tmp/rocky.sock report              # queue a run of `report`
 - Stopped by a signal: `128 + signal` (Ctrl-C is `130`); running commands are killed.
 
 stdout only ever holds results, so `rocky exec p.yaml job | jq .stdout` is safe.
+
+## Full documentation
+
+For details beyond this summary, read the page in rocky's `docs/` directory: `projects.md`, `yaml.md`, `tasks.md`, `cmd-tasks.md`, `variables.md`, `conditions.md`, `loops.md`, `files.md`, `triggers.md`, `cli.md`, `run.md` (log events), `schedules.md`, `service.md` (systemd/launchd), `debugging.md`.
