@@ -179,6 +179,7 @@ pub fn load_parts(
     let jobs_dir = root.join(JOBS_DIR);
     let mut loaded = BTreeMap::new();
     for (name, text) in jobs {
+        check_job_name(name)?;
         let job = load_job(
             &jobs_dir.join(format!("{name}.yaml")),
             text,
@@ -244,6 +245,17 @@ fn load_job(
     job.defaults = std::mem::take(&mut job.defaults).over(defaults);
     job.defaults.apply(&mut job.tasks);
     Ok(job)
+}
+
+/// Checks that `name` can be a job file's name in `jobs/`: not empty, without `/` or `\`,
+/// and not starting with `.`.
+pub fn check_job_name(name: &str) -> Result<(), Error> {
+    if name.is_empty() || name.starts_with('.') || name.contains(['/', '\\']) {
+        return Err(Error::InvalidProject(format!(
+            "job name `{name}` must be a file name: not empty, without `/` or `\\`, and not starting with `.`"
+        )));
+    }
+    Ok(())
 }
 
 /// Checks that every `values` name is a valid var name.
@@ -367,6 +379,23 @@ mod tests {
         assert_eq!(project.env_file, None);
         let dir = tempfile::tempdir().unwrap();
         load_in(dir.path(), Some("# nothing yet\n"), &[("w", ECHO)]).unwrap();
+    }
+
+    #[test]
+    fn job_names_must_be_file_names() {
+        for name in ["", ".hidden", "a/b", "../x", "a\\b"] {
+            let err = load_parts(Path::new(""), None, &[(name.into(), ECHO.into())]).unwrap_err();
+            assert!(
+                err.to_string().contains("must be a file name"),
+                "{name}: {err}"
+            );
+        }
+        load_parts(
+            Path::new(""),
+            None,
+            &[("nightly-report".into(), ECHO.into())],
+        )
+        .unwrap();
     }
 
     #[test]

@@ -15,12 +15,12 @@ fn optional() -> [(&'static str, Value); 9] {
     [
         ("stdin", Value::from("")),
         ("env", doc::map_of([("NAME", Value::from(""))])),
-        ("cwd", Value::from(".")),
+        ("cwd", Value::from("..")),
         (
             "pipe",
             Value::Sequence(vec![Value::Sequence(vec![Value::from("cat")])]),
         ),
-        ("stdout_file", Value::from("out.json")),
+        ("stdout_file", Value::from("../out.json")),
         ("capture_stdout", Value::from(false)),
         ("timeout", Value::from("30s")),
         (
@@ -57,7 +57,11 @@ pub fn rows(root: &Value, path: &Path) -> Vec<Row> {
     for (key, field, hint) in [
         ("timeout", Field::Optional, ""),
         ("stdin", Field::Flow, "text, or YAML sent as JSON"),
-        ("cwd", Field::Optional, "relative to the job file"),
+        (
+            "cwd",
+            Field::Optional,
+            "relative to the job file: .. is the project folder",
+        ),
         (
             "stdout_file",
             Field::Optional,

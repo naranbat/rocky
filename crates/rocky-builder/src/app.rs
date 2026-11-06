@@ -495,16 +495,6 @@ impl App {
                     self.rename(job::path(&job));
                 }
             }
-            KeyCode::Char('J') | KeyCode::Char('K') => {
-                if let Some(job) = job {
-                    let by = if key.code == KeyCode::Char('J') {
-                        1
-                    } else {
-                        -1
-                    };
-                    node::shift(&mut doc.root, &job::path(&job), by);
-                }
-            }
             _ => {}
         }
     }
@@ -728,6 +718,9 @@ impl App {
             if path.last_key() == Some(new) {
                 return Ok(());
             }
+            if *path == job::path(path.last_key().unwrap_or_default()) {
+                rocky_core::project::check_job_name(new).map_err(|error| error.to_string())?;
+            }
             let renamed = node::rename(&mut doc.root, path, new)
                 .ok_or_else(|| format!("`{new}` is empty or already used"))?;
             self.renamed(path, &renamed);
@@ -899,7 +892,12 @@ impl App {
         );
         let main = main.inner(ratatui::layout::Margin::new(1, 0));
         if self.show_yaml {
-            yaml_view::draw(frame, main, &text, &mut self.yaml_scroll);
+            let job = match &self.selection {
+                Selection::Project => None,
+                Selection::Job(job) => Some(job.as_str()),
+            };
+            let file = yaml_view::file(&text, job);
+            yaml_view::draw(frame, main, &file, &mut self.yaml_scroll);
         } else {
             let editing = match &self.mode {
                 Mode::Edit { input, .. } if self.pane == Pane::Main => Some(input),
@@ -1012,7 +1010,7 @@ impl App {
             (Mode::Output(_), _) => "tab switch · ↑↓ scroll · esc close",
             (Mode::Help, _) => "any key closes",
             (Mode::Normal, Pane::Sidebar) => {
-                "↑↓ select · enter edit · a add job · r rename · x delete · J/K move · tab pane · R run · S scheduler · ctrl-s save · ? help · q quit"
+                "↑↓ select · enter edit · a add job · r rename · x delete · tab pane · R run · S scheduler · ctrl-s save · ? help · q quit"
             }
             (Mode::Normal, Pane::Main) => {
                 "↑↓ move · enter edit/open · esc back · x remove · r rename · J/K move · R run · U run to here · o output · y yaml · ctrl-s save · ? help"
@@ -1116,7 +1114,7 @@ const HELP: [(&str, &str); 18] = [
     ("enter  →", "edit a field, open a task, or pick"),
     ("esc  ←", "leave a task, or go back to the sidebar"),
     ("x  del", "remove the field, entry or task"),
-    ("J  K", "move the entry, task or job down / up"),
+    ("J  K", "move the entry or task down / up"),
     ("r", "rename the job, task or variable"),
     ("a", "add a job (sidebar)"),
     ("R", "run the job, unsaved edits included"),
@@ -1124,7 +1122,7 @@ const HELP: [(&str, &str); 18] = [
     ("ctrl-c", "stop the run; with none, quit"),
     ("o", "the output of a task's last run"),
     ("S", "start or stop the scheduler (rocky run)"),
-    ("y", "show the YAML Save writes"),
+    ("y", "show the file Save writes: the job's, or rocky.yaml"),
     ("V", "validate now"),
     ("ctrl-s", "save"),
     ("?", "this help"),
@@ -1484,8 +1482,14 @@ jobs:
         type_text(&mut app, "nightly");
         press(&mut app, KeyCode::Enter);
         assert_eq!(app.selection, Selection::Job("nightly".to_string()));
-        press(&mut app, KeyCode::Char('K'));
-        assert_eq!(app.doc.as_ref().unwrap().job_names(), ["nightly", "a"]);
+        // A job's name is its file's: `../x` would leave `jobs/`.
+        press(&mut app, KeyCode::Char('r'));
+        ctrl(&mut app, 'u');
+        type_text(&mut app, "../x");
+        press(&mut app, KeyCode::Enter);
+        assert!(matches!(&app.message, Some(Err(error)) if error.contains("must be a file name")));
+        press(&mut app, KeyCode::Esc);
+        assert_eq!(app.doc.as_ref().unwrap().job_names(), ["a", "nightly"]);
         press(&mut app, KeyCode::Char('q'));
         press(&mut app, KeyCode::Char('n'));
         assert!(!app.quit);

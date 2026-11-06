@@ -80,6 +80,9 @@ pub fn load(dir: &Path, text: &str) -> Result<Project, Error> {
 pub fn write(dir: &Path, saved: &str, text: &str) -> anyhow::Result<()> {
     let old = split(saved)?;
     let new = split(text)?;
+    for (name, _) in &new.jobs {
+        project::check_job_name(name)?;
+    }
     let settings_path = dir.join(SETTINGS_FILE);
     if new.settings != old.settings && (new.settings.is_some() || settings_path.exists()) {
         write_file(&settings_path, new.settings.as_deref().unwrap_or(""))?;
