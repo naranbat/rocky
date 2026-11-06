@@ -175,7 +175,7 @@ pub fn rows(root: &Value, path: &Path) -> Vec<Row> {
             "run_on_start",
             Line::styled(
                 format!("{mark} also run once when `rocky run` starts"),
-                theme::text(),
+                theme::value(),
             ),
             toggled,
         ));

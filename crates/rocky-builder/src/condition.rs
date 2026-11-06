@@ -226,7 +226,7 @@ fn leaf_rows(root: &Value, path: &Path, condition: &Value, depth: usize, rows: &
             .map_or(*key, |(_, label, _)| label);
         rows.push(Row::field(
             &indent(depth, "is"),
-            Line::styled(format!("{label} ({key})"), theme::text()),
+            Line::styled(format!("{label} ({key})"), theme::value()),
             Action::Pick(
                 "Operator".to_string(),
                 operator_choices(path, condition, map, Some(key), present.len() > 1),

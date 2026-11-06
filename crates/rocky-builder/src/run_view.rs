@@ -80,10 +80,10 @@ fn badge(task: &TaskRun) -> (String, Style) {
         return (format!("✓ queued {target}"), theme::ok());
     }
     if let Some(items) = task.items {
-        return (format!("↻ {items} items"), theme::text());
+        return (format!("↻ {items} items"), theme::value());
     }
     if let Some((checks, _)) = task.check {
-        return (format!("↻ {checks} checks"), theme::text());
+        return (format!("↻ {checks} checks"), theme::value());
     }
     let Some(last) = &task.last else {
         return (String::new(), theme::dim());
@@ -126,7 +126,7 @@ pub fn task_rows(run: Shown, job: &str, name: &str) -> Vec<Row> {
         rows.push(
             Row::field(
                 "output",
-                Line::styled("view stdout · stderr · result (o)", theme::text()),
+                Line::styled("view stdout · stderr · result (o)", theme::value()),
                 Action::Output(name.to_string()),
             )
             .for_task(name),

@@ -81,7 +81,7 @@ pub fn rows(root: &Value, path: &Path) -> Vec<Row> {
             rows.push(
                 Row::field(
                     key,
-                    Line::styled(if on { "[x] on" } else { "[ ] off" }, theme::text()),
+                    Line::styled(if on { "[x] on" } else { "[ ] off" }, theme::value()),
                     Action::Set(path.key(key), Some(Value::from(!on))),
                 )
                 .removable(path.key(key)),

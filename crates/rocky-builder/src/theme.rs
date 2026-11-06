@@ -3,6 +3,8 @@
 use ratatui::style::{Color, Modifier, Style};
 
 pub const TEXT: Color = Color::Rgb(0xe6, 0xe6, 0xe6);
+/// Values in the editor pane: softer than `TEXT`, which titles keep.
+pub const VALUE: Color = Color::Rgb(0xbd, 0xbd, 0xbd);
 pub const DIM: Color = Color::Rgb(0x7a, 0x7a, 0x7a);
 pub const ACCENT: Color = Color::Rgb(0xe8, 0xc8, 0x4f);
 pub const OK: Color = Color::Rgb(0x4c, 0xc2, 0x86);
@@ -22,6 +24,10 @@ pub const TRIGGER: Color = Color::Rgb(0xe8, 0x84, 0x4a);
 
 pub fn text() -> Style {
     Style::new().fg(TEXT)
+}
+
+pub fn value() -> Style {
+    Style::new().fg(VALUE)
 }
 
 pub fn dim() -> Style {

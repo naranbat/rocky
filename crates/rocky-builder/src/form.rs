@@ -242,11 +242,11 @@ pub fn highlight(text: &str) -> Line<'static> {
         let end = rest[start..]
             .find('}')
             .map_or(rest.len(), |end| start + end + 1);
-        spans.push(Span::styled(rest[..start].to_string(), theme::text()));
+        spans.push(Span::styled(rest[..start].to_string(), theme::value()));
         spans.push(Span::styled(rest[start..end].to_string(), theme::accent()));
         rest = &rest[end..];
     }
-    spans.push(Span::styled(rest.to_string(), theme::text()));
+    spans.push(Span::styled(rest.to_string(), theme::value()));
     Line::from(spans)
 }
 

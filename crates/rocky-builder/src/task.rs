@@ -185,7 +185,7 @@ pub fn list(ed: &mut Edit, root: &Value, path: &Path, top: bool) -> Vec<Row> {
         };
         let mut spans = vec![
             kind_span(Kind::of(task)),
-            Span::styled(summary(task), theme::text()),
+            Span::styled(summary(task), theme::value()),
         ];
         if task.get("when").is_some() {
             spans.push(Span::styled("  when", theme::accent()));
@@ -202,7 +202,7 @@ pub fn list(ed: &mut Edit, root: &Value, path: &Path, top: bool) -> Vec<Row> {
         }
         rows.push(
             Row::field(&label, Line::from(spans), Action::Open(name.clone()))
-                .label_style(theme::text())
+                .label_style(theme::value())
                 .removable(entry.clone())
                 .movable(entry.clone())
                 .renamable(entry)

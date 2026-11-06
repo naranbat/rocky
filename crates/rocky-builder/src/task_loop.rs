@@ -52,7 +52,7 @@ fn on_failure(root: &Value, path: &Path, next: &str) -> Row {
         "a do task fails",
         Line::styled(
             if current { next } else { "stop the loop" }.to_string(),
-            theme::text(),
+            theme::value(),
         ),
         Action::Pick("When a do task fails".to_string(), choices),
     )
