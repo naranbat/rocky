@@ -1,6 +1,6 @@
 //! Formats `run`'s log lines: one JSON object per line on stdout, also appended to
-//! `.rocky/logs/<date>.log` (or `<service>-<date>.log`, and `-<project>` before `.log` with a
-//! project set) in the current directory.
+//! `.rocky/logs/<date>.log` (`<date>-<project>.log` with a project set) in the current
+//! directory.
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -13,14 +13,6 @@ use serde_json::{Map, Value, json};
 
 use crate::exec::TaskResult;
 
-/// The `run --service` name that prefixes log file names, set once at startup.
-static SERVICE: OnceLock<String> = OnceLock::new();
-
-/// Prefixes every later log file name with `name`: `<name>-<date>.log`.
-pub fn set_service(name: String) {
-    let _ = SERVICE.set(name);
-}
-
 /// The `run -f` project file's stem that suffixes log file names, set once at startup.
 static PROJECT: OnceLock<String> = OnceLock::new();
 
@@ -30,8 +22,7 @@ pub fn set_project(name: String) {
 }
 
 /// Prints `event` as one JSON line, prefixed with the job name and the current time,
-/// and appends it to `.rocky/logs/<date>.log` (`<service>-<date>.log` with a service set,
-/// `<date>-<project>.log` with a project set). A failed log file write is reported on stderr; a
+/// and appends it to `.rocky/logs/<date>.log` (`<date>-<project>.log` with a project set). A failed log file write is reported on stderr; a
 /// closed stdout (`run | head`) is ignored, so the log file still gets every line.
 pub async fn emit(job: &str, event: Value) {
     let now = Zoned::now();
@@ -47,7 +38,6 @@ pub async fn emit(job: &str, event: Value) {
     let line = Value::Object(line).to_string();
     let _ = writeln!(std::io::stdout(), "{line}");
     let name = file_stem(
-        SERVICE.get().map(String::as_str),
         &now.strftime("%Y-%m-%d").to_string(),
         PROJECT.get().map(String::as_str),
     );
@@ -60,17 +50,12 @@ pub async fn emit(job: &str, event: Value) {
     }
 }
 
-/// The log file name without `.log`: `<date>`, prefixed with `<service>-` and suffixed with
-/// `-<project>` when given.
-fn file_stem(service: Option<&str>, date: &str, project: Option<&str>) -> String {
-    let mut stem = date.to_string();
-    if let Some(service) = service {
-        stem = format!("{service}-{stem}");
+/// The log file name without `.log`: `<date>`, or `<date>-<project>` with a project.
+fn file_stem(date: &str, project: Option<&str>) -> String {
+    match project {
+        Some(project) => format!("{date}-{project}"),
+        None => date.to_string(),
     }
-    if let Some(project) = project {
-        stem = format!("{stem}-{project}");
-    }
-    stem
 }
 
 /// Appends `line` to `<dir>/<name>.log` in one write, so lines from concurrent jobs
@@ -157,14 +142,9 @@ mod tests {
     }
 
     #[test]
-    fn names_file_by_service_date_and_project() {
-        assert_eq!(file_stem(None, "2026-10-11", None), "2026-10-11");
-        assert_eq!(file_stem(Some("web"), "2026-10-11", None), "web-2026-10-11");
-        assert_eq!(file_stem(None, "2026-10-11", Some("p")), "2026-10-11-p");
-        assert_eq!(
-            file_stem(Some("web"), "2026-10-11", Some("p")),
-            "web-2026-10-11-p"
-        );
+    fn names_file_by_date_and_project() {
+        assert_eq!(file_stem("2026-10-11", None), "2026-10-11");
+        assert_eq!(file_stem("2026-10-11", Some("p")), "2026-10-11-p");
     }
 
     #[test]

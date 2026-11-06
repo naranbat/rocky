@@ -194,7 +194,6 @@ A job's `schedule` has exactly one of:
 ```sh
 rocky run                                         # runs scheduled jobs until stopped
 rocky run --socket /tmp/rocky.sock                # also accept requests; no schedule needed
-rocky run --service NAME                          # log files named NAME-YYYY-MM-DD.log
 rocky run -f nightly.yaml                         # another project file; logs YYYY-MM-DD-nightly.log
 rocky trigger /tmp/rocky.sock report              # queue a run of `report`
 ```

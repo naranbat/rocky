@@ -32,7 +32,7 @@ enum Command {
     },
     /// Run the scheduled jobs of the project.
     ///
-    /// Runs until stopped, or, without `--socket`, until no job has runs left: only finished `at` and `run_on_start`-only schedules, or stopped ones. Prints one JSON line per event (`task`, `skip`, `for_each`, `while`, `trigger`, `triggered`, `done`, `error`, `stopped`, `skipped`), also appended to `.rocky/logs/<date>.log` (`<service>-<date>.log` with `--service`; `<date>-<PROJECT>.log` with `-f`, where PROJECT is the file name without its extension).
+    /// Runs until stopped, or, without `--socket`, until no job has runs left: only finished `at` and `run_on_start`-only schedules, or stopped ones. Prints one JSON line per event (`task`, `skip`, `for_each`, `while`, `trigger`, `triggered`, `done`, `error`, `stopped`, `skipped`), also appended to `.rocky/logs/<date>.log` (`<date>-<PROJECT>.log` with `-f`, where PROJECT is the file name without its extension).
     Run {
         /// The project file (default: `rocky.yaml`).
         #[arg(short, long)]
@@ -40,9 +40,6 @@ enum Command {
         /// Also run any job of the project when a client of this Unix socket sends `{"job": "NAME"}`.
         #[arg(long)]
         socket: Option<PathBuf>,
-        /// Prefix log file names with this name: `.rocky/logs/<NAME>-<date>.log`.
-        #[arg(long)]
-        service: Option<String>,
     },
     /// Ask a `rocky run --socket` to run one job.
     ///
@@ -136,14 +133,7 @@ async fn main() -> anyhow::Result<()> {
                 anyhow::bail!(failure);
             }
         }
-        Command::Run {
-            file,
-            socket,
-            service,
-        } => {
-            if let Some(name) = service {
-                progress::set_service(name);
-            }
+        Command::Run { file, socket } => {
             if let Some(stem) = file.as_deref().and_then(Path::file_stem) {
                 progress::set_project(stem.to_string_lossy().into_owned());
             }

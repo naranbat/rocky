@@ -47,7 +47,7 @@ The whole project is loaded and checked before anything runs. Any error stops `r
 
 ## Output
 
-Every log line is one JSON object on **stdout**, with `job`, `time` (local time with offset) and `event` fields. The same lines are appended to `.rocky/logs/YYYY-MM-DD.log` in the current directory, one file per day by each line's date (`.rocky/logs/NAME-YYYY-MM-DD.log` with `--service NAME`, and `YYYY-MM-DD-PROJECT.log` with `-f PROJECT.yaml`); the `.rocky/logs` directory is created if missing, and a failed write is reported on stderr without stopping `run`. If stdout is closed (`run | head`), `run` keeps running and logging to the file. Each run writes a line per task, skipped task, loop, `while` check and `trigger` task as it goes, then a `done` line, or an `error` line if it stopped on an error:
+Every log line is one JSON object on **stdout**, with `job`, `time` (local time with offset) and `event` fields. The same lines are appended to `.rocky/logs/YYYY-MM-DD.log` in the current directory, one file per day by each line's date (`.rocky/logs/YYYY-MM-DD-PROJECT.log` with `-f PROJECT.yaml`); the `.rocky/logs` directory is created if missing, and a failed write is reported on stderr without stopping `run`. If stdout is closed (`run | head`), `run` keeps running and logging to the file. Each run writes a line per task, skipped task, loop, `while` check and `trigger` task as it goes, then a `done` line, or an `error` line if it stopped on an error:
 
 ```json
 {"job":"poll","time":"2026-10-09T09:30:00+09:00","event":"task","task":"fetch","exit_code":0,"ms":412,"ok":true}

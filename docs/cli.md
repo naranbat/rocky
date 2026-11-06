@@ -9,7 +9,6 @@ rocky exec -f <FILE> <JOB>
 rocky run
 rocky run -f <FILE>
 rocky run --socket <PATH>
-rocky run --service <NAME>
 rocky trigger <SOCKET> <JOB>
 rocky validate
 rocky validate -f <FILE>
@@ -48,9 +47,7 @@ Runs every job of the project that has a [`schedule`](schedules.md), until stopp
 
 `--socket <PATH>` also listens on a Unix domain socket, so clients can run any job by sending `{"job": "NAME"}`. With it, no job needs a `schedule` and `run` runs until stopped. See [Triggering jobs over a socket](triggers.md#triggering-jobs-over-a-socket).
 
-`--service <NAME>` prefixes the log file names with `NAME`: `.rocky/logs/NAME-YYYY-MM-DD.log`, so services sharing a working directory keep separate files. See [Output](run.md#output).
-
-`-f <FILE>` suffixes them with the project file's name without its extension: `rocky run -f nightly.yaml` writes `.rocky/logs/YYYY-MM-DD-nightly.log` (`NAME-YYYY-MM-DD-nightly.log` with `--service NAME`). Without `-f` the names have no suffix.
+`-f <FILE>` suffixes the log file names with the project file's name without its extension: `rocky run -f nightly.yaml` writes `.rocky/logs/YYYY-MM-DD-nightly.log`, so projects sharing a working directory keep separate files. Without `-f` the names have no suffix. See [Output](run.md#output).
 
 ## `rocky trigger <SOCKET> <JOB>`
 
