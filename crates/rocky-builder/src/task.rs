@@ -302,6 +302,7 @@ pub fn rows(ed: &mut Edit, root: &Value, tasks: &Path, name: &str) -> Vec<Row> {
                 &path.key("when"),
                 "when",
                 "otherwise skipped",
+                true,
             ));
         }
         match kind {

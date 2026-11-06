@@ -1032,7 +1032,12 @@ impl App {
                 cursor,
             } => {
                 let height = u16::try_from(choices.len() + 2).unwrap_or(u16::MAX);
-                let box_area = centered(area, 64, height);
+                let box_area = centered(area, 72, height);
+                let width = choices
+                    .iter()
+                    .map(|choice| choice.label.chars().count() + 2)
+                    .max()
+                    .unwrap_or(0);
                 let lines: Vec<Line> = choices
                     .iter()
                     .enumerate()
@@ -1041,7 +1046,7 @@ impl App {
                         Line::from(vec![
                             Span::styled(if on { "› " } else { "  " }, theme::accent()),
                             Span::styled(
-                                format!("{:<16}", choice.label),
+                                format!("{:<width$}", choice.label),
                                 if on { theme::accent() } else { theme::text() },
                             ),
                             Span::styled(choice.detail.clone(), theme::dim()),

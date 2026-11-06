@@ -3,6 +3,7 @@
 use ratatui::text::Line;
 use serde_yaml::{Mapping, Value};
 
+use crate::condition;
 use crate::edit::Edit;
 use crate::form::{Action, Choice, Field, Row};
 use crate::node::{self, Path};
@@ -21,15 +22,20 @@ pub fn for_each(ed: &mut Edit, root: &Value, path: &Path) -> Vec<Row> {
 }
 
 pub fn while_loop(ed: &mut Edit, root: &Value, path: &Path) -> Vec<Row> {
-    let mut rows = vec![
-        // The loop needs its condition, so it can't be removed.
-        Row::edit("while", root, path.key("while"), Field::Flow),
-        Row::hint("checked before each run"),
+    // The loop needs its condition, so it can't be removed.
+    let mut rows = condition::rows(
+        root,
+        &path.key("while"),
+        "while",
+        "checked before each run",
+        false,
+    );
+    rows.push(
         Row::edit("at most", root, path.key("attempts"), Field::Number)
             .removable(path.key("attempts")),
-        Row::hint("attempts, then fail; none means no limit"),
-        on_failure(root, path, "go on with the next run"),
-    ];
+    );
+    rows.push(Row::hint("attempts, then fail; none means no limit"));
+    rows.push(on_failure(root, path, "go on with the next run"));
     rows.extend(body(ed, root, path));
     rows
 }

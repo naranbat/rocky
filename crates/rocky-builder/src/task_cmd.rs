@@ -173,7 +173,8 @@ pub fn retry(root: &Value, path: &Path) -> Vec<Row> {
         root,
         &path.key("until"),
         "retry until",
-        "retried until this holds; without until, until it exits 0",
+        "retried until this holds",
+        true,
     ));
     rows
 }
