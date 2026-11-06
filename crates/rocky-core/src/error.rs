@@ -52,6 +52,10 @@ pub enum Error {
     InvalidSchedule(String),
     #[error("invalid project: {0}")]
     InvalidProject(String),
+    #[error(
+        "job name `{0}` must be a file name: not empty, without `/` or `\\`, and not starting with `.`"
+    )]
+    InvalidJobName(String),
     #[error("no job `{name}` (available: {available})")]
     UnknownJob { name: String, available: String },
     #[error("job `{name}`")]

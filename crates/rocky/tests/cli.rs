@@ -718,7 +718,10 @@ fn new_job_rejects_names_that_are_not_file_names() {
     for name in ["a/b", "../x", ".draft", ""] {
         let out = rocky(&["new", "job", name], dir.path());
         assert_eq!(out.status.code(), Some(1), "{name}");
-        assert_stderr_contains(&out, "must be a file name");
+        assert_stderr_contains(
+            &out,
+            &format!("Error: job name `{name}` must be a file name"),
+        );
     }
     assert!(std::fs::read_dir(dir.path()).unwrap().next().is_none());
 }

@@ -251,9 +251,7 @@ fn load_job(
 /// and not starting with `.`.
 pub fn check_job_name(name: &str) -> Result<(), Error> {
     if name.is_empty() || name.starts_with('.') || name.contains(['/', '\\']) {
-        return Err(Error::InvalidProject(format!(
-            "job name `{name}` must be a file name: not empty, without `/` or `\\`, and not starting with `.`"
-        )));
+        return Err(Error::InvalidJobName(name.to_string()));
     }
     Ok(())
 }
