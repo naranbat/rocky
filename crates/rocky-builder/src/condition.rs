@@ -51,6 +51,25 @@ pub fn rows(root: &Value, path: &Path, label: &str, note: &str, removable: bool)
     }
     let mut rows = vec![first];
     node_rows(root, path, 1, remove.as_ref(), &mut rows);
+    // A single condition (or a NOT) becomes a group with a second one; a group has its own
+    // add rows.
+    if group(condition).is_none() {
+        let add = |what: &str, joined: Value| {
+            Row::field(
+                "",
+                Line::styled(indent(1, &format!("+ {what}")), theme::dim()),
+                Action::Set(path.clone(), Some(joined)),
+            )
+        };
+        rows.push(add(
+            "and condition · every one must hold",
+            Value::Sequence(vec![condition.clone(), new_leaf()]),
+        ));
+        rows.push(add(
+            "or condition · at least one must hold",
+            doc::map_of([("any", Value::Sequence(vec![condition.clone(), new_leaf()]))]),
+        ));
+    }
     rows
 }
 
@@ -369,6 +388,44 @@ mod tests {
             Some(path.key("any").index(0))
         );
         assert_eq!(rows[1].remove, Some(path.clone()));
+    }
+
+    #[test]
+    fn a_single_condition_offers_and_or_another() {
+        let root = doc::map_of([("when", new_leaf())]);
+        let path = Path::default().key("when");
+        let rows = rows(&root, &path, "when", "otherwise skipped", true);
+        let add = |text: &str| {
+            let row = rows
+                .iter()
+                .find(|row| row.value.to_string().trim().starts_with(text))
+                .unwrap_or_else(|| panic!("no `{text}` in {:?}", labels(&rows)));
+            let Action::Set(at, Some(value)) = &row.action else {
+                panic!("{text}: not a Set");
+            };
+            assert_eq!(*at, path);
+            assert!(row.remove.is_none(), "{text} removes nothing");
+            doc::flow(value)
+        };
+        assert_eq!(
+            add("+ and condition"),
+            "[{this: tasks.NAME.ok, eq: true}, {this: tasks.NAME.ok, eq: true}]"
+        );
+        assert_eq!(
+            add("+ or condition"),
+            "{any: [{this: tasks.NAME.ok, eq: true}, {this: tasks.NAME.ok, eq: true}]}"
+        );
+        // A group adds through its own rows instead.
+        let grouped = doc::map_of([("when", Value::Sequence(vec![new_leaf()]))]);
+        let text = labels(&super::rows(&grouped, &path, "when", "", true));
+        assert!(
+            !text.iter().any(|row| row.contains("+ and condition")),
+            "{text:?}"
+        );
+        assert!(
+            text.iter().any(|row| row.contains("+ condition")),
+            "{text:?}"
+        );
     }
 
     #[test]
