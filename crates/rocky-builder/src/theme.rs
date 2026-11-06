@@ -6,6 +6,8 @@ pub const TEXT: Color = Color::Rgb(0xe6, 0xe6, 0xe6);
 /// Values in the editor pane: softer than `TEXT`, which titles keep.
 pub const VALUE: Color = Color::Rgb(0xbd, 0xbd, 0xbd);
 pub const DIM: Color = Color::Rgb(0x7a, 0x7a, 0x7a);
+/// A section heading's description: fainter than `DIM`, which the heading's title keeps.
+pub const FAINT: Color = Color::Rgb(0x5c, 0x5c, 0x5c);
 pub const ACCENT: Color = Color::Rgb(0xe8, 0xc8, 0x4f);
 pub const OK: Color = Color::Rgb(0x4c, 0xc2, 0x86);
 pub const ERROR: Color = Color::Rgb(0xe5, 0x5a, 0x52);
@@ -32,6 +34,10 @@ pub fn value() -> Style {
 
 pub fn dim() -> Style {
     Style::new().fg(DIM)
+}
+
+pub fn faint() -> Style {
+    Style::new().fg(FAINT)
 }
 
 pub fn accent() -> Style {

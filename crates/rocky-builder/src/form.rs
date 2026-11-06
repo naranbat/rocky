@@ -156,7 +156,7 @@ impl Row {
         Row::new(
             Kind::Heading,
             Span::styled(title.to_string(), theme::heading()),
-            Line::styled(hint.to_string(), theme::dim()),
+            Line::styled(hint.to_string(), theme::faint()),
             Action::None,
         )
     }
