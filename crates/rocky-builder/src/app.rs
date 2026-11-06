@@ -8,6 +8,7 @@ use std::time::Duration;
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::style::Stylize;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 use serde_yaml::Value;
@@ -872,7 +873,7 @@ impl App {
             Constraint::Length(1),
         ])
         .areas(area);
-        frame.render_widget(Paragraph::new(self.top_bar(doc, &text)), top);
+        frame.render_widget(Paragraph::new(self.top_bar(doc, &text)).bg(theme::BAR), top);
         if let Some(problem) = problem {
             frame.render_widget(
                 Paragraph::new(Line::styled(
