@@ -2978,8 +2978,11 @@ dependencies = [
 name = "rocky-builder"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "eframe",
  "rocky-core",
+ "serde_yaml",
+ "tempfile",
 ]
 
 [[package]]

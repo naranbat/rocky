@@ -7,3 +7,8 @@ edition.workspace = true
 [dependencies]
 rocky-core = { path = "../rocky-core" }
 eframe = "0.37.0"
+anyhow.workspace = true
+serde_yaml.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

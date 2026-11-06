@@ -189,7 +189,14 @@ impl Project {
 /// Loads a project and its job files, and validates every job. Relative paths are
 /// resolved against the directory of the file that contains them.
 pub fn load(path: &Path) -> Result<Project, Error> {
-    let raw: RawProject = read_yaml(path)?;
+    let text = read_text(path)?;
+    load_str(path, &text)
+}
+
+/// Like [`load`], with the project file's contents given as `text` instead of read from
+/// `path`; job and task files are still read from disk, relative to `path`.
+pub fn load_str(path: &Path, text: &str) -> Result<Project, Error> {
+    let raw: RawProject = parse_yaml(path, text)?;
     if raw.jobs.is_empty() {
         return Err(Error::InvalidProject("project has no jobs".to_string()));
     }
@@ -298,11 +305,20 @@ fn check_names<'a>(mut names: impl Iterator<Item = &'a String>) -> Result<(), Er
 
 /// Reads and parses a YAML file.
 pub(crate) fn read_yaml<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, Error> {
-    let text = std::fs::read_to_string(path).map_err(|source| Error::Io {
+    parse_yaml(path, &read_text(path)?)
+}
+
+/// Reads a file to a string.
+fn read_text(path: &Path) -> Result<String, Error> {
+    std::fs::read_to_string(path).map_err(|source| Error::Io {
         path: path.to_path_buf(),
         source,
-    })?;
-    serde_yaml::from_str(&text).map_err(|source| Error::Yaml {
+    })
+}
+
+/// Parses YAML `text`, naming `path` in the error.
+fn parse_yaml<T: serde::de::DeserializeOwned>(path: &Path, text: &str) -> Result<T, Error> {
+    serde_yaml::from_str(text).map_err(|source| Error::Yaml {
         path: path.to_path_buf(),
         source,
     })
@@ -316,6 +332,18 @@ mod tests {
         let path = dir.join("project.yaml");
         std::fs::write(&path, yaml).unwrap();
         load(&path)
+    }
+
+    #[test]
+    fn load_str_reads_text_in_place_of_the_file() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/imports.yaml");
+        let text = std::fs::read_to_string(&path).unwrap();
+        let from_text = load_str(&path, &text).unwrap();
+        assert_eq!(from_text.job_names(), load(&path).unwrap().job_names());
+        assert!(matches!(
+            load_str(&path, "jobs: [unclosed"),
+            Err(Error::Yaml { .. })
+        ));
     }
 
     #[test]
