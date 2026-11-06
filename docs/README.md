@@ -16,7 +16,7 @@ One page per topic. For installing and a first run, see the [project README](../
 | [Tasks](tasks.md) | Task kinds and fields, results, using earlier tasks' output, failures and `allow_failure` |
 | [Cmd tasks](cmd-tasks.md) | Running programs with `cmd:`, pipes, `stdin`, options, `retry`, reading and writing files |
 | [Variables](variables.md) | `${NAME}` substitution, `values`, `.env` files, lookup order, typed values and dot paths |
-| [Conditions](conditions.md) | `when` on jobs and tasks, and condition operators |
+| [Conditions](conditions.md) | `when` on tasks, and condition operators |
 | [Loops](loops.md) | `for_each` and `while` loops |
 | [Job and task files](files.md) | Keeping jobs and tasks in their own files, and reusing them with `with` and `values` |
 | [Triggers](triggers.md) | `trigger` tasks, and running jobs over a socket with `rocky trigger` |

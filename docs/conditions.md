@@ -1,6 +1,6 @@
 # Conditions
 
-Any job or task can have `when`, a condition. If the condition holds, it runs; if not, it is skipped and the job goes on with the next task. Without `when`, it always runs. There are no `if`/`then`/`else` or `switch` blocks: each task carries its own condition, so to run several tasks under the same condition, give each one that `when`.
+Any task can have `when`, a condition. If the condition holds, it runs; if not, it is skipped and the job goes on with the next task. Without `when`, it always runs. There are no `if`/`then`/`else` or `switch` blocks: each task carries its own condition, so to run several tasks under the same condition, give each one that `when`.
 
 The same conditions are used by a [`while` loop](loops.md#while) and by [`retry`](cmd-tasks.md#retry)'s `until`.
 
@@ -27,7 +27,6 @@ Example: the `conditional` job in [`examples/httpbin.yaml`](../examples/httpbin.
 
 | On | Checked | When false |
 |---|---|---|
-| a job | before its first task, against `values`, the `env_file` and the environment (no `tasks.*` yet) | no task runs; `exec` prints `null` |
 | a cmd task | when the job reaches the task | the task doesn't run |
 | a `for_each` or `while` loop | once, when the job reaches the loop | the whole loop is skipped |
 | a `trigger` task | when the job reaches it | the job isn't queued |
@@ -35,8 +34,7 @@ Example: the `conditional` job in [`examples/httpbin.yaml`](../examples/httpbin.
 
 - **A skipped task has no result.** `tasks.NAME` stays undefined (or keeps the result of an earlier task with that name), so test it with `exists`: `when: {this: tasks.B, exists: false}` runs a task only if `B` was skipped.
 - **Task files:** `when` can sit next to `file` and `with`. If the task file has its own `when` too, both must hold; the entry's is checked first. The file's `when` can read the entry's `with` inputs.
-- **Job files:** put `when` in the job file. A `jobs` entry with `file` can't have it.
-- With `run`, a skipped task writes a `skip` line with its `task`; a skipped job writes a `skip` line without one, then its `done` line.
+- With `run`, a skipped task writes a `skip` line with its `task`.
 
 ## Condition shape
 

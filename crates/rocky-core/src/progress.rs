@@ -83,12 +83,9 @@ pub fn task(name: &str, result: &TaskResult, elapsed: Duration, allowed: bool) -
     event
 }
 
-/// A task, or with `None` the whole job, skipped because its `when` doesn't hold.
-pub fn skip(name: Option<&str>) -> Value {
-    match name {
-        Some(name) => json!({"event": "skip", "task": name}),
-        None => json!({"event": "skip"}),
-    }
+/// A task skipped because its `when` doesn't hold.
+pub fn skip(name: &str) -> Value {
+    json!({"event": "skip", "task": name})
 }
 
 pub fn for_each(name: &str, var: &str, count: usize) -> Value {
@@ -151,8 +148,7 @@ mod tests {
 
     #[test]
     fn formats_control_flow_events() {
-        assert_eq!(skip(Some("big")), json!({"event": "skip", "task": "big"}));
-        assert_eq!(skip(None), json!({"event": "skip"}));
+        assert_eq!(skip("big"), json!({"event": "skip", "task": "big"}));
         assert_eq!(
             for_each("each", "IDS", 3),
             json!({"event": "for_each", "task": "each", "var": "IDS", "items": 3})

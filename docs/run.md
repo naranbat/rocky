@@ -58,7 +58,7 @@ Every log line is one JSON object on **stdout**, with `job`, `time` (local time 
 | `event` | Meaning and other fields |
 |---|---|
 | `task` | A cmd task finished, or one run of a task with [`retry`](cmd-tasks.md#retry) did. `task` (the task's key), then `exit_code` or `error` (a timeout with `allow_failure`), `ms`, `ok`, and `allowed: true` when it failed with `allow_failure`, or inside a loop with `on_failure: next`, and the job continued |
-| `skip` | `task`, for a task whose [`when`](conditions.md) doesn't hold; no `task` when the whole job is skipped |
+| `skip` | `task`, for a task whose [`when`](conditions.md) doesn't hold |
 | `for_each` | A [`for_each` loop](loops.md#for_each) started: `task`, `var`, `items` (the list length) |
 | `while` | A [`while` loop](loops.md#while) checked its condition: `task`, `iteration` (which check this is, from 1), `holds` (whether the condition held, so `do` runs again) |
 | `trigger` | `task`, `target`: a [`trigger` task](triggers.md#trigger-tasks) queued a run of the job `target` |

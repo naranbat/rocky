@@ -1,11 +1,10 @@
-//! The job editor: header, schedule, values, defaults, `when`, and tasks. Jobs kept in their
+//! The job editor: header, schedule, values, defaults, and tasks. Jobs kept in their
 //! own file show only what the project entry sets (`file`, `schedule`, `values`).
 
 use eframe::egui;
 use serde_yaml::{Mapping, Value};
 
 use crate::chips;
-use crate::condition;
 use crate::doc;
 use crate::edit::Edit;
 use crate::icons::Icon;
@@ -115,21 +114,6 @@ fn inline_job(ui: &mut egui::Ui, ed: &mut Edit, job: &mut Mapping) {
         ui.add_space(8.0);
     }
 
-    theme::section(ui, "JOB WHEN", "optional · checked before the first task");
-    if job.contains_key("when") {
-        condition::when_block(ui, ed, job, "false → no task runs");
-    } else {
-        ui.horizontal(|ui| {
-            if chips::add_button(ui, "add job condition").clicked() {
-                job.insert(Value::from("when"), condition::new_leaf());
-                ed.changed = true;
-            }
-            theme::hint(
-                ui,
-                "Reads values, .env and environment only; no tasks.* yet.",
-            );
-        });
-    }
     if !job.contains_key("defaults") && chips::add_button(ui, "job defaults").clicked() {
         job.insert(
             Value::from("defaults"),

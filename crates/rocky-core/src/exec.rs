@@ -216,7 +216,7 @@ fn queued(tasks: Vec<Task>) -> impl DoubleEndedIterator<Item = Work> {
 }
 
 /// Runs the project's `job` tasks in order; later tasks read earlier results as
-/// `tasks.NAME`. The job, or a task, whose `when` doesn't hold is skipped; a loop's `do`
+/// `tasks.NAME`. A task whose `when` doesn't hold is skipped; a loop's `do`
 /// tasks run once per list element, with the
 /// element bound to its `as` variable, or, for a `while` loop, as long as its condition holds.
 /// A failing task inside a loop with `allow_failure` skips the rest of that iteration.
@@ -240,15 +240,6 @@ pub async fn exec(
     .collect();
 
     let mut values: Map<String, Value> = tasks.values.into_iter().collect();
-    if let Some(condition) = tasks.when
-        && !condition.evaluate(&|var| lookup(var, &values, &env))?
-    {
-        log.event(job, progress::skip(None)).await;
-        return Ok(Outcome {
-            result: None,
-            failed_task: None,
-        });
-    }
     let mut last = None;
     // Next work last, so nested tasks are pushed in reverse to run in place.
     let mut stack: Vec<Work> = queued(tasks.tasks).rev().collect();
@@ -330,7 +321,7 @@ pub async fn exec(
                 .evaluate(&|var| lookup(var, &values, &env))
                 .map_err(to_task_error)?;
             if !holds {
-                log.event(job, progress::skip(Some(&name))).await;
+                log.event(job, progress::skip(&name)).await;
                 continue;
             }
         }
@@ -686,19 +677,6 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(stdout(&outcome), &json!({"GO": false, "IDS": [1]}));
-    }
-
-    #[tokio::test]
-    async fn job_when_skips_every_task() {
-        for (x, ran) in [("1", true), ("2", false)] {
-            let (project, _dir) = project_with_env(
-                "when: {this: X, eq: 1}\ntasks:\n  a:\n    cmd: [echo, hi]\n",
-                &[("X", x)],
-            );
-            let outcome = exec(project).await.unwrap();
-            assert_eq!(outcome.result.is_some(), ran, "{x}");
-            assert_eq!(outcome.failed_task, None);
-        }
     }
 
     #[tokio::test]

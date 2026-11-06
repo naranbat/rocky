@@ -109,7 +109,7 @@ allow_failure: false                # true continues after a non-zero exit or a 
 ";
 
 const FULL_CONTROL: &str = "
-  # `when`: any task (and any job) runs only if its condition holds; otherwise it is skipped.
+  # `when`: any task runs only if its condition holds; otherwise it is skipped.
   greet:
     when:                               # a list: all must hold (also `all`, `any`, `not`)
       - {this: tasks.login.exit_code, eq: 0}   # a name or dot path; ${} optional
@@ -233,7 +233,6 @@ fn full_tasks() -> String {
          LIMITS: {{retries: 3}}             # an object: read inside it with ${{LIMITS.retries}}\n\
          defaults:                           # timeout, cwd, env, retry for this job's cmd tasks; a task's own win\n  \
          env: {{LOG_LEVEL: info}}           # merged by name with each task's `env`\n\
-         when: {{this: REGION, matches: ^eu-}}  # run the job only if this holds (no tasks.* yet); else skip it\n\
          tasks:\n  \
          # An HTTP request with curl. Later tasks read its result by name; JSON output is parsed:\n  \
          # ${{tasks.login.stdout.json.token}}.\n  \
@@ -294,7 +293,6 @@ mod tests {
         let mut project = project::load(&project_file).unwrap();
         let example = project.take("example").unwrap();
         assert_eq!(example.schedule.is_some(), matches!(level, Level::Full));
-        assert_eq!(example.when.is_some(), matches!(level, Level::Full));
         if matches!(level, Level::Full) {
             assert_eq!(example.values["REGION"], "eu-west-1");
             assert_eq!(example.values["LIMITS"]["retries"], 3);
@@ -312,7 +310,6 @@ mod tests {
         let mut project = project::load(&project_file).unwrap();
         let w = project.take("w").unwrap();
         assert_eq!(w.schedule.is_some(), matches!(level, Level::Full));
-        assert_eq!(w.when.is_some(), matches!(level, Level::Full));
         if matches!(level, Level::Full) {
             assert_eq!(w.values["REGION"], "eu-west-1");
         }

@@ -63,7 +63,6 @@
         "schedule": { "$ref": "#/$defs/schedule" },
         "values": { "$ref": "#/$defs/variables" },
         "defaults": { "$ref": "#/$defs/defaults" },
-        "when": { "$ref": "#/$defs/condition" },
         "tasks": { "$ref": "#/$defs/nonEmptyTaskMap" }
       }
     },

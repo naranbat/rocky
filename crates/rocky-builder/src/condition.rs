@@ -32,7 +32,7 @@ pub fn new_leaf() -> Value {
     ])
 }
 
-/// The `when` of a task or job, framed and labeled, if it has one.
+/// The `when` of a task, framed and labeled, if it has one.
 pub fn when_block(ui: &mut egui::Ui, ed: &mut Edit, map: &mut Mapping, note: &str) {
     let Some(condition) = map.get_mut("when") else {
         return;

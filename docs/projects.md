@@ -57,7 +57,6 @@ Examples: [`httpbin.yaml`](../examples/httpbin.yaml) (jobs `login`, `mixed`, `co
 | `schedule` | Optional. When `rocky run` runs this job. See [Schedules](schedules.md). `exec` checks it but doesn't run it. |
 | `values` | Map of uppercase name → fixed value, read as `${NAME}` by this job's tasks; wins over a project value of the same name. See [Variables](variables.md#values). |
 | `defaults` | Fields this job's cmd tasks get unless they set them; win over the project's. See [Defaults](#defaults). |
-| `when` | Optional. A [condition](conditions.md) checked before the first task; if it doesn't hold, the job is skipped. A job file entry with `file` can't have it; put it in the job file. |
 | `tasks` | Required, and must not be empty. Map of task name → an inline task, a task-file path, or a task file with its own `with` inputs. Tasks run in the order they are written. See [Tasks](tasks.md). |
 
 ## Defaults

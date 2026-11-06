@@ -56,11 +56,6 @@ pub fn job_status(ui: &mut egui::Ui, run: Shown, job: &str) {
         upto.push_str(&format!(" · by the {by}"));
     }
     ui.horizontal(|ui| {
-        if results.job_skipped(job) {
-            theme::badge(ui, Some(Icon::Skip), "SKIPPED", theme::DIM);
-            theme::hint(ui, "the job's when was false · no task ran");
-            return;
-        }
         match &results.end {
             None => {
                 ui.spinner();

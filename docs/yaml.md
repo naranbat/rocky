@@ -93,6 +93,7 @@ Current Rocky syntax rejects these older forms:
 | `weekly` and `time` as sibling fields of `schedule` | `weekly: {days: [mon, fri], time: "09:30"}` |
 | `values` next to a task `file` | `with` (project, job and job-file `values` don't change) |
 | `if`/`then`/`else` or `switch`/`cases`/`default` on a task | [`when`](conditions.md) on each task it should gate; the old keys fail as ``invalid YAML in <file>`` with ``unknown field `if` `` (or `switch`) |
+| `when` on a job | [`when`](conditions.md) on each task it should gate; fails as ``invalid YAML in <file>`` with ``unknown field `when` `` |
 | `max` on a `while` loop | `attempts`; `max` fails with `` `max` is now `attempts` `` |
 
 ```yaml

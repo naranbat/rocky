@@ -22,7 +22,7 @@ cmd: [curl, -sS, --fail-with-body, https://httpbin.org/anything/login]
 
 - A task file holds one task, without a `name`: the key that points at it names it, so one file can be used under several names. It can use other task files, inside a loop too, but not itself, directly or through other files.
 - A task file entry is a path, or `{file: path, with: {...}, when: ...}` to give the file [inputs of its own](#reusing-a-task-file). Everything else goes in the file. To change another field for one use, write the task inline.
-- A job file has the [job fields](projects.md#job-fields) `schedule`, `values`, `defaults`, `when` and `tasks`. The project keeps `env_file`. To run one job file with different values or schedules, see [below](#reusing-a-job-file).
+- A job file has the [job fields](projects.md#job-fields) `schedule`, `values`, `defaults` and `tasks`. The project keeps `env_file`. To run one job file with different values or schedules, see [below](#reusing-a-job-file).
 - Paths are relative to the file they are written in; see [Paths](projects.md#paths).
 
 Example: [`imports.yaml`](../examples/imports.yaml), whose jobs all come from [`jobs/`](../examples/jobs/) and share its env file.

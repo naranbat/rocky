@@ -7,7 +7,6 @@ use serde::de::{self, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer};
 use serde_json::Value;
 
-use crate::condition::Condition;
 use crate::defaults::Defaults;
 use crate::error::Error;
 use crate::schedule::Schedule;
@@ -87,7 +86,6 @@ struct JobEntry {
     #[serde(default, deserialize_with = "unique")]
     values: BTreeMap<String, Value>,
     defaults: Option<Defaults>,
-    when: Option<Condition>,
     #[serde(default, deserialize_with = "some_named")]
     tasks: Option<Vec<Task>>,
 }
@@ -119,9 +117,6 @@ impl<'de> Deserialize<'de> for JobSource {
                     (Some(_), None) if entry.defaults.is_some() => Err(de::Error::custom(
                         "a job with `file` can't have `defaults`; set them in the job file",
                     )),
-                    (Some(_), None) if entry.when.is_some() => Err(de::Error::custom(
-                        "a job with `file` can't have `when`; set it in the job file",
-                    )),
                     (Some(file), None) => Ok(JobSource::File {
                         file,
                         schedule: entry.schedule,
@@ -131,7 +126,6 @@ impl<'de> Deserialize<'de> for JobSource {
                         schedule: entry.schedule,
                         values: entry.values,
                         defaults: entry.defaults.unwrap_or_default(),
-                        when: entry.when,
                         tasks,
                     }))),
                     (Some(_), Some(_)) => Err(de::Error::custom(
@@ -160,9 +154,6 @@ pub struct Job {
     /// Fields this job's `cmd` tasks get unless they set them; already applied once loaded.
     #[serde(default)]
     pub defaults: Defaults,
-    /// The job runs only if this condition holds when it starts; otherwise it is skipped.
-    #[serde(default)]
-    pub when: Option<Condition>,
     #[serde(deserialize_with = "task::named")]
     pub tasks: Vec<Task>,
 }
@@ -274,9 +265,6 @@ fn load_job(
         return Err(Error::InvalidProject("job has no tasks".to_string()));
     }
     check_names(job.values.keys())?;
-    if let Some(condition) = &job.when {
-        condition.validate()?;
-    }
     task::resolve(&mut job.tasks, &dir)?;
     job.values = values.clone().into_iter().chain(job.values).collect();
     job.defaults.validate()?;
@@ -560,6 +548,15 @@ mod tests {
             let cause = std::error::Error::source(&err).unwrap().to_string();
             assert!(cause.contains("unknown field `vars`"), "{yaml}: {cause}");
         }
+    }
+
+    #[test]
+    fn rejects_job_when() {
+        let dir = tempfile::tempdir().unwrap();
+        let yaml = "jobs:\n  w: {when: {this: X, eq: 1}, tasks: {e: {cmd: [echo]}}}\n";
+        let err = load_in(dir.path(), yaml).unwrap_err();
+        let cause = std::error::Error::source(&err).unwrap().to_string();
+        assert!(cause.contains("unknown field `when`"), "{cause}");
     }
 
     #[test]

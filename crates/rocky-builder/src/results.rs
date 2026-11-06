@@ -33,8 +33,6 @@ pub enum End {
 #[derive(Default)]
 pub struct Results {
     tasks: HashMap<(String, String), TaskRun>,
-    /// Jobs skipped as a whole because their `when` didn't hold.
-    skipped_jobs: Vec<String>,
     /// Jobs that reported anything, in the order they started.
     pub jobs: Vec<String>,
     pub end: Option<End>,
@@ -50,7 +48,6 @@ impl Results {
         let kind = event["event"].as_str().unwrap_or_default();
         let Some(task) = event["task"].as_str() else {
             match kind {
-                "skip" => self.skipped_jobs.push(job),
                 "done" => {
                     self.end = Some(End::Done {
                         failed: event["failed"].as_str().map(str::to_string),
@@ -91,10 +88,6 @@ impl Results {
         self.tasks.get(&(job.to_string(), task.to_string()))
     }
 
-    pub fn job_skipped(&self, job: &str) -> bool {
-        self.skipped_jobs.iter().any(|skipped| skipped == job)
-    }
-
     /// How many task runs `job` had, and how many of them failed.
     pub fn job_counts(&self, job: &str) -> (u32, u32) {
         self.tasks
@@ -121,7 +114,7 @@ mod tests {
             json!({"event": "task", "job": "j", "task": "greet", "ok": false, "exit_code": 1}),
             json!({"event": "skip", "job": "j", "task": "later"}),
             json!({"event": "trigger", "job": "j", "task": "page", "target": "other"}),
-            json!({"event": "skip", "job": "other"}),
+            json!({"event": "task", "job": "other", "task": "x", "ok": true, "exit_code": 0}),
             json!({"event": "done", "failed": null}),
         ] {
             results.apply(&event);
@@ -135,7 +128,6 @@ mod tests {
             results.task("j", "page").unwrap().queued.as_deref(),
             Some("other")
         );
-        assert!(results.job_skipped("other"));
         assert_eq!(results.jobs, ["j", "other"]);
         assert_eq!(results.job_counts("j"), (2, 1));
         assert!(matches!(results.end, Some(End::Done { failed: None })));

@@ -58,7 +58,7 @@ jobs:
 | Level | Fields |
 |---|---|
 | project | `jobs` (required), `values`, `env_file` (only here; relative to the project file), `defaults` |
-| job | `tasks` (required, non-empty map), `schedule`, `values` (win over project values), `defaults` (win over project defaults), `when` (skip the whole job unless it holds) |
+| job | `tasks` (required, non-empty map), `schedule`, `values` (win over project values), `defaults` (win over project defaults) |
 
 - Unknown keys anywhere are a load error.
 - `defaults: {timeout, cwd, env, retry}` fills those fields on every cmd task (nested ones and task files too) that doesn't set them; `env` merges by name. A default `cwd` is relative to the file the defaults are in. Use it instead of repeating `timeout`/`cwd: .`/`env` on each task.
@@ -125,11 +125,11 @@ For HTTP use `curl -sS --fail-with-body` so 4xx/5xx exit non-zero; `--json '@-'`
 
 - Quote `${...}` inside flow collections (`{...}` or `[...]`), quote numeric command arguments (`[sleep, "5"]`), and quote times, dates and strings containing YAML punctuation.
 - Durations are a whole number and one unit, `s`, `m` or `h`: `90m`, not `1h30m`, `1.5m` or `30`.
-- Removed forms fail to load: integer-second durations, `weekly` and `time` as siblings (use `weekly: {days, time}`), `values` next to a task `file` (use `with`), `if`/`switch` (use `when`), `max` on `while` (use `attempts`).
+- Removed forms fail to load: integer-second durations, `weekly` and `time` as siblings (use `weekly: {days, time}`), `values` next to a task `file` (use `with`), `if`/`switch` (use `when`), `when` on a job (put it on each task), `max` on `while` (use `attempts`).
 
 ## Conditions
 
-`when` skips a job or task unless its condition holds. A skipped task saves no result, so `tasks.NAME` stays undefined (test with `exists`). The same conditions are used by `while` and `retry`'s `until`.
+`when` skips a task unless its condition holds. A skipped task saves no result, so `tasks.NAME` stays undefined (test with `exists`). The same conditions are used by `while` and `retry`'s `until`.
 
 ```yaml
 big:                                 # runs only if it holds, else is skipped
@@ -166,7 +166,7 @@ Loops have no `cmd`, `timeout` or `allow_failure` (that's for cmd tasks); a loop
 
 ## Job and task files
 
-- Job file: `jobs: {report: jobs/report.yaml}`; the file holds `tasks`, `schedule`, `values`, `defaults`, `when`.
+- Job file: `jobs: {report: jobs/report.yaml}`; the file holds `tasks`, `schedule`, `values`, `defaults`.
 - Reuse one job file as several jobs: `jobs: {news: {file: jobs/fetch.yaml, schedule: {every: 1h}, values: {TARGET: https://x}}}`. Only `file`, `schedule`, `values` are allowed there.
 - Task file: `tasks: {login: tasks/login.yaml}`; the file holds one task of any kind, no `name`.
 - Reuse a task file with different inputs: `tasks: {as_bob: {file: tasks/login.yaml, with: {USER: bob}}}`. Only `file`, `with` and `when` are allowed there; the inputs win over job values while the file runs and their `${...}` is expanded when the task starts, e.g. `with: {USER: '${ITEM}'}`.

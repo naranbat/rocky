@@ -580,18 +580,6 @@ fn run_on_start_alone_runs_once_and_exits() {
 }
 
 #[test]
-fn run_logs_a_job_skipped_by_its_when() {
-    let dir = tempfile::tempdir().unwrap();
-    let output = run_yaml(
-        dir.path(),
-        "jobs:\n  hello:\n    schedule: {run_on_start: true}\n    values: {N: 2}\n    when: {this: N, eq: 1}\n\
-         \x20   tasks:\n      greet:\n        cmd: [echo, hi]\n",
-    );
-    assert!(output.status.success(), "{}", stderr(&output));
-    assert_eq!(events(&output), ["skip", "done"]);
-}
-
-#[test]
 fn run_rejects_a_project_without_a_schedule() {
     let dir = tempfile::tempdir().unwrap();
     let output = run_yaml(dir.path(), "jobs:\n  a:\n    tasks: {e: {cmd: [echo]}}\n");
