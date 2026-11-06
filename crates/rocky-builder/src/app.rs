@@ -10,6 +10,7 @@ use crate::doc::{self, Doc};
 use crate::edit::Edit;
 use crate::job;
 use crate::project;
+use crate::recent::Recent;
 use crate::run::Run;
 use crate::run_view::Shown;
 use crate::scheduler::{self, Scheduler};
@@ -24,8 +25,9 @@ const SAVE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::S)
 
 pub struct App {
     doc: Option<Doc>,
-    /// The path typed on the open screen.
-    open_path: String,
+    /// The start screen, shown while no project is open.
+    start: start::Start,
+    recent: Recent,
     selection: Selection,
     validation: Validation,
     show_yaml: bool,
@@ -42,14 +44,15 @@ pub struct App {
 
 impl App {
     pub fn new(cc: &eframe::CreationContext, path: Option<PathBuf>) -> App {
-        App::with_context(&cc.egui_ctx, path)
+        App::with_context(&cc.egui_ctx, path, Recent::load())
     }
 
-    fn with_context(ctx: &egui::Context, path: Option<PathBuf>) -> App {
+    fn with_context(ctx: &egui::Context, path: Option<PathBuf>, recent: Recent) -> App {
         theme::apply(ctx);
         let mut app = App {
             doc: None,
-            open_path: String::new(),
+            start: start::Start::default(),
+            recent,
             selection: Selection::Project,
             validation: Validation::default(),
             show_yaml: false,
@@ -78,6 +81,9 @@ impl App {
                 self.message = None;
                 self.run = None;
                 self.scheduler = None;
+                if let Err(error) = self.recent.record(path) {
+                    self.message = Some(Err(error));
+                }
             }
             Err(error) => self.message = Some(Err(format!("{error:#}"))),
         }
@@ -97,10 +103,33 @@ impl App {
                 Some(Err(error)) => Some(error.as_str()),
                 _ => None,
             };
-            match start::show(ui, &mut self.open_path, error) {
-                Some(start::Pick::Open(path)) => self.open(&path),
-                Some(start::Pick::Failed(error)) => self.message = Some(Err(error)),
-                None => {}
+            // Projects may have changed, or started a scheduler, while away.
+            let focused =
+                ui.input(|input| input.events.contains(&egui::Event::WindowFocused(true)));
+            if focused {
+                self.recent.refresh();
+            }
+            let picked = self.start.show(ui, &self.recent, error);
+            let saved = match picked {
+                Some(start::Pick::Open(path)) => {
+                    self.open(&path);
+                    Ok(())
+                }
+                Some(start::Pick::Created(path)) => {
+                    self.message = Some(Ok(format!("created {}", path.display())));
+                    self.recent.record(&path)
+                }
+                Some(start::Pick::Forget(path)) => self.recent.remove(&path),
+                None => Ok(()),
+            };
+            if let Err(error) = saved {
+                self.message = Some(Err(error));
+            }
+            const WELCOME: &str = "Welcome to Rocky";
+            if self.title != WELCOME {
+                ui.ctx()
+                    .send_viewport_cmd(egui::ViewportCommand::Title(WELCOME.to_string()));
+                self.title = WELCOME.to_string();
             }
             return;
         };
@@ -589,7 +618,7 @@ mod tests {
     /// checks that just looking at it leaves the document unchanged and valid.
     fn view_all(path: &Path) {
         let ctx = egui::Context::default();
-        let mut app = App::with_context(&ctx, Some(path.to_path_buf()));
+        let mut app = App::with_context(&ctx, Some(path.to_path_buf()), Recent::none());
         let doc = app.doc.as_ref().unwrap();
         let before = doc.text().unwrap();
         let views: Vec<Selection> = std::iter::once(Selection::Project)
@@ -637,7 +666,11 @@ mod tests {
     #[test]
     fn start_screen_reports_a_bad_path() {
         let ctx = egui::Context::default();
-        let mut app = App::with_context(&ctx, Some(PathBuf::from("/no/such/project.yaml")));
+        let mut app = App::with_context(
+            &ctx,
+            Some(PathBuf::from("/no/such/project.yaml")),
+            Recent::none(),
+        );
         for _ in 0..2 {
             let mut output = ctx.run_ui(egui::RawInput::default(), |ui| app.draw(ui));
             output.textures_delta.clear();
@@ -655,7 +688,7 @@ mod tests {
         let yaml = "jobs:\n  j:\n    tasks:\n      route: {if: {this: A, eq: 1}, then: {b: {cmd: [echo]}}}\n";
         std::fs::write(&path, yaml).unwrap();
         let ctx = egui::Context::default();
-        let mut app = App::with_context(&ctx, Some(path));
+        let mut app = App::with_context(&ctx, Some(path), Recent::none());
         for _ in 0..2 {
             let mut output = ctx.run_ui(egui::RawInput::default(), |ui| app.draw(ui));
             output.textures_delta.clear();
@@ -689,7 +722,7 @@ jobs:
 ";
         std::fs::write(&path, yaml).unwrap();
         let ctx = egui::Context::default();
-        let mut app = App::with_context(&ctx, Some(path.clone()));
+        let mut app = App::with_context(&ctx, Some(path.clone()), Recent::none());
         app.selection = Selection::Job("main".to_string());
         app.run = Some(Run::start(&path, yaml, "main", None));
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);

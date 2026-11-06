@@ -125,6 +125,19 @@ pub fn badge(ui: &mut egui::Ui, text: &str, color: Color32) -> egui::Response {
         .response
 }
 
+/// Rocky's mark: a mountain on a yellow square `size` points wide.
+pub fn logo(ui: &mut egui::Ui, size: f32) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::hover());
+    ui.painter().rect_filled(rect, size * 0.18, ACCENT);
+    ui.painter().text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        "⛰",
+        FontId::proportional(size * 0.5),
+        BG,
+    );
+}
+
 /// Dim helper text.
 pub fn hint(ui: &mut egui::Ui, text: &str) {
     ui.label(egui::RichText::new(text).color(DIM).size(12.0));

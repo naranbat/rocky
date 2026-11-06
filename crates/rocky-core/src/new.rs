@@ -203,6 +203,28 @@ pub fn create(kind: Kind, level: Level, path: &Path) -> Result<String, Error> {
     Ok(format!("created {}\n{hint}", path.display()))
 }
 
+/// Writes a starter project at `path`, as [`create`] does. With `env_file`, the project also
+/// reads `.env` next to it, which is created empty unless it exists. Never overwrites a file.
+pub fn project(level: Level, path: &Path, env_file: bool) -> Result<(), Error> {
+    if !env_file {
+        return create(Kind::Project, level, path).map(|_| ());
+    }
+    let text = match level {
+        Level::Basic => PROJECT.replacen("jobs:", "env_file: .env\n\njobs:", 1),
+        Level::Full => format!("{FULL_PROJECT_HEADER}{}", indent(&full_tasks(), 4)).replacen(
+            "# env_file: .env",
+            "env_file: .env",
+            1,
+        ),
+    };
+    write_new(path, &text)?;
+    let env = path.with_file_name(".env");
+    match write_new(&env, "") {
+        Err(Error::Exists(_)) => Ok(()),
+        other => other,
+    }
+}
+
 /// A job's `schedule`, and its `tasks` with one task of every kind, using every field.
 fn full_tasks() -> String {
     format!(
@@ -298,6 +320,31 @@ mod tests {
         assert!(a.tasks[0].cmd.is_some());
         assert_eq!(a.tasks[0].pipe.is_empty(), matches!(level, Level::Basic));
         assert_eq!(a.tasks[0].name, "sh");
+    }
+
+    #[test]
+    fn project_with_env_file() {
+        for level in [Level::Basic, Level::Full] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("p/project.yaml");
+            project(level, &path, true).unwrap();
+            assert_eq!(
+                std::fs::read_to_string(dir.path().join("p/.env")).unwrap(),
+                ""
+            );
+            let loaded = project::load(&path).unwrap();
+            assert_eq!(loaded.env_file, Some(dir.path().join("p/.env")));
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("project.yaml");
+        std::fs::write(dir.path().join(".env"), "KEEP=1\n").unwrap();
+        project(Level::Basic, &path, true).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join(".env")).unwrap(),
+            "KEEP=1\n"
+        );
+        let err = project(Level::Basic, &path, true).unwrap_err();
+        assert!(matches!(err, Error::Exists(_)), "{err}");
     }
 
     #[test]
