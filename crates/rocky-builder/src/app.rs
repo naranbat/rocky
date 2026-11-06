@@ -15,6 +15,7 @@ use crate::run_view::Shown;
 use crate::scheduler::{self, Scheduler};
 use crate::scope;
 use crate::sidebar::{self, Selection};
+use crate::start;
 use crate::theme;
 use crate::validate::Validation;
 use crate::yaml_view;
@@ -92,7 +93,15 @@ impl eframe::App for App {
 impl App {
     fn draw(&mut self, ui: &mut egui::Ui) {
         let Some(doc) = self.doc.as_mut() else {
-            open_screen(ui, self);
+            let error = match &self.message {
+                Some(Err(error)) => Some(error.as_str()),
+                _ => None,
+            };
+            match start::show(ui, &mut self.open_path, error) {
+                Some(start::Pick::Open(path)) => self.open(&path),
+                Some(start::Pick::Failed(error)) => self.message = Some(Err(error)),
+                None => {}
+            }
             return;
         };
         let text = match doc.text() {
@@ -557,34 +566,6 @@ fn main_view(ui: &mut egui::Ui, ed: &mut Edit, doc: &mut Doc, selection: &mut Se
     }
 }
 
-/// The screen shown before a project is open: a path field and Open.
-fn open_screen(ui: &mut egui::Ui, app: &mut App) {
-    egui::CentralPanel::default()
-        .frame(egui::Frame::new().fill(theme::BG).inner_margin(egui::Margin::same(40)))
-        .show(ui, |ui| {
-            ui.heading("rocky builder");
-            theme::hint(ui, "Open a project file. You can also pass it as an argument: rocky-builder project.yaml");
-            ui.add_space(12.0);
-            let mut open = false;
-            ui.horizontal(|ui| {
-                let response = ui.add(
-                    egui::TextEdit::singleline(&mut app.open_path)
-                        .hint_text("path/to/project.yaml")
-                        .desired_width(420.0),
-                );
-                open |= response.lost_focus() && ui.input(|input| input.key_pressed(Key::Enter));
-                open |= ui.button("Open").clicked();
-            });
-            if open {
-                let path = PathBuf::from(app.open_path.trim());
-                app.open(&path);
-            }
-            if let Some(Err(error)) = &app.message {
-                ui.label(RichText::new(error).color(theme::ERROR));
-            }
-        });
-}
-
 fn file_name(path: &Path) -> String {
     path.file_name()
         .map(|name| name.to_string_lossy().into_owned())
@@ -649,6 +630,20 @@ mod tests {
             }
         }
         assert!(viewed > 5);
+    }
+
+    /// Without a project, the start screen draws, and a typed path that doesn't exist
+    /// shows why it can't be opened.
+    #[test]
+    fn start_screen_reports_a_bad_path() {
+        let ctx = egui::Context::default();
+        let mut app = App::with_context(&ctx, Some(PathBuf::from("/no/such/project.yaml")));
+        for _ in 0..2 {
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| app.draw(ui));
+            output.textures_delta.clear();
+        }
+        assert!(app.doc.is_none());
+        assert!(matches!(&app.message, Some(Err(error)) if error.contains("no/such")));
     }
 
     /// An old-syntax task is invalid, flagged on its card, and drawn with its fix; viewing

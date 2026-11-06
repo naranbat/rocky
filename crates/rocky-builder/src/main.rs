@@ -17,6 +17,7 @@ mod schedule;
 mod scheduler;
 mod scope;
 mod sidebar;
+mod start;
 mod task;
 mod task_cmd;
 mod task_file;
