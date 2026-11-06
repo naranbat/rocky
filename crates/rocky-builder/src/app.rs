@@ -923,7 +923,7 @@ impl App {
                 suggest.draw(frame, input, field, main);
             }
         }
-        frame.render_widget(Paragraph::new(self.status_bar(doc)), status);
+        frame.render_widget(Paragraph::new(self.status_bar(doc)).bg(theme::BAR), status);
         frame.render_widget(Paragraph::new(self.key_hints()), keys);
         self.draw_overlay(frame, body);
     }
