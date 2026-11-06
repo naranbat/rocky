@@ -17,20 +17,26 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Run one job of the project in the current directory.
+    /// Run one job of the project.
     ///
-    /// Runs the `cmd` tasks of `jobs/<JOB>.yaml` in order, where later tasks read earlier results as `${tasks.NAME...}`. Prints the last result.
+    /// Runs the `cmd` tasks of the job's file in order, where later tasks read earlier results as `${tasks.NAME...}`. Prints the last result.
     Exec {
-        /// The job to run: the name of its file in `jobs/`, without `.yaml`.
+        /// The job to run: its name in the project file's `jobs`.
         job: String,
+        /// The project file (default: `rocky.yaml`).
+        #[arg(short, long)]
+        file: Option<PathBuf>,
         /// Print each command to stderr before it runs, with `${VAR}`s filled in.
         #[arg(short, long)]
         verbose: bool,
     },
-    /// Run the scheduled jobs of the project in the current directory.
+    /// Run the scheduled jobs of the project.
     ///
-    /// Runs until stopped, or, without `--socket`, until no job has runs left: only finished `at` and `run_on_start`-only schedules, or stopped ones. Prints one JSON line per event (`task`, `skip`, `for_each`, `while`, `trigger`, `triggered`, `done`, `error`, `stopped`, `skipped`), also appended to `.rocky/logs/<date>.log` (`<service>-<date>.log` with `--service`).
+    /// Runs until stopped, or, without `--socket`, until no job has runs left: only finished `at` and `run_on_start`-only schedules, or stopped ones. Prints one JSON line per event (`task`, `skip`, `for_each`, `while`, `trigger`, `triggered`, `done`, `error`, `stopped`, `skipped`), also appended to `.rocky/logs/<date>.log` (`<service>-<date>.log` with `--service`; `<date>-<PROJECT>.log` with `-f`, where PROJECT is the file name without its extension).
     Run {
+        /// The project file (default: `rocky.yaml`).
+        #[arg(short, long)]
+        file: Option<PathBuf>,
         /// Also run any job of the project when a client of this Unix socket sends `{"job": "NAME"}`.
         #[arg(long)]
         socket: Option<PathBuf>,
@@ -47,10 +53,14 @@ enum Command {
         /// The job to run.
         job: String,
     },
-    /// Check the project in the current directory for errors without running it.
+    /// Check the project for errors without running it.
     ///
-    /// Loads `rocky.yaml`, and every job file in `jobs/`, and reports whether they are valid. Sends no requests and runs no commands.
-    Validate,
+    /// Loads the project file and every job file it lists, and reports whether they are valid. Sends no requests and runs no commands.
+    Validate {
+        /// The project file (default: `rocky.yaml`).
+        #[arg(short, long)]
+        file: Option<PathBuf>,
+    },
     /// Create a starter project or job file.
     ///
     /// Never overwrites a file.
@@ -86,8 +96,9 @@ enum NewKind {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     match Cli::parse().command {
-        Command::Exec { job, verbose } => {
-            let root = Path::new(".");
+        Command::Exec { job, file, verbose } => {
+            let file = project_file(file);
+            let root = file.as_path();
             let (trigger, mut queue) = Trigger::channel();
             let project = project::load(root)?;
             let outcome = until_stopped(exec::exec(
@@ -125,19 +136,26 @@ async fn main() -> anyhow::Result<()> {
                 anyhow::bail!(failure);
             }
         }
-        Command::Run { socket, service } => {
+        Command::Run {
+            file,
+            socket,
+            service,
+        } => {
             if let Some(name) = service {
                 progress::set_service(name);
             }
-            let root = Path::new(".");
-            until_stopped(run::run(root, socket.as_deref())).await?
+            if let Some(stem) = file.as_deref().and_then(Path::file_stem) {
+                progress::set_project(stem.to_string_lossy().into_owned());
+            }
+            let file = project_file(file);
+            until_stopped(run::run(&file, socket.as_deref())).await?
         }
         Command::Trigger { socket, job } => {
             socket::send(&socket, &job).await?;
             println!("queued `{job}`");
         }
-        Command::Validate => {
-            let project = project::load(Path::new("."))?;
+        Command::Validate { file } => {
+            let project = project::load(&project_file(file))?;
             println!("project is valid (jobs: {})", project.job_names());
         }
         Command::New { kind, level } => {
@@ -159,6 +177,11 @@ async fn main() -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+/// The project file given with `-f`, or `rocky.yaml`.
+fn project_file(file: Option<PathBuf>) -> PathBuf {
+    file.unwrap_or_else(|| PathBuf::from(project::SETTINGS_FILE))
 }
 
 /// Why `outcome`'s job failed, as `task `name` reason`, if it did.

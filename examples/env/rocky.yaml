@@ -2,3 +2,6 @@
 #   rocky exec user
 #   rocky exec greet
 env_file: example.env
+jobs:
+  greet: jobs/greet.yaml
+  user: jobs/user.yaml

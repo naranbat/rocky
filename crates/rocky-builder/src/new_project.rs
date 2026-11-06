@@ -305,7 +305,7 @@ mod tests {
         let path = sheet.create().unwrap();
         assert_eq!(path, dir.path().join("automation"));
         assert!(dir.path().join("automation/.env").is_file());
-        rocky_core::project::load(&path).unwrap();
+        rocky_core::project::load(&path.join(SETTINGS_FILE)).unwrap();
         assert!(sheet.problem().unwrap().contains("already exists"));
     }
 

@@ -34,7 +34,7 @@ tasks:
 - **In `rocky exec`:** the queued jobs run after the job, one at a time in the order they were triggered, together with any jobs they trigger. They run even when a task of the job exited non-zero, but not after an error such as an undefined variable or a timeout. stdout is still the job's own result. See [`rocky exec`](cli.md#rocky-exec-job).
 - **Results:** a trigger saves nothing as `tasks.<name>` and can't fail; the triggered job's results stay in its own run.
 - **Loops:** a job that triggers itself without a condition never stops.
-- A trigger has no other fields, and its job must be a job of the project (a file in `jobs/`); both are checked when the project loads.
+- A trigger has no other fields, and its job must be a job of the project (listed under the project file's `jobs`); both are checked when the project loads.
 
 Example: [`examples/trigger/`](../examples/trigger/), whose `check` job triggers `alert` when the disk is nearly full and `report` every time.
 

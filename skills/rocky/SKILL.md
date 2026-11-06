@@ -1,20 +1,21 @@
 ---
 name: rocky
-description: Write, validate and run rocky projects, directories of YAML job files whose tasks run commands in order, pass output between tasks, run tasks conditionally, loop, and run on schedules. Use when the user wants to automate repeatable work with rocky, edits a rocky `rocky.yaml`, job or task YAML file, or runs `rocky exec`, `rocky run`, `rocky trigger`, `rocky validate` or `rocky new`.
+description: Write, validate and run rocky projects, a project file listing YAML job files whose tasks run commands in order, pass output between tasks, run tasks conditionally, loop, and run on schedules. Use when the user wants to automate repeatable work with rocky, edits a rocky `rocky.yaml`, job or task YAML file, or runs `rocky exec`, `rocky run`, `rocky trigger`, `rocky validate` or `rocky new`.
 ---
 
 # rocky
 
-rocky runs **projects**: a directory where every `jobs/NAME.yaml` file is one **job** named `NAME`, plus an optional `rocky.yaml` of shared settings. `exec`, `run` and `validate` work on the project in the **current directory**. A job is a map of named **tasks** that run one at a time, in the order written. A task runs a command (no shell), and later tasks read earlier tasks' output. `rocky exec` runs one job once; `rocky run` runs jobs on their `schedule`.
+rocky runs **projects**: a project file, `rocky.yaml` by default, whose `jobs` map each **job** name to its YAML file (`NAME: jobs/NAME.yaml`), plus settings the jobs share. `exec`, `run` and `validate` load `rocky.yaml` in the **current directory**, or the project file given with `-f FILE`. A job is a map of named **tasks** that run one at a time, in the order written. A task runs a command (no shell), and later tasks read earlier tasks' output. `rocky exec` runs one job once; `rocky run` runs jobs on their `schedule`.
 
 ## Workflow
 
 ```sh
-rocky new project [DIR]                      # starter project: jobs/example.yaml in DIR (default .)
+rocky new project [DIR]                      # starter project: rocky.yaml + jobs/example.yaml in DIR (default .)
 rocky new project full --level full          # every field, with comments: the full reference
-rocky new job deploy                         # jobs/deploy.yaml
+rocky new job deploy                         # jobs/deploy.yaml; then list it under `jobs` in rocky.yaml
 rocky validate                               # load-time checks only, runs nothing
-rocky exec JOB                               # run jobs/JOB.yaml once, print last task's result as JSON
+rocky exec JOB                               # run job JOB once, print last task's result as JSON
+rocky exec -f other.yaml JOB                 # same, with another project file
 rocky exec JOB --verbose                     # also print each command to stderr before it runs
 ```
 
@@ -29,9 +30,11 @@ There is **no dry run**: `exec` runs the real commands. Before executing a job w
 ## Example
 
 ```yaml
-# rocky.yaml (optional)
+# rocky.yaml
 values:                      # fixed values, read as ${NAME}; names are UPPERCASE
   BASE: https://httpbin.org
+jobs:                        # job name: its file, relative to this file
+  report: jobs/report.yaml
 ```
 
 ```yaml
@@ -59,13 +62,13 @@ tasks:
 
 | File | Fields |
 |---|---|
-| `rocky.yaml` (optional) | `values`, `env_file` (only here; relative to the project directory), `defaults`. No `jobs` |
-| `jobs/NAME.yaml` (at least one) | `tasks` (required, non-empty map), `schedule`, `values` (win over `rocky.yaml` values), `defaults` (win over `rocky.yaml` defaults) |
+| `rocky.yaml` (or `-f FILE`) | `jobs` (required: name → job file path), `values`, `env_file` (only here; relative to this file), `defaults` |
+| a job file (at least one) | `tasks` (required, non-empty map), `schedule`, `values` (win over `rocky.yaml` values), `defaults` (win over `rocky.yaml` defaults) |
 
 - Unknown keys anywhere are a load error.
 - `defaults: {timeout, cwd, env, retry}` fills those fields on every cmd task (nested ones too) that doesn't set them; `env` merges by name. A default `cwd` is relative to the file the defaults are in. Use it instead of repeating `timeout`/`cwd: .`/`env` on each task.
-- Every `*.yaml` directly in `jobs/` is a job; every task is written inline in its job file. To run a job with other values or a schedule, copy its file.
-- Relative paths (`cwd`, `stdout_file`) resolve against the file they're written in, so in a job `cwd: ..` is the project directory; `env_file` against the project directory. Commands **without** `cwd` run in the current directory.
+- Only jobs listed under `jobs` exist; a job can't be written inline there, and every task is written inline in its job file. To run a job with other values or a schedule, copy its file and list the copy.
+- Relative paths (`jobs` paths, `cwd`, `stdout_file`) resolve against the file they're written in, so in a job `cwd: ..` is the project directory; `env_file` against the project directory. Commands **without** `cwd` run in the current directory.
 
 ## Tasks
 
@@ -168,7 +171,7 @@ Loops have no `cmd`, `timeout` or `allow_failure` (that's for cmd tasks); a loop
 
 ## Triggers
 
-`trigger: JOB` queues a run of another job of the project (`jobs/JOB.yaml`) (scheduled or not) and the job goes on without waiting. It saves no result and can't fail.
+`trigger: JOB` queues a run of another job of the project (listed under `jobs`) (scheduled or not) and the job goes on without waiting. It saves no result and can't fail.
 
 - In `rocky run`, the queued run starts right away (after any run of that job already going).
 - In `rocky exec`, queued jobs run after the job, in order, even if a task exited non-zero (but not after an error such as an undefined variable or a timeout); only the job's own result is printed.
@@ -192,6 +195,7 @@ A job's `schedule` has exactly one of:
 rocky run                                         # runs scheduled jobs until stopped
 rocky run --socket /tmp/rocky.sock                # also accept requests; no schedule needed
 rocky run --service NAME                          # log files named NAME-YYYY-MM-DD.log
+rocky run -f nightly.yaml                         # another project file; logs YYYY-MM-DD-nightly.log
 rocky trigger /tmp/rocky.sock report              # queue a run of `report`
 ```
 

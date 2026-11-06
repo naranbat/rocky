@@ -1,14 +1,22 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/naranbat/rocky/main/schema/rocky.schema.json",
-  "title": "Rocky project settings",
-  "description": "A Rocky project's optional rocky.yaml: settings shared by every job in jobs/. Job files use job.schema.json.",
-  "type": ["object", "null"],
+  "title": "Rocky project",
+  "description": "A Rocky project file (rocky.yaml by default): its jobs and the settings they share. Job files use job.schema.json.",
+  "type": "object",
   "additionalProperties": false,
+  "required": ["jobs"],
   "properties": {
     "values": { "$ref": "#/$defs/variables" },
     "env_file": { "type": "string" },
-    "defaults": { "$ref": "#/$defs/defaults" }
+    "defaults": { "$ref": "#/$defs/defaults" },
+    "jobs": {
+      "description": "Each job's name and YAML file, relative to this file.",
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "pattern": "^[^./\\\\][^/\\\\]*$" },
+      "additionalProperties": { "type": "string" }
+    }
   },
   "$defs": {
     "duration": {

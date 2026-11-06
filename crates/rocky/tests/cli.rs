@@ -17,16 +17,16 @@ fn write(dir: &Path, name: &str, text: &str) -> PathBuf {
     path
 }
 
-/// Writes a project into `dir`: `settings` as `rocky.yaml` unless empty, and each
-/// (name, YAML) of `jobs` as `jobs/<name>.yaml`.
+/// Writes a project into `dir`: each (name, YAML) of `jobs` as `jobs/<name>.yaml`, and
+/// `rocky.yaml` of `settings` listing them.
 fn project(dir: &Path, settings: &str, jobs: &[(&str, &str)]) {
-    if !settings.is_empty() {
-        write(dir, "rocky.yaml", settings);
-    }
+    let mut text = format!("{settings}jobs:\n");
     std::fs::create_dir_all(dir.join("jobs")).unwrap();
     for (name, yaml) in jobs {
         write(dir, &format!("jobs/{name}.yaml"), yaml);
+        text.push_str(&format!("  {name}: jobs/{name}.yaml\n"));
     }
+    write(dir, "rocky.yaml", &text);
 }
 
 fn path_str(path: &Path) -> &str {
@@ -699,7 +699,9 @@ fn new_creates_dirs_and_never_overwrites() {
     let dir = tempfile::tempdir().unwrap();
     let out = rocky(&["new", "job", "deploy"], dir.path());
     assert!(out.status.success(), "{}", stderr(&out));
-    assert!(String::from_utf8_lossy(&out.stdout).contains("rocky exec deploy"));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("deploy: jobs/deploy.yaml"), "{stdout}");
+    assert!(stdout.contains("rocky exec deploy"), "{stdout}");
     assert!(dir.path().join("jobs/deploy.yaml").exists());
 
     let before = std::fs::read_to_string(dir.path().join("jobs/deploy.yaml")).unwrap();
@@ -769,13 +771,55 @@ fn validate_reports_the_load_error() {
 }
 
 #[test]
-fn a_directory_without_job_files_is_not_a_project() {
+fn a_project_needs_a_project_file_listing_jobs() {
     let dir = tempfile::tempdir().unwrap();
     for args in [&["validate"][..], &["exec", "w"], &["run"]] {
         let out = rocky(args, dir.path());
         assert_eq!(out.status.code(), Some(1), "{args:?}");
-        assert_stderr_contains(&out, "no jobs: add jobs/<name>.yaml");
+        assert_stderr_contains(&out, "failed to read rocky.yaml");
     }
+    write(dir.path(), "rocky.yaml", "env_file: .env\n");
+    for args in [&["validate"][..], &["exec", "w"], &["run"]] {
+        let out = rocky(args, dir.path());
+        assert_eq!(out.status.code(), Some(1), "{args:?}");
+        assert_stderr_contains(
+            &out,
+            "no jobs: add `jobs: {<name>: <path>.yaml}` to rocky.yaml",
+        );
+    }
+}
+
+#[test]
+fn file_flag_picks_the_project_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let sub = dir.path().join("sub");
+    std::fs::create_dir_all(sub.join("tasks")).unwrap();
+    write(&sub, "p.yaml", "jobs: {w: tasks/w.yaml}\n");
+    write(
+        &sub,
+        "tasks/w.yaml",
+        &format!(
+            "schedule: {{at: \"{}\"}}\ntasks:\n  t:\n    cmd: [echo, hi]\n",
+            at_in(300)
+        ),
+    );
+    let out = rocky(&["validate", "-f", "sub/p.yaml"], dir.path());
+    assert!(out.status.success(), "{}", stderr(&out));
+    let out = rocky(&["exec", "--file", "sub/p.yaml", "w"], dir.path());
+    assert_eq!(stdout_json(&out)["stdout"], "hi");
+    assert_stderr_contains(
+        &rocky(&["validate"], dir.path()),
+        "failed to read rocky.yaml",
+    );
+
+    let out = wait_with_deadline(spawn_rocky(&["run", "-f", "sub/p.yaml"], dir.path()));
+    assert!(out.status.success(), "{}", stderr(&out));
+    let logs: Vec<_> = std::fs::read_dir(dir.path().join(".rocky/logs"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .collect();
+    assert_eq!(logs.len(), 1);
+    assert!(logs[0].ends_with("-p.log"), "{logs:?}");
 }
 
 #[test]

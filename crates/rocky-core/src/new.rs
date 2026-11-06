@@ -16,9 +16,18 @@ tasks:
     cmd: [echo, hello]
 ";
 
+const BASIC_JOBS: &str = "\
+jobs:
+  example: jobs/example.yaml
+";
+
 const FULL_SETTINGS: &str = "\
-# Settings shared by every job in jobs/. Every field is shown; delete what you don't need.
-# This file is optional.
+# The project: its jobs and the settings they share. Every field is shown; delete what you don't need.
+
+# Each job's name and file, relative to this file. `rocky exec NAME` runs one; `rocky run` runs
+# those with a `schedule`.
+jobs:
+  example: jobs/example.yaml
 
 # Fixed values read as ${NAME} in every job's tasks: any YAML value (string, number, boolean,
 # list, object). Names are uppercase letters, digits and `_`. A job's own `values` win over these.
@@ -134,39 +143,35 @@ pub fn create(kind: Kind, level: Level, path: &Path) -> Result<String, Error> {
         Kind::Project => return project(level, path, false),
         Kind::Job => (
             job(&name, level),
-            format!("run it from the project directory: rocky exec {name}"),
+            format!(
+                "add it to the project's `jobs`: {name}: {}\nthen run it: rocky exec {name}",
+                path.display()
+            ),
         ),
     };
     write_new(path, &text)?;
     Ok(format!("created {}\n{hint}", path.display()))
 }
 
-/// Writes a starter project in directory `dir`: `jobs/example.yaml`, and with
-/// [`Level::Full`] or `env_file` a `rocky.yaml`. With `env_file`, the project also reads
+/// Writes a starter project in directory `dir`: `jobs/example.yaml` and a `rocky.yaml`
+/// listing it. With `env_file`, the project also reads
 /// `.env` in `dir`, which is created empty unless it exists. Never overwrites a file.
 /// Returns a hint on how to use it.
 pub fn project(level: Level, dir: &Path, env_file: bool) -> Result<String, Error> {
     let job_path = dir.join(JOBS_DIR).join("example.yaml");
     let settings_path = dir.join(SETTINGS_FILE);
     let settings = match (level, env_file) {
-        (Level::Basic, false) => None,
-        (Level::Basic, true) => Some("env_file: .env\n".to_string()),
-        (Level::Full, false) => Some(FULL_SETTINGS.to_string()),
-        (Level::Full, true) => {
-            Some(FULL_SETTINGS.replacen("# env_file: .env", "env_file: .env", 1))
-        }
+        (Level::Basic, false) => BASIC_JOBS.to_string(),
+        (Level::Basic, true) => format!("env_file: .env\n{BASIC_JOBS}"),
+        (Level::Full, false) => FULL_SETTINGS.to_string(),
+        (Level::Full, true) => FULL_SETTINGS.replacen("# env_file: .env", "env_file: .env", 1),
     };
-    let mut paths = vec![job_path.clone()];
-    if settings.is_some() {
-        paths.push(settings_path.clone());
-    }
+    let paths = [job_path.clone(), settings_path.clone()];
     if let Some(path) = paths.iter().find(|path| path.exists()) {
         return Err(Error::Exists(path.clone()));
     }
     write_new(&job_path, &job("example", level))?;
-    if let Some(text) = settings {
-        write_new(&settings_path, &text)?;
-    }
+    write_new(&settings_path, &settings)?;
     if env_file {
         match write_new(&dir.join(".env"), "") {
             Err(Error::Exists(_)) => {}
@@ -259,12 +264,16 @@ mod tests {
     fn templates_load_at(level: Level) {
         let dir = tempfile::tempdir().unwrap();
         create(Kind::Project, level, dir.path()).unwrap();
-        assert_eq!(
-            dir.path().join(SETTINGS_FILE).exists(),
-            matches!(level, Level::Full)
-        );
         create(Kind::Job, level, &dir.path().join("jobs/w.yaml")).unwrap();
-        let mut project = project::load(dir.path()).unwrap();
+        let settings = dir.path().join(SETTINGS_FILE);
+        let text = std::fs::read_to_string(&settings).unwrap();
+        let text = text.replacen(
+            "  example: jobs/example.yaml\n",
+            "  example: jobs/example.yaml\n  w: jobs/w.yaml\n",
+            1,
+        );
+        std::fs::write(&settings, text).unwrap();
+        let mut project = project::load(&settings).unwrap();
         for name in ["example", "w"] {
             let job = project.take(name).unwrap();
             assert_eq!(job.schedule.is_some(), matches!(level, Level::Full));
@@ -282,7 +291,7 @@ mod tests {
             let path = dir.path().join("p");
             project(level, &path, true).unwrap();
             assert_eq!(std::fs::read_to_string(path.join(".env")).unwrap(), "");
-            let loaded = project::load(&path).unwrap();
+            let loaded = project::load(&path.join(SETTINGS_FILE)).unwrap();
             assert_eq!(loaded.env_file, Some(path.join(".env")));
         }
         let dir = tempfile::tempdir().unwrap();

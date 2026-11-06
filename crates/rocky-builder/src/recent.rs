@@ -130,20 +130,21 @@ pub fn summarize(path: &Path) -> Summary {
             status: Status::Missing,
         };
     }
-    let (jobs, scheduled, status) = match rocky_core::project::load(path) {
-        Ok(project) => {
-            let scheduled = project
-                .jobs
-                .values()
-                .filter(|job| job.schedule.is_some())
-                .count();
-            (project.jobs.len(), scheduled, Status::Valid)
-        }
-        Err(error) => {
-            let (jobs, scheduled) = count_jobs(path);
-            (jobs, scheduled, Status::Invalid(error.chain()))
-        }
-    };
+    let (jobs, scheduled, status) =
+        match rocky_core::project::load(&path.join(rocky_core::project::SETTINGS_FILE)) {
+            Ok(project) => {
+                let scheduled = project
+                    .jobs
+                    .values()
+                    .filter(|job| job.schedule.is_some())
+                    .count();
+                (project.jobs.len(), scheduled, Status::Valid)
+            }
+            Err(error) => {
+                let (jobs, scheduled) = count_jobs(path);
+                (jobs, scheduled, Status::Invalid(error.chain()))
+            }
+        };
     let socket = path.join(".rocky/rocky.sock");
     let status = if UnixStream::connect(socket).is_ok() {
         Status::Running
@@ -187,6 +188,11 @@ mod tests {
         )
         .unwrap();
         std::fs::write(a.join("jobs/y.yaml"), "tasks: {t: {cmd: [echo]}}\n").unwrap();
+        std::fs::write(
+            a.join("rocky.yaml"),
+            "jobs: {x: jobs/x.yaml, y: jobs/y.yaml}\n",
+        )
+        .unwrap();
 
         let mut recent = Recent::at(Some(file.clone()));
         recent.record(&a).unwrap();
@@ -211,6 +217,7 @@ mod tests {
             "schedule: {every: 1m}\ntasks: {t: {cmd: []}}\n",
         )
         .unwrap();
+        std::fs::write(dir.path().join("rocky.yaml"), "jobs: {x: jobs/x.yaml}\n").unwrap();
         let summary = summarize(dir.path());
         assert_eq!((summary.jobs, summary.scheduled), (1, 1));
         assert!(matches!(summary.status, Status::Invalid(error) if error.contains("cmd")));

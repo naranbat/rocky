@@ -6,7 +6,7 @@ One page per topic. For installing and a first run, see the [project README](../
 
 | Page | What it covers |
 |---|---|
-| [Projects](projects.md) | The project directory: `jobs/`, `rocky.yaml` and job fields, `defaults`, execution order, validation and paths |
+| [Projects](projects.md) | The project file and its `jobs`, project and job fields, `defaults`, execution order, validation and paths |
 | [Writing YAML](yaml.md) | Editor schema, quoting, durations, and syntax that was removed |
 
 ## Writing projects

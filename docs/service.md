@@ -28,7 +28,7 @@ SuccessExitStatus=143
 WantedBy=default.target
 ```
 
-- `WorkingDirectory` is the project directory: `rocky run` loads `jobs/` and `rocky.yaml` from it, and writes `.rocky/logs/` there.
+- `WorkingDirectory` is the project directory: `rocky run` loads `rocky.yaml` (and the job files it lists) from it, and writes `.rocky/logs/` there.
 - `PATH` is where the commands your tasks run (`curl`, `jq`, ...) are looked up.
 - `%t` is `$XDG_RUNTIME_DIR`, e.g. `/run/user/1000`.
 - `SuccessExitStatus=143`: `rocky` exits with 143 (128 + SIGTERM) when stopped, which systemd would otherwise mark as `failed`.

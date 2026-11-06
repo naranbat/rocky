@@ -13,20 +13,20 @@ use crate::schedule::Schedule;
 use crate::task::{self, Task};
 use crate::var_name;
 
-/// Named jobs sharing `values` and an `env_file`: a directory with one YAML file per job in
-/// `jobs/`, and an optional `rocky.yaml` of shared settings.
+/// Named jobs sharing `values` and an `env_file`: a project file (by default `rocky.yaml`)
+/// of shared settings that lists each job's YAML file.
 #[derive(Debug)]
 pub struct Project {
     pub env_file: Option<PathBuf>,
     pub jobs: BTreeMap<String, Job>,
 }
 
-/// The optional file of settings shared by every job, in the project directory.
+/// The default project file, in the current directory.
 pub const SETTINGS_FILE: &str = "rocky.yaml";
-/// The directory of job files, in the project directory.
+/// The directory `rocky new` puts job files in, next to the project file.
 pub const JOBS_DIR: &str = "jobs";
 
-/// `rocky.yaml` as written.
+/// The project file as written.
 #[derive(Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Settings {
@@ -35,6 +35,9 @@ struct Settings {
     env_file: Option<PathBuf>,
     #[serde(default)]
     defaults: Defaults,
+    /// Each job's name and file, relative to the project file.
+    #[serde(default, deserialize_with = "unique")]
+    jobs: BTreeMap<String, PathBuf>,
 }
 
 /// Reads a map, rejecting a key that appears twice instead of keeping the last value.
@@ -105,30 +108,35 @@ impl Project {
     }
 }
 
-/// Loads the project in directory `root`: its `rocky.yaml`, if any, and every job file in
-/// `jobs/`, and validates every job. Relative paths are resolved against the directory of the
-/// file that contains them.
-pub fn load(root: &Path) -> Result<Project, Error> {
-    let settings_path = root.join(SETTINGS_FILE);
-    let settings = match std::fs::read_to_string(&settings_path) {
-        Ok(text) => Some(text),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
-        Err(source) => {
-            return Err(Error::Io {
-                path: settings_path,
-                source,
-            });
-        }
+/// Loads the project file `file` and every job file it lists, and validates every job.
+/// Relative paths are resolved against the directory of the file that contains them.
+pub fn load(file: &Path) -> Result<Project, Error> {
+    let root = match file.parent() {
+        Some(dir) if dir != Path::new("") => dir,
+        _ => Path::new("."),
     };
-    let mut jobs = Vec::new();
-    for (name, path) in job_files(root)? {
-        jobs.push((name, read_text(&path)?));
+    let settings: Settings = parse_yaml(file, &read_text(file)?)?;
+    if settings.jobs.is_empty() {
+        return Err(Error::InvalidProject(format!(
+            "no jobs: add `jobs: {{<name>: <path>.yaml}}` to {}",
+            file.display()
+        )));
     }
-    load_parts(root, settings.as_deref(), &jobs)
+    let mut jobs = Vec::new();
+    for (name, path) in &settings.jobs {
+        check_job_name(name)?;
+        let path = root.join(path);
+        let text = read_text(&path).map_err(|source| Error::Job {
+            name: name.clone(),
+            source: Box::new(source),
+        })?;
+        jobs.push((name.clone(), path, text));
+    }
+    build(root, settings, jobs)
 }
 
-/// The job files of the project in `root`: every `*.yaml` file directly in `jobs/`, as
-/// (job name, path) sorted by name. A missing `jobs/` has none.
+/// The job files in `jobs/` of the project in `root`: every `*.yaml` file directly in it, as
+/// (job name, path) sorted by name. A missing `jobs/` has none. Only the builder uses this.
 pub fn job_files(root: &Path) -> Result<Vec<(String, PathBuf)>, Error> {
     let dir = root.join(JOBS_DIR);
     let io = |source| Error::Io {
@@ -154,8 +162,8 @@ pub fn job_files(root: &Path) -> Result<Vec<(String, PathBuf)>, Error> {
     Ok(files)
 }
 
-/// Like [`load`], with the contents of `rocky.yaml` (`None` if there is none) and of each
-/// job file (job name, text) given instead of read from disk.
+/// Loads a project in `root` from text: the settings of `rocky.yaml` (`None` if there are
+/// none) and each job (job name, text) as if read from `jobs/<name>.yaml`. Used by the builder.
 pub fn load_parts(
     root: &Path,
     settings: Option<&str>,
@@ -170,27 +178,38 @@ pub fn load_parts(
         Some(text) => parse_yaml(&root.join(SETTINGS_FILE), text)?,
         None => Settings::default(),
     };
+    let jobs_dir = root.join(JOBS_DIR);
+    let jobs = jobs
+        .iter()
+        .map(|(name, text)| {
+            let path = jobs_dir.join(format!("{name}.yaml"));
+            (name.clone(), path, text.clone())
+        })
+        .collect();
+    build(root, settings, jobs)
+}
+
+/// Validates `settings` and each job (name, file path, text), and builds the project.
+fn build(
+    root: &Path,
+    settings: Settings,
+    jobs: Vec<(String, PathBuf, String)>,
+) -> Result<Project, Error> {
     check_names(settings.values.keys())?;
     settings.defaults.validate()?;
     let defaults = Defaults {
         dir: root.to_path_buf(),
         ..settings.defaults
     };
-    let jobs_dir = root.join(JOBS_DIR);
     let mut loaded = BTreeMap::new();
-    for (name, text) in jobs {
-        check_job_name(name)?;
-        let job = load_job(
-            &jobs_dir.join(format!("{name}.yaml")),
-            text,
-            &settings.values,
-            &defaults,
-        )
-        .map_err(|source| Error::Job {
-            name: name.clone(),
-            source: Box::new(source),
-        })?;
-        loaded.insert(name.clone(), job);
+    for (name, path, text) in jobs {
+        check_job_name(&name)?;
+        let job =
+            load_job(&path, &text, &settings.values, &defaults).map_err(|source| Error::Job {
+                name: name.clone(),
+                source: Box::new(source),
+            })?;
+        loaded.insert(name, job);
     }
     let project = Project {
         env_file: settings.env_file.map(|p| root.join(p)),
@@ -287,22 +306,25 @@ fn parse_yaml<T: serde::de::DeserializeOwned>(path: &Path, text: &str) -> Result
 mod tests {
     use super::*;
 
-    /// Writes a project into `dir`: `settings` as `rocky.yaml` (if any) and each job file,
-    /// then loads it.
+    /// Writes a project into `dir`: each job as `jobs/<name>.yaml`, and `rocky.yaml` of
+    /// `settings` (if any) listing them, then loads it.
     fn load_in(
         dir: &Path,
         settings: Option<&str>,
         jobs: &[(&str, &str)],
     ) -> Result<Project, Error> {
-        if let Some(text) = settings {
-            std::fs::write(dir.join(SETTINGS_FILE), text).unwrap();
+        let mut text = settings.unwrap_or_default().to_string();
+        if !jobs.is_empty() {
+            text.push_str("jobs:\n");
         }
         let jobs_dir = dir.join(JOBS_DIR);
         std::fs::create_dir_all(&jobs_dir).unwrap();
-        for (name, text) in jobs {
-            std::fs::write(jobs_dir.join(format!("{name}.yaml")), text).unwrap();
+        for (name, job) in jobs {
+            std::fs::write(jobs_dir.join(format!("{name}.yaml")), job).unwrap();
+            text.push_str(&format!("  '{name}': {JOBS_DIR}/{name}.yaml\n"));
         }
-        load(dir)
+        std::fs::write(dir.join(SETTINGS_FILE), text).unwrap();
+        load(&dir.join(SETTINGS_FILE))
     }
 
     const ECHO: &str = "tasks: {e: {cmd: [echo]}}\n";
@@ -310,14 +332,14 @@ mod tests {
     #[test]
     fn load_parts_reads_text_in_place_of_the_files() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/httpbin");
-        let settings = std::fs::read_to_string(root.join(SETTINGS_FILE)).unwrap();
         let jobs: Vec<_> = job_files(&root)
             .unwrap()
             .into_iter()
             .map(|(name, path)| (name, std::fs::read_to_string(path).unwrap()))
             .collect();
-        let from_text = load_parts(&root, Some(&settings), &jobs).unwrap();
-        assert_eq!(from_text.job_names(), load(&root).unwrap().job_names());
+        let from_text = load_parts(&root, Some("env_file: httpbin.env\n"), &jobs).unwrap();
+        let from_files = load(&root.join(SETTINGS_FILE)).unwrap();
+        assert_eq!(from_text.job_names(), from_files.job_names());
         let err = load_parts(&root, None, &[("a".into(), "tasks: [unclosed".into())]).unwrap_err();
         assert!(
             matches!(&err, Error::Job { source, .. } if matches!(&**source, Error::Yaml { path, .. } if path.ends_with("jobs/a.yaml"))),
@@ -331,9 +353,9 @@ mod tests {
         let mut loaded = 0;
         for entry in std::fs::read_dir(examples).unwrap() {
             let path = entry.unwrap().path();
-            // Skip `.rocky` log directories left by `rocky run`.
-            if path.is_dir() && path.join(JOBS_DIR).is_dir() {
-                load(&path).unwrap_or_else(|e| panic!("{}: {}", path.display(), e.chain()));
+            let file = path.join(SETTINGS_FILE);
+            if file.is_file() {
+                load(&file).unwrap_or_else(|e| panic!("{}: {}", path.display(), e.chain()));
                 loaded += 1;
             }
         }
@@ -341,13 +363,10 @@ mod tests {
     }
 
     #[test]
-    fn names_jobs_by_file_and_resolves_paths() {
+    fn loads_only_the_listed_jobs_and_resolves_paths() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("jobs.yaml"), "not a job dir").unwrap();
-        std::fs::create_dir_all(dir.path().join("jobs/sub")).unwrap();
-        std::fs::write(dir.path().join("jobs/sub/x.yaml"), "nope").unwrap();
-        std::fs::write(dir.path().join("jobs/notes.txt"), "nope").unwrap();
-        std::fs::write(dir.path().join("jobs/echo.yml"), "nope").unwrap();
+        std::fs::create_dir_all(dir.path().join("jobs")).unwrap();
+        std::fs::write(dir.path().join("jobs/unlisted.yaml"), ECHO).unwrap();
         let mut project = load_in(
             dir.path(),
             Some("env_file: .env\n"),
@@ -371,12 +390,43 @@ mod tests {
     }
 
     #[test]
-    fn settings_file_is_optional() {
+    fn job_paths_are_relative_to_the_project_file() {
         let dir = tempfile::tempdir().unwrap();
-        let project = load_in(dir.path(), None, &[("w", ECHO)]).unwrap();
-        assert_eq!(project.env_file, None);
+        let sub = dir.path().join("sub");
+        std::fs::create_dir_all(sub.join("other/dir")).unwrap();
+        std::fs::write(sub.join("other/dir/x.yaml"), ECHO).unwrap();
+        std::fs::write(
+            sub.join("p.yaml"),
+            "env_file: .env\njobs: {x: other/dir/x.yaml}\n",
+        )
+        .unwrap();
+        let mut project = load(&sub.join("p.yaml")).unwrap();
+        assert_eq!(project.env_file, Some(sub.join(".env")));
+        assert_eq!(
+            project.take("x").unwrap().tasks[0].dir,
+            sub.join("other/dir")
+        );
+    }
+
+    #[test]
+    fn project_file_is_required() {
         let dir = tempfile::tempdir().unwrap();
-        load_in(dir.path(), Some("# nothing yet\n"), &[("w", ECHO)]).unwrap();
+        let err = load(&dir.path().join(SETTINGS_FILE)).unwrap_err();
+        assert!(
+            matches!(&err, Error::Io { path, .. } if path.ends_with(SETTINGS_FILE)),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn job_files_must_exist() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(SETTINGS_FILE), "jobs: {w: jobs/w.yaml}\n").unwrap();
+        let err = load(&dir.path().join(SETTINGS_FILE)).unwrap_err();
+        assert!(
+            matches!(&err, Error::Job { name, source } if name == "w" && matches!(**source, Error::Io { .. })),
+            "{err}"
+        );
     }
 
     #[test]
@@ -397,32 +447,38 @@ mod tests {
     }
 
     #[test]
-    fn needs_at_least_one_job_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let err = load(dir.path()).unwrap_err();
-        assert_eq!(
-            err.to_string(),
-            "invalid project: no jobs: add jobs/<name>.yaml"
-        );
-        let err = load_in(dir.path(), None, &[]).unwrap_err();
+    fn needs_at_least_one_job() {
+        for settings in ["", "jobs: {}\n"] {
+            let dir = tempfile::tempdir().unwrap();
+            let file = dir.path().join(SETTINGS_FILE);
+            std::fs::write(&file, settings).unwrap();
+            let err = load(&file).unwrap_err();
+            assert_eq!(
+                err.to_string(),
+                format!(
+                    "invalid project: no jobs: add `jobs: {{<name>: <path>.yaml}}` to {}",
+                    file.display()
+                )
+            );
+        }
+        let err = load_parts(Path::new(""), None, &[]).unwrap_err();
         assert!(matches!(err, Error::InvalidProject(_)), "{err}");
     }
 
     #[test]
-    fn rejects_jobs_in_the_settings_file() {
+    fn jobs_must_be_paths() {
         let dir = tempfile::tempdir().unwrap();
-        let err = load_in(
-            dir.path(),
-            Some("jobs:\n  w: {tasks: {e: {cmd: [echo]}}}\n"),
-            &[("w", ECHO)],
-        )
-        .unwrap_err();
+        let file = dir.path().join(SETTINGS_FILE);
+        std::fs::write(&file, "jobs:\n  w: {tasks: {e: {cmd: [echo]}}}\n").unwrap();
+        let err = load(&file).unwrap_err();
         assert!(
             matches!(&err, Error::Yaml { path, .. } if path.ends_with(SETTINGS_FILE)),
             "{err}"
         );
+        std::fs::write(&file, "jobs: {w: a.yaml, w: b.yaml}\n").unwrap();
+        let err = load(&file).unwrap_err();
         assert!(
-            err.chain().contains("unknown field `jobs`"),
+            err.chain().contains("jobs: duplicate key `w`"),
             "{}",
             err.chain()
         );

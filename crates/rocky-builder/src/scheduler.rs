@@ -61,7 +61,7 @@ impl Scheduler {
     /// Starts `rocky run --socket .rocky/rocky.sock` with `rocky`, in the project
     /// directory `dir`.
     pub fn start(rocky: &Path, dir: &Path) -> anyhow::Result<Scheduler> {
-        let schedules = rocky_core::project::load(dir)
+        let schedules = rocky_core::project::load(&dir.join(rocky_core::project::SETTINGS_FILE))
             .map_err(|error| anyhow::anyhow!(error.chain()))?
             .jobs
             .into_iter()
@@ -299,6 +299,11 @@ exec sleep 30
         std::fs::write(
             dir.path().join("jobs/main.yaml"),
             "schedule: {every: 1h}\ntasks:\n  a: {cmd: [echo]}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("rocky.yaml"),
+            "jobs: {main: jobs/main.yaml}\n",
         )
         .unwrap();
 

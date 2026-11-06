@@ -1,6 +1,6 @@
 # Run
 
-`rocky run` runs every job of the [project](projects.md) in the current directory that has a [`schedule`](schedules.md), until stopped with Ctrl-C, SIGTERM, SIGHUP or SIGQUIT, or until only finished `at` and `run_on_start`-only schedules are left. Jobs without a `schedule` are skipped; run them with `rocky exec`, a [`trigger` task](triggers.md#trigger-tasks), or over a [socket](triggers.md#triggering-jobs-over-a-socket).
+`rocky run` runs every job of the [project](projects.md) (`rocky.yaml`, or the file given with `-f`) that has a [`schedule`](schedules.md), until stopped with Ctrl-C, SIGTERM, SIGHUP or SIGQUIT, or until only finished `at` and `run_on_start`-only schedules are left. Jobs without a `schedule` are skipped; run them with `rocky exec`, a [`trigger` task](triggers.md#trigger-tasks), or over a [socket](triggers.md#triggering-jobs-over-a-socket).
 
 To keep `run` going in the background, see [Service](service.md).
 
@@ -47,7 +47,7 @@ The whole project is loaded and checked before anything runs. Any error stops `r
 
 ## Output
 
-Every log line is one JSON object on **stdout**, with `job`, `time` (local time with offset) and `event` fields. The same lines are appended to `.rocky/logs/YYYY-MM-DD.log` in the current directory, one file per day by each line's date (`.rocky/logs/NAME-YYYY-MM-DD.log` with `--service NAME`); the `.rocky/logs` directory is created if missing, and a failed write is reported on stderr without stopping `run`. If stdout is closed (`run | head`), `run` keeps running and logging to the file. Each run writes a line per task, skipped task, loop, `while` check and `trigger` task as it goes, then a `done` line, or an `error` line if it stopped on an error:
+Every log line is one JSON object on **stdout**, with `job`, `time` (local time with offset) and `event` fields. The same lines are appended to `.rocky/logs/YYYY-MM-DD.log` in the current directory, one file per day by each line's date (`.rocky/logs/NAME-YYYY-MM-DD.log` with `--service NAME`, and `YYYY-MM-DD-PROJECT.log` with `-f PROJECT.yaml`); the `.rocky/logs` directory is created if missing, and a failed write is reported on stderr without stopping `run`. If stdout is closed (`run | head`), `run` keeps running and logging to the file. Each run writes a line per task, skipped task, loop, `while` check and `trigger` task as it goes, then a `done` line, or an `error` line if it stopped on an error:
 
 ```json
 {"job":"poll","time":"2026-10-09T09:30:00+09:00","event":"task","task":"fetch","exit_code":0,"ms":412,"ok":true}

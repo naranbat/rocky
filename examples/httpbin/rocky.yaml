@@ -1,6 +1,15 @@
-# A project: one job per file in jobs/, each named by its file. Every job sends requests to
+# A project: each job is listed under `jobs`, with its file in jobs/. Every job sends requests to
 # https://httpbin.org with curl; its JSON output is parsed, so later tasks read fields with
 # ${tasks.NAME.stdout.FIELD}. Run from this directory:
 #   rocky exec login       # run one job
 #   rocky run              # run the jobs that have a `schedule`
 env_file: httpbin.env      # BASE, USER and COUNT, shared by every job
+jobs:
+  conditional: jobs/conditional.yaml
+  health: jobs/health.yaml
+  login: jobs/login.yaml
+  loop: jobs/loop.yaml
+  mixed: jobs/mixed.yaml
+  poll: jobs/poll.yaml
+  report: jobs/report.yaml
+  status: jobs/status.yaml

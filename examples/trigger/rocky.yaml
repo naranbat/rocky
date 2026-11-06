@@ -1,0 +1,4 @@
+jobs:
+  alert: jobs/alert.yaml
+  check: jobs/check.yaml
+  report: jobs/report.yaml

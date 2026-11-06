@@ -72,7 +72,7 @@ pub async fn send(socket: &Path, job: &str) -> Result<(), Error> {
 }
 
 /// Serves clients of `listener` until accepting a connection fails. `project` is the
-/// project directory that triggered runs load; their `trigger` tasks queue runs on `trigger`.
+/// project file that triggered runs load; their `trigger` tasks queue runs on `trigger`.
 pub async fn serve(
     listener: UnixListener,
     socket: &Path,

@@ -5,3 +5,5 @@ values:
   SITE:
     name: rocky
     retries: 3
+jobs:
+  greet: jobs/greet.yaml

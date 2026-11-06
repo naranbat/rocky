@@ -11,6 +11,8 @@ export REGION="eu-west-1"   # `export` and quotes are allowed
 ```yaml
 # rocky.yaml
 env_file: example.env        # relative to the project directory
+jobs:
+  user: jobs/user.yaml
 ```
 
 ```yaml
@@ -39,6 +41,8 @@ values:                      # the project's: seen by every task of every job
   SITE:
     name: rocky
     retries: 3
+jobs:
+  greet: jobs/greet.yaml
 ```
 
 ```yaml
@@ -52,7 +56,7 @@ tasks:
 
 Example: [`examples/values/`](../examples/values/).
 
-- `values` can go in `rocky.yaml` and in a job file. Tasks nested in loops see their job's values.
+- `values` can go in the project file and in a job file. Tasks nested in loops see their job's values.
 - A value can be a string, number, boolean, list or object, and keeps its JSON type (see [typed values](#typed-values)). Use a dot path to read inside one: `${SITE.name}`.
 - Project and job values are used as written: `${...}` inside a value is not expanded.
 - A job value with the same name as a project value replaces it for that job.
@@ -63,7 +67,7 @@ Use an `env_file` to keep secrets such as API tokens out of the YAML that you co
 
 ### Where it can go
 
-Only in `rocky.yaml`, with a path relative to the project directory. It applies to every task of every job. Job files can't have one: `env_file` there is an unknown field.
+Only in the project file, with a path relative to it. It applies to every task of every job. Job files can't have one: `env_file` there is an unknown field.
 
 ### Format
 

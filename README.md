@@ -1,6 +1,6 @@
 # Rocky
 
-A CLI for automating repeatable work. A project is a directory with one YAML file per job in `jobs/` (and an optional `rocky.yaml` of shared settings); each job runs its tasks (commands) in order, and later tasks can read earlier tasks' output. Run a job once with `rocky exec`, or keep `rocky run` going to run jobs on a schedule or on request from `rocky trigger`.
+A CLI for automating repeatable work. A project is a `rocky.yaml` that lists its jobs, each in its own YAML file, and holds settings they share; each job runs its tasks (commands) in order, and later tasks can read earlier tasks' output. Run a job once with `rocky exec`, or keep `rocky run` going to run jobs on a schedule or on request from `rocky trigger`.
 
 ## Install
 
@@ -18,7 +18,7 @@ Create a project from the template, then add a second task to `jobs/example.yaml
 
 ```sh
 mkdir automation && cd automation
-rocky new project                  # writes jobs/example.yaml
+rocky new project                  # writes rocky.yaml and jobs/example.yaml
 ```
 
 ```yaml
@@ -36,7 +36,17 @@ rocky validate                     # check it without running anything
 rocky exec example                 # run the job once
 ```
 
-`exec`, `run` and `validate` work on the project in the current directory.
+`exec`, `run` and `validate` load `rocky.yaml` in the current directory, or another project file with `-f`:
+
+```yaml
+# rocky.yaml
+jobs:
+  example: jobs/example.yaml       # job name: its file, relative to this file
+```
+
+```sh
+rocky run -f nightly.yaml          # logs to .rocky/logs/<date>-nightly.log
+```
 
 `exec` prints the result of the last task as JSON:
 
@@ -66,7 +76,7 @@ See [Command line](docs/cli.md) for every flag, [Schedules](docs/schedules.md) f
 
 ```sh
 rocky new project                       # a project with one job, here
-rocky new job deploy                    # jobs/deploy.yaml
+rocky new job deploy                    # jobs/deploy.yaml; list it under `jobs` in rocky.yaml
 rocky new project full --level full     # every field, with comments, in full/
 ```
 

@@ -1,15 +1,18 @@
 # Command line
 
-`rocky` has five subcommands. `exec`, `run` and `validate` work on the [project](projects.md) in the **current directory**: its `jobs/` and optional `rocky.yaml`. `trigger` asks a running `run` to run a job; `new` writes starter files.
+`rocky` has five subcommands. `exec`, `run` and `validate` work on a [project](projects.md): `rocky.yaml` in the **current directory**, or the project file given with `-f <FILE>` (`--file`). `trigger` asks a running `run` to run a job; `new` writes starter files.
 
 ```sh
 rocky exec <JOB>
 rocky exec <JOB> --verbose
+rocky exec -f <FILE> <JOB>
 rocky run
+rocky run -f <FILE>
 rocky run --socket <PATH>
 rocky run --service <NAME>
 rocky trigger <SOCKET> <JOB>
 rocky validate
+rocky validate -f <FILE>
 rocky new project [DIR]
 rocky new job <NAME>
 rocky new <KIND> ... --level full
@@ -19,7 +22,7 @@ rocky --version       # or -V
 
 ## `rocky exec <JOB>`
 
-Runs one job of the project, `jobs/<JOB>.yaml`, once and prints the result of the **last task that ran** as pretty-printed JSON on stdout. Job `schedule`s are checked but not run.
+Runs one job of the project, the file listed as `<JOB>` under its `jobs`, once and prints the result of the **last task that ran** as pretty-printed JSON on stdout. Job `schedule`s are checked but not run.
 
 The job name is required. An unknown name fails before anything runs and lists the names there are:
 
@@ -47,6 +50,8 @@ Runs every job of the project that has a [`schedule`](schedules.md), until stopp
 
 `--service <NAME>` prefixes the log file names with `NAME`: `.rocky/logs/NAME-YYYY-MM-DD.log`, so services sharing a working directory keep separate files. See [Output](run.md#output).
 
+`-f <FILE>` suffixes them with the project file's name without its extension: `rocky run -f nightly.yaml` writes `.rocky/logs/YYYY-MM-DD-nightly.log` (`NAME-YYYY-MM-DD-nightly.log` with `--service NAME`). Without `-f` the names have no suffix.
+
 ## `rocky trigger <SOCKET> <JOB>`
 
 Asks the `rocky run --socket <SOCKET>` listening on `SOCKET` to run `JOB`, any job of its project. It returns once the run is queued and prints one line; the run logs to `run`'s output. See [Triggering jobs over a socket](triggers.md#triggering-jobs-over-a-socket).
@@ -62,7 +67,7 @@ If nothing listens on `SOCKET`, it fails with ``Error: socket <SOCKET>`` and the
 
 ## `rocky validate`
 
-Loads the project's `rocky.yaml` and job files and runs every [load-time check](projects.md#validation), without running commands. A valid project prints one line and exits `0`; an invalid one prints the load error on stderr and exits `1`.
+Loads the project file and the job files it lists and runs every [load-time check](projects.md#validation), without running commands. A valid project prints one line and exits `0`; an invalid one prints the load error on stderr and exits `1`.
 
 ```
 $ rocky validate
@@ -75,20 +80,21 @@ Writes starter files that load as-is, creating missing directories, and prints h
 
 | Kind | Writes |
 |---|---|
-| `project [DIR]` | A project in `DIR` (default: the current directory) with one job, `jobs/example.yaml`, that runs `echo hello`: `rocky exec example` there |
-| `job <NAME>` | `jobs/NAME.yaml` in the current directory, a [job](projects.md#job-files) with one `echo hello` task: `rocky exec NAME` |
+| `project [DIR]` | A project in `DIR` (default: the current directory): a `rocky.yaml` listing one job, `jobs/example.yaml`, that runs `echo hello`: `rocky exec example` there |
+| `job <NAME>` | `jobs/NAME.yaml` in the current directory, a [job](projects.md#job-files) with one `echo hello` task. It isn't added to `rocky.yaml`: list it under `jobs` (`NAME: jobs/NAME.yaml`), then `rocky exec NAME` |
 
 `--level` sets how much the file shows, for every kind:
 
 | Level | Writes |
 |---|---|
 | `basic` (default) | The smallest file that runs, as in the table above |
-| `full` | Every field, each with a comment. A full project also writes a `rocky.yaml` with `values` and `defaults`. A full job has a `schedule`, `values`, `defaults`, a `curl` request, cmd tasks with `when`, a `for_each` loop and a `while` loop. Fields that need another file (`env_file`) or another job (`trigger`) are commented out, so the file still loads and runs as-is. Its tasks use `${USER}` from the environment |
+| `full` | Every field, each with a comment. A full project's `rocky.yaml` also has `values` and `defaults`. A full job has a `schedule`, `values`, `defaults`, a `curl` request, cmd tasks with `when`, a `for_each` loop and a `while` loop. Fields that need another file (`env_file`) or another job (`trigger`) are commented out, so the file still loads and runs as-is. Its tasks use `${USER}` from the environment |
 
 ```
 $ rocky new job deploy
 created jobs/deploy.yaml
-run it from the project directory: rocky exec deploy
+add it to the project's `jobs`: deploy: jobs/deploy.yaml
+then run it: rocky exec deploy
 ```
 
 ## Output streams
@@ -107,9 +113,10 @@ run it from the project directory: rocky exec deploy
 | Invalid file (bad YAML, unknown field, invalid task, condition or schedule) | — | the load error; nothing runs | `1` |
 | `exec` or `run` stopped with Ctrl-C (SIGINT), SIGTERM, SIGHUP or SIGQUIT | — | — | 128 + the signal number (`130`, `143`, `129`, `131`); running commands, and the processes they started, are killed |
 | Unknown job name | — | ``Error: no job `x` (available: `a`, `b`)`` | `1` |
-| No job files in `jobs/` (or no `jobs/`) | — | ``Error: invalid project: no jobs: add jobs/<name>.yaml`` | `1` |
+| No project file | — | ``Error: failed to read rocky.yaml`` plus a `Caused by:` line | `1` |
+| No `jobs` in the project file | — | ``Error: invalid project: no jobs: add `jobs: {<name>: <path>.yaml}` to rocky.yaml`` | `1` |
 | `trigger`: nothing listens on the socket | — | ``Error: socket <SOCKET>`` plus a `Caused by:` line | `1` |
 
 Tasks are labelled by their key in error messages, at any depth: a task `notify` inside a loop's `do` is ``task `notify` ``.
 
-> YAML errors in any file (`rocky.yaml` or a job file) are reported as `invalid YAML in <path>`, with the cause on a `Caused by:` line.
+> YAML errors in any file (the project file or a job file) are reported as `invalid YAML in <path>`, with the cause on a `Caused by:` line.
