@@ -10,6 +10,7 @@ use serde_yaml::{Mapping, Value};
 use crate::doc::{self, Doc};
 use crate::job;
 use crate::project;
+use crate::schedule;
 use crate::scheduler::Scheduler;
 use crate::theme;
 use crate::validate::Problem;
@@ -172,7 +173,22 @@ pub fn draw(
             on,
             lines: vec![
                 vec![dot, Span::styled(name.clone(), name_style(on))],
-                vec![indent(), Span::styled(job::summary(job), theme::dim())],
+                // The schedule on the left, the task count on the right, one column short
+                // of the border.
+                {
+                    let schedule = schedule::summary(job.get("schedule"));
+                    let count = format!("{} tasks", job::task_count(job));
+                    let gap = width
+                        .saturating_sub(TEXT + schedule.chars().count() + count.chars().count() + 1)
+                        .max(1);
+                    vec![
+                        indent(),
+                        Span::styled(
+                            format!("{schedule}{}{count}", " ".repeat(gap)),
+                            theme::dim(),
+                        ),
+                    ]
+                },
             ],
         });
     }
@@ -235,6 +251,8 @@ mod tests {
         };
         assert_eq!(column(&highlighted[0], "b"), TEXT, "{highlighted:?}");
         assert_eq!(column(&highlighted[1], "every 5m"), TEXT, "{highlighted:?}");
+        // The task count ends one column short of the border.
+        assert!(highlighted[1].ends_with("1 tasks "), "{highlighted:?}");
         // Half a line of padding above and below, and one gap line between entries.
         let row = |y: u16| (0..33).map(|x| buffer[(x, y)].symbol()).collect::<String>();
         let name = (0..20).find(|&y| row(y).contains(" b")).unwrap();

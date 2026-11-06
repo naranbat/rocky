@@ -17,11 +17,14 @@ use crate::vars;
 /// The job list's one-line description of a job.
 pub fn summary(job: &Value) -> String {
     let schedule = schedule::summary(job.get("schedule"));
-    let count = job
-        .get("tasks")
+    format!("{schedule} · {} tasks", task_count(job))
+}
+
+/// How many tasks a job has, nested ones aside.
+pub fn task_count(job: &Value) -> usize {
+    job.get("tasks")
         .and_then(Value::as_mapping)
-        .map_or(0, Mapping::len);
-    format!("{schedule} · {count} tasks")
+        .map_or(0, Mapping::len)
 }
 
 /// Where job `name` sits in the document.
