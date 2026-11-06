@@ -161,11 +161,12 @@ pub fn draw(
         let scheduled = job.get("schedule").is_some();
         // The dot sits in the indent, so the name lines up with the summary below it.
         let dot = if broken {
-            Span::styled(" ✗ ", theme::error())
+            Span::styled(" ⦸ ", theme::error())
         } else if running {
             Span::styled(" ▶ ", theme::accent())
         } else if scheduled {
-            Span::styled(" ● ", theme::ok())
+            // A clock, not a green dot: green dots mean running or valid elsewhere.
+            Span::styled(" ◷ ", theme::text())
         } else {
             Span::styled(" ○ ", theme::dim())
         };
@@ -250,6 +251,8 @@ mod tests {
             line.chars().count() - line[line.find(text).unwrap()..].chars().count()
         };
         assert_eq!(column(&highlighted[0], "b"), TEXT, "{highlighted:?}");
+        // A scheduled job's icon is a clock, not a green dot.
+        assert!(highlighted[0].contains("◷ b"), "{highlighted:?}");
         assert_eq!(column(&highlighted[1], "every 5m"), TEXT, "{highlighted:?}");
         // The task count ends one column short of the border.
         assert!(highlighted[1].ends_with("1 tasks "), "{highlighted:?}");
