@@ -516,12 +516,12 @@ mod tests {
 
     #[test]
     fn timeout_takes_a_duration() {
-        for (timeout, secs) in [("5s", 5), ("2m", 120), ("1h", 3600)] {
+        for (timeout, secs) in [("5s", 5), ("2m", 120), ("1h", 3600), ("05s", 5)] {
             let tasks =
                 resolve_here(&format!("s:\n  cmd: [echo]\n  timeout: {timeout}\n")).unwrap();
             assert_eq!(tasks[0].timeout, Some(secs), "{timeout}");
         }
-        for timeout in ["5", "5 min", "-1", "1.5"] {
+        for timeout in ["5", "5 min", "-1", "1.5", "+5s", "s"] {
             let err =
                 parse_named(&format!("s:\n  cmd: [echo]\n  timeout: {timeout}\n")).unwrap_err();
             assert!(err.to_string().contains("timeout"), "{timeout}: {err}");

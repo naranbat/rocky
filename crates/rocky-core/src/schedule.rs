@@ -221,7 +221,12 @@ pub(crate) fn parse_duration(text: &str) -> Result<Duration, String> {
         Some('h') => 3600,
         _ => return Err(invalid()),
     };
-    let count: u64 = text[..text.len() - 1].parse().map_err(|_| invalid())?;
+    let digits = &text[..text.len() - 1];
+    // `parse` alone would also take a sign, as in `+5s`.
+    if !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(invalid());
+    }
+    let count: u64 = digits.parse().map_err(|_| invalid())?;
     count
         .checked_mul(unit)
         .map(Duration::from_secs)
@@ -265,6 +270,7 @@ mod tests {
             ("every: 5\n", "not a duration"),
             ("every: 5d\n", "not a duration"),
             ("every: xm\n", "not a duration"),
+            ("every: +5m\n", "not a duration"),
             ("every: 0s\n", "greater than 0"),
             ("every: 5m\ndelay: soon\n", "not a duration"),
             ("daily: \"09:30\"\ndelay: 5s\n", "only works with `every`"),

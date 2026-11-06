@@ -13,12 +13,12 @@
   "$defs": {
     "duration": {
       "type": "string",
-      "pattern": "^(0|[1-9][0-9]*)[smh]$",
+      "pattern": "^[0-9]+[smh]$",
       "examples": ["30s", "5m", "2h"]
     },
     "positiveDuration": {
       "type": "string",
-      "pattern": "^[1-9][0-9]*[smh]$",
+      "pattern": "^0*[1-9][0-9]*[smh]$",
       "examples": ["30s", "5m", "2h"]
     },
     "variables": {
