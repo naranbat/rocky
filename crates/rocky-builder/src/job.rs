@@ -1,25 +1,19 @@
-//! The job editor: header, schedule, values, defaults, and tasks. Jobs kept in their
-//! own file show only what the project entry sets (`file`, `schedule`, `values`).
+//! The job rows: header, schedule, values, defaults, and tasks. Jobs kept in their own
+//! file show only what the project entry sets (`file`, `schedule`, `values`).
 
-use eframe::egui;
+use ratatui::text::{Line, Span};
 use serde_yaml::{Mapping, Value};
 
-use crate::chips;
 use crate::doc;
 use crate::edit::Edit;
-use crate::icons::Icon;
+use crate::form::{Action, Field, Row};
+use crate::node::{self, Path};
 use crate::project;
 use crate::run_view;
 use crate::schedule;
 use crate::task;
 use crate::theme;
-use crate::widgets;
-
-/// What the job editor asked the app to do with the job.
-pub enum Action {
-    Rename(String),
-    Delete,
-}
+use crate::vars;
 
 /// The job list's one-line description of a job.
 pub fn summary(job: &Value) -> String {
@@ -41,156 +35,106 @@ pub fn summary(job: &Value) -> String {
     }
 }
 
-pub fn editor(ui: &mut egui::Ui, ed: &mut Edit, name: &str, job: &mut Value) -> Option<Action> {
-    let file = match &*job {
-        Value::String(path) => Some(path.clone()),
+/// Where job `name` sits in the document.
+pub fn path(name: &str) -> Path {
+    Path::default().key("jobs").key(name)
+}
+
+pub fn rows(ed: &mut Edit, root: &Value, name: &str) -> Vec<Row> {
+    let path = path(name);
+    let Some(job) = node::get(root, &path) else {
+        return Vec::new();
+    };
+    let file = match job {
+        Value::String(file) => Some(file.clone()),
         job => job.get("file").map(doc::scalar_text),
     };
-    let action = header(ui, name, job, file.as_deref());
+    let kind = match &file {
+        Some(file) => format!("JOB FILE · {file}"),
+        None => "INLINE JOB".to_string(),
+    };
+    let mut rows = vec![
+        Row::field(
+            "job",
+            Line::from(vec![
+                Span::styled(name.to_string(), theme::bold()),
+                Span::styled(format!("   {kind} · {}", summary(job)), theme::dim()),
+            ]),
+            Action::Rename(path.clone()),
+        )
+        .renamable(path.clone()),
+    ];
     if let Some(problem) = ed
         .problem
         .filter(|p| p.job.as_deref() == Some(name) && p.task.is_none())
     {
-        theme::problem(ui, &problem.message);
+        rows.push(Row::note(Line::styled(
+            problem.message.clone(),
+            theme::error(),
+        )));
     }
-    if let Some(run) = ed.run {
-        run_view::job_status(ui, run, name);
+    if let Some(line) = ed.run.and_then(|run| run_view::job_status(run, name)) {
+        rows.push(Row::note(line));
     }
-    ui.add_space(8.0);
     match file {
-        Some(file) => file_job(ui, ed, job, &file),
-        None => inline_job(ui, ed, doc::as_map(job)),
+        Some(file) => rows.extend(file_job(root, &path, job, &file)),
+        None => rows.extend(inline_job(ed, root, &path, job)),
     }
-    action
+    rows
 }
 
-/// The job's icon, editable name, kind line and delete button.
-fn header(ui: &mut egui::Ui, name: &str, job: &Value, file: Option<&str>) -> Option<Action> {
-    let mut action = None;
-    ui.horizontal(|ui| {
-        widgets::kind_badge(ui, Icon::Clock, theme::ACCENT, 40.0);
-        ui.vertical(|ui| {
-            ui.style_mut().override_text_style = Some(egui::TextStyle::Heading);
-            if let Some(new) = chips::text(ui, "job name", name, "job name", 120.0, None)
-                && !new.is_empty()
-            {
-                action = Some(Action::Rename(new));
-            }
-            ui.style_mut().override_text_style = None;
-            let kind = match file {
-                Some(file) => format!("JOB FILE · {file}"),
-                None => "INLINE JOB".to_string(),
-            };
-            theme::hint(ui, &format!("{kind} · {}", summary(job).to_uppercase()));
-        });
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if widgets::ghost_button(ui, Some(Icon::Trash), "Delete job").clicked() {
-                action = Some(Action::Delete);
-            }
-        });
-    });
-    action
-}
-
-fn inline_job(ui: &mut egui::Ui, ed: &mut Edit, job: &mut Mapping) {
-    theme::section(ui, "SCHEDULE", "when `rocky run` runs this job");
-    schedule::editor(ui, ed, job);
-    ui.add_space(8.0);
-
-    theme::section(ui, "VALUES", "read as ${NAME}");
-    values(ui, ed, job);
-    ui.add_space(8.0);
-
-    if let Some(defaults) = job.get_mut("defaults") {
-        theme::section(
-            ui,
-            "DEFAULTS",
-            "this job's cmd tasks get these unless they set them",
-        );
-        if project::defaults_editor(ui, ed, doc::as_map(defaults)) {
-            doc::set(job, "defaults", None);
-            ed.changed = true;
-        }
-        ui.add_space(8.0);
-    }
-
-    if !job.contains_key("defaults") && chips::add_button(ui, "job defaults").clicked() {
-        job.insert(
-            Value::from("defaults"),
-            doc::map_of([("timeout", Value::from("30s"))]),
-        );
-        ed.changed = true;
-    }
-    ui.add_space(8.0);
-
+fn inline_job(ed: &mut Edit, root: &Value, path: &Path, job: &Value) -> Vec<Row> {
+    let mut rows = vec![Row::heading("SCHEDULE", "when `rocky run` runs this job")];
+    rows.extend(schedule::rows(root, &path.key("schedule")));
+    rows.push(Row::heading("VALUES", "read as ${NAME}"));
+    rows.extend(vars::rows(root, &path.key("values"), "value"));
+    rows.push(Row::heading(
+        "DEFAULTS",
+        "this job's cmd tasks get these unless they set them",
+    ));
+    rows.extend(project::defaults(
+        root,
+        &path.key("defaults"),
+        "job defaults",
+    ));
     let count = job
         .get("tasks")
         .and_then(Value::as_mapping)
         .map_or(0, Mapping::len);
-    theme::section(
-        ui,
+    rows.push(Row::heading(
         &format!("TASKS · {count}"),
         "run in order · a task with when runs only if it holds",
-    );
-    let tasks = job
-        .entry(Value::from("tasks"))
-        .or_insert_with(|| Value::Mapping(Mapping::new()));
-    task::list(ui, ed, tasks, true);
+    ));
+    rows.extend(task::list(ed, root, &path.key("tasks"), true));
+    rows
 }
 
 /// A project entry pointing at a job file: its path, and the schedule and values it sets
 /// over the file's own.
-fn file_job(ui: &mut egui::Ui, ed: &mut Edit, job: &mut Value, file: &str) {
-    let mut expand = false;
-    theme::card().show(ui, |ui| {
-        ui.set_width(ui.available_width());
-        chips::row(ui, "file", |ui| {
-            if let Some(new) = chips::text(ui, "file", file, "jobs/job.yaml", 160.0, None) {
-                match &mut *job {
-                    Value::String(path) => *path = new,
-                    other => {
-                        doc::as_map(other).insert(Value::from("file"), Value::from(new));
-                    }
-                }
-                ed.changed = true;
-            }
-            theme::hint(ui, "relative to the project file");
-        });
-        theme::hint(ui, "This job's tasks live in its file; open it in an editor to change them. Editing job files here is planned.");
-        // The shorthand `name: path` has no room for overrides; `{file: path}` does.
-        if job.is_string() && chips::add_button(ui, "set schedule or values here").clicked() {
-            expand = true;
+fn file_job(root: &Value, path: &Path, job: &Value, file: &str) -> Vec<Row> {
+    let mut rows = Vec::new();
+    match job {
+        Value::String(_) => {
+            rows.push(Row::edit("file", root, path.clone(), Field::Text));
+            // The shorthand `name: path` has no room for overrides; `{file: path}` does.
+            rows.push(Row::add(
+                "set schedule or values here",
+                Action::Set(
+                    path.clone(),
+                    Some(doc::map_of([("file", Value::from(file))])),
+                ),
+            ));
         }
-    });
-    if expand {
-        *job = doc::map_of([("file", Value::from(file))]);
-        ed.changed = true;
+        _ => rows.push(Row::edit("file", root, path.key("file"), Field::Text)),
     }
-    let Some(map) = job.as_mapping_mut() else {
-        return;
-    };
-    ui.add_space(8.0);
-    theme::section(ui, "SCHEDULE", "set here, it replaces the file's");
-    schedule::editor(ui, ed, map);
-    ui.add_space(8.0);
-    theme::section(ui, "VALUES", "set here, they win over the file's");
-    values(ui, ed, map);
-}
-
-/// The `values` chips of a job, removing `values` when it ends up empty.
-fn values(ui: &mut egui::Ui, ed: &mut Edit, job: &mut Mapping) {
-    theme::card().show(ui, |ui| {
-        ui.set_width(ui.available_width());
-        let values = job
-            .entry(Value::from("values"))
-            .or_insert_with(|| Value::Mapping(Mapping::new()));
-        chips::vars(ui, ed, "values", doc::as_map(values), "NAME");
-    });
-    if job
-        .get("values")
-        .and_then(Value::as_mapping)
-        .is_some_and(Mapping::is_empty)
-    {
-        job.shift_remove("values");
+    rows.push(Row::hint(
+        "This job's tasks live in its file; open it in an editor to change them.",
+    ));
+    if job.is_mapping() {
+        rows.push(Row::heading("SCHEDULE", "set here, it replaces the file's"));
+        rows.extend(schedule::rows(root, &path.key("schedule")));
+        rows.push(Row::heading("VALUES", "set here, they win over the file's"));
+        rows.extend(vars::rows(root, &path.key("values"), "value"));
     }
+    rows
 }

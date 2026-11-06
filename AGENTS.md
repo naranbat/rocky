@@ -17,7 +17,7 @@ A Cargo workspace; commands above run on every crate from the repo root.
 
 - `crates/rocky-core`: the library. All project loading, validation, running and scheduling lives here, with no CLI or UI dependencies.
 - `crates/rocky`: the `rocky` CLI. Only parses arguments and prints results.
-- `crates/rocky-builder`: the desktop builder UI (eframe/egui). Only draws and edits; calls `rocky-core` for everything else.
+- `crates/rocky-builder`: the terminal builder UI (ratatui). Only draws and edits; calls `rocky-core` for everything else.
 - `docs/`, `examples/`, `schema/` and `skills/` stay at the repo root, shared by all crates.
 
 New logic goes in `rocky-core`, not in a binary crate.

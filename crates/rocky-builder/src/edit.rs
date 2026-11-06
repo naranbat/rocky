@@ -1,33 +1,23 @@
-//! What every editor widget needs besides the YAML node it edits.
+//! What every view needs besides the document while it builds its rows.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use crate::complete::Var;
-use crate::run_view::Shown;
+use crate::results::Shown;
 use crate::validate::Problem;
 
 pub struct Edit<'a> {
-    /// Set by any widget that changed the document this frame.
-    pub changed: bool,
     /// The project's job names, for trigger pickers.
     pub jobs: &'a [String],
     /// The project file's directory, for task file previews.
     pub dir: &'a Path,
     /// Task file contents by path, read once per validation.
     pub previews: &'a mut HashMap<PathBuf, String>,
-    /// The job being edited, and the latest run, whose results the cards show.
+    /// The job being edited, and the latest run, whose results the rows show.
     pub job: &'a str,
     pub run: Option<Shown<'a>>,
-    /// Whether a run can start now (the document is valid and nothing is running).
-    pub can_run: bool,
-    /// Set by a card's ▶: run the job up to this task.
-    pub run_until: Option<String>,
-    /// Why the document is invalid, shown on the card or job it is about.
+    /// Why the document is invalid, shown on the job or task it is about.
     pub problem: Option<&'a Problem>,
-    /// The variables a `${…}` can read where the editor is drawing now; task lists add each
-    /// task's after drawing it, so a card only offers earlier tasks.
-    pub scope: Vec<Var>,
 }
 
 impl Edit<'_> {

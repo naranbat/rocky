@@ -11,8 +11,7 @@ use serde_json::{Value, json};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tokio::sync::oneshot;
 
-use crate::results::Results;
-use crate::run_view::Shown;
+use crate::results::{Results, Shown};
 
 pub struct Run {
     /// The job started, and the task it stops after, if any.

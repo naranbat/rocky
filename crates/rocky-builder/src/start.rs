@@ -1,24 +1,21 @@
-//! The start screen, shown until a project is open: create a new project, open one with the
-//! system's file panel, open the example, pick a recent project, or drop a project file.
+//! The start screen, shown until a project is open: create a new project, open one by
+//! path, open the example, or pick a recent project.
 
 use std::path::{Path, PathBuf};
 
-use eframe::egui::{
-    self, Align, Align2, FontId, Key, KeyboardShortcut, Layout, Modifiers, Rect, RichText, Sense,
-    Stroke, Ui, vec2,
-};
 use jiff::{Timestamp, Zoned};
+use ratatui::Frame;
+use ratatui::crossterm::event::{KeyCode, KeyEvent};
+use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 
-use crate::home::tilde;
-use crate::icons::{self, Icon};
-use crate::new_sheet::{NewSheet, Outcome};
+use crate::home::{expand, tilde};
+use crate::input::{self, Input};
+use crate::new_project::{NewProject, Outcome};
 use crate::recent::{Entry, Recent, Status};
 use crate::scheduler;
 use crate::theme;
-use crate::widgets;
-
-const NEW: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::N);
-const OPEN: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::O);
 
 /// The project opened by Open example, from this source tree.
 const EXAMPLE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples/httpbin.yaml");
@@ -30,455 +27,295 @@ pub enum Pick {
     Created(PathBuf),
     /// Forget a project from the recent list.
     Forget(PathBuf),
+    /// Read every project's summary again.
+    Refresh,
+    Quit,
+}
+
+/// What the keys go to.
+#[derive(Default)]
+enum Mode {
+    #[default]
+    List,
+    Filter,
+    /// Typing the path of a project to open.
+    Open(Input),
+    New(NewProject),
 }
 
 /// The start screen's state between frames.
 #[derive(Default)]
 pub struct Start {
-    filter: String,
-    sheet: Option<NewSheet>,
+    filter: Input,
+    cursor: usize,
+    mode: Mode,
     /// Where `rocky` is, looked up once.
     rocky: Option<Option<PathBuf>>,
 }
 
 impl Start {
-    /// Draws the start screen. `error` is the last failure, shown in the status bar.
-    pub fn show(&mut self, ui: &mut Ui, recent: &Recent, error: Option<&str>) -> Option<Pick> {
-        let mut pick = None;
-        let mut new = false;
-        let mut open = false;
-        if self.sheet.is_none() {
-            ui.input_mut(|input| {
-                new = input.consume_shortcut(&NEW);
-                open = input.consume_shortcut(&OPEN);
-            });
-            if let Some(path) = ui.input(|input| {
-                input
-                    .raw
-                    .dropped_files
-                    .iter()
-                    .map(|file| file.path().to_path_buf())
-                    .find(|path| !path.as_os_str().is_empty())
-            }) {
-                pick = Some(Pick::Open(path));
-            }
-        }
+    /// The recent projects that match the filter.
+    fn shown<'a>(&self, recent: &'a Recent) -> Vec<&'a Entry> {
+        let needle = self.filter.text.trim().to_lowercase();
+        recent
+            .entries
+            .iter()
+            .filter(|entry| {
+                needle.is_empty()
+                    || name(&entry.path).to_lowercase().contains(&needle)
+                    || tilde(&entry.path).to_lowercase().contains(&needle)
+            })
+            .collect()
+    }
 
-        egui::Panel::bottom("start-status")
-            .frame(
-                egui::Frame::new()
-                    .fill(theme::BG)
-                    .stroke(Stroke::new(1.0, theme::BORDER))
-                    .inner_margin(egui::Margin::symmetric(14, 6)),
-            )
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    match error {
-                        Some(error) => {
-                            ui.label(RichText::new(error).color(theme::ERROR).size(12.0));
-                        }
-                        None => theme::hint(ui, "rocky validate runs when a project opens"),
+    pub fn handle(&mut self, key: KeyEvent, recent: &Recent) -> Option<Pick> {
+        match &mut self.mode {
+            Mode::New(form) => {
+                match form.handle(key)? {
+                    Outcome::Cancel => self.mode = Mode::List,
+                    Outcome::Created { path, open } => {
+                        self.mode = Mode::List;
+                        return Some(if open {
+                            Pick::Open(path)
+                        } else {
+                            Pick::Created(path)
+                        });
                     }
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        theme::hint(ui, "Recent list is stored on this machine");
-                    });
-                });
-            });
+                }
+                return None;
+            }
+            Mode::Open(field) => {
+                match field.handle(key) {
+                    input::Outcome::Done => {
+                        let path = expand(&field.text);
+                        self.mode = Mode::List;
+                        return Some(Pick::Open(path));
+                    }
+                    input::Outcome::Cancel => self.mode = Mode::List,
+                    input::Outcome::Edited => {}
+                }
+                return None;
+            }
+            Mode::Filter => {
+                match key.code {
+                    KeyCode::Enter | KeyCode::Down => self.mode = Mode::List,
+                    KeyCode::Esc => {
+                        self.filter = Input::default();
+                        self.mode = Mode::List;
+                    }
+                    _ => {
+                        self.filter.handle(key);
+                    }
+                }
+                self.cursor = 0;
+                return None;
+            }
+            Mode::List => {}
+        }
+        let shown = self.shown(recent);
+        let selected = shown.get(self.cursor).map(|entry| entry.path.clone());
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => self.cursor = self.cursor.saturating_sub(1),
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.cursor = (self.cursor + 1).min(shown.len().saturating_sub(1))
+            }
+            KeyCode::Enter => return selected.map(Pick::Open),
+            KeyCode::Char('x') | KeyCode::Delete => return selected.map(Pick::Forget),
+            KeyCode::Char('/') => self.mode = Mode::Filter,
+            KeyCode::Esc => self.filter = Input::default(),
+            KeyCode::Char('n') => {
+                let home = std::env::var_os("HOME")
+                    .map(PathBuf::from)
+                    .unwrap_or_default();
+                self.mode = Mode::New(NewProject::new(&home));
+            }
+            KeyCode::Char('o') => {
+                let cwd = std::env::current_dir().unwrap_or_default();
+                self.mode = Mode::Open(Input::new(&format!("{}/", tilde(&cwd))));
+            }
+            KeyCode::Char('e') if Path::new(EXAMPLE).is_file() => {
+                return Some(Pick::Open(PathBuf::from(EXAMPLE)));
+            }
+            KeyCode::Char('r') => return Some(Pick::Refresh),
+            KeyCode::Char('q') => return Some(Pick::Quit),
+            _ => {}
+        }
+        None
+    }
 
+    /// Draws the start screen. `error` is the last failure, shown in the status line.
+    pub fn draw(&mut self, frame: &mut Frame, area: Rect, recent: &Recent, error: Option<&str>) {
+        let [main, status] =
+            Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).areas(area);
+        let [side, list] =
+            Layout::horizontal([Constraint::Length(42), Constraint::Fill(1)]).areas(main);
         let rocky = self.rocky.get_or_insert_with(scheduler::find_rocky).clone();
-        egui::Panel::left("start-actions")
-            .exact_size(340.0)
-            .resizable(false)
-            .frame(
-                egui::Frame::new()
-                    .fill(theme::SIDEBAR)
-                    .stroke(Stroke::new(1.0, theme::BORDER))
-                    .inner_margin(egui::Margin::same(40)),
-            )
-            .show(ui, |ui| {
-                let actions = sidebar(ui, rocky.as_deref());
-                new |= actions.new;
-                open |= actions.open;
-                if actions.example {
-                    pick = Some(Pick::Open(PathBuf::from(EXAMPLE)));
-                }
-            });
-
-        egui::CentralPanel::default()
-            .frame(
-                egui::Frame::new()
-                    .fill(theme::BG)
-                    .inner_margin(egui::Margin::symmetric(48, 40)),
-            )
-            .show(ui, |ui| {
-                egui::Panel::bottom("drop")
-                    .frame(egui::Frame::new().inner_margin(egui::Margin {
-                        top: 16,
-                        ..Default::default()
-                    }))
-                    .show_separator_line(false)
-                    .show(ui, drop_zone);
-                if let Some(chosen) = recent_list(ui, &mut self.filter, recent) {
-                    pick = Some(chosen);
-                }
-            });
-
-        if open && let Some(path) = open_dialog() {
-            pick = Some(Pick::Open(path));
-        }
-        if new {
-            let home = std::env::var_os("HOME")
-                .map(PathBuf::from)
-                .unwrap_or_default();
-            self.sheet = Some(NewSheet::new(&home));
-        }
-        if let Some(sheet) = &mut self.sheet {
-            match sheet.show(ui.ctx()) {
-                Some(Outcome::Cancel) => self.sheet = None,
-                Some(Outcome::Created { path, open }) => {
-                    self.sheet = None;
-                    pick = Some(if open {
-                        Pick::Open(path)
-                    } else {
-                        Pick::Created(path)
-                    });
-                }
-                None => {}
-            }
-        }
-        pick
-    }
-}
-
-/// What the left column's buttons asked for.
-struct Actions {
-    new: bool,
-    open: bool,
-    example: bool,
-}
-
-/// Rocky's name and what it does, the three ways to start, and whether `rocky` was found.
-fn sidebar(ui: &mut Ui, rocky: Option<&Path>) -> Actions {
-    theme::logo(ui, 56.0);
-    ui.add_space(14.0);
-    ui.label(RichText::new("rocky").strong().size(28.0));
-    ui.add_space(4.0);
-    ui.label(
-        RichText::new(
-            "Build YAML jobs visually: commands, conditions, loops and schedules, then run them with rocky.",
-        )
-        .color(theme::DIM)
-        .size(13.0),
-    );
-    ui.add_space(22.0);
-    let actions = Actions {
-        new: action(
-            ui,
-            true,
-            Icon::Plus,
-            "New project…",
-            "Start from a basic or full starter",
-            "Cmd N",
-        ),
-        open: action(
-            ui,
-            false,
-            Icon::Folder,
-            "Open project…",
-            "Pick a project .yaml file",
-            "Cmd O",
-        ),
-        example: Path::new(EXAMPLE).is_file()
-            && action(
-                ui,
-                false,
-                Icon::File,
-                "Open example",
-                "examples/httpbin.yaml",
-                "",
+        frame.render_widget(
+            Paragraph::new(sidebar(rocky.as_deref())).block(
+                Block::new()
+                    .borders(Borders::RIGHT)
+                    .border_style(theme::dim()),
             ),
-    };
-    ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
-        ui.spacing_mut().item_spacing.y = 4.0;
-        match rocky {
-            Some(path) => {
-                theme::hint(ui, &tilde(path));
-                ui.horizontal(|ui| {
-                    widgets::dot(ui, theme::OK, true);
-                    ui.label(RichText::new("rocky CLI found").color(theme::OK).size(12.0));
-                });
-            }
-            None => {
-                theme::hint(ui, "Running and scheduling need it on PATH");
-                ui.horizontal(|ui| {
-                    widgets::dot(ui, theme::ERROR, true);
-                    ui.label(
-                        RichText::new("rocky CLI not found")
-                            .color(theme::ERROR)
-                            .size(12.0),
-                    );
-                });
-            }
-        }
-    });
-    actions
-}
-
-/// A full-width button with an icon, a title, a line under it and a shortcut; `primary` is
-/// filled yellow. Returns whether it was clicked.
-fn action(ui: &mut Ui, primary: bool, icon: Icon, title: &str, detail: &str, keys: &str) -> bool {
-    let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 60.0), Sense::click());
-    let hovered = response.hovered();
-    let (fill, text, dim) = match (primary, hovered) {
-        (true, false) => (theme::ACCENT, theme::BG, theme::BG.gamma_multiply(0.75)),
-        (true, true) => (
-            theme::lerp(theme::ACCENT, egui::Color32::WHITE, 0.12),
-            theme::BG,
-            theme::BG.gamma_multiply(0.75),
-        ),
-        (false, false) => (theme::SIDEBAR, theme::TEXT, theme::DIM),
-        (false, true) => (theme::CARD, theme::TEXT, theme::DIM),
-    };
-    let painter = ui.painter();
-    painter.rect(
-        rect,
-        4,
-        fill,
-        Stroke::new(1.0, if primary { fill } else { theme::BORDER_STRONG }),
-        egui::StrokeKind::Inside,
-    );
-    let left = rect.left() + 16.0;
-    let at = Rect::from_center_size(egui::pos2(left + 6.0, rect.center().y), vec2(14.0, 14.0));
-    icons::paint(painter, at, icon, text);
-    painter.text(
-        egui::pos2(left + 26.0, rect.center().y - 9.0),
-        Align2::LEFT_CENTER,
-        title,
-        FontId::monospace(14.0),
-        text,
-    );
-    painter.text(
-        egui::pos2(left + 26.0, rect.center().y + 10.0),
-        Align2::LEFT_CENTER,
-        detail,
-        FontId::monospace(12.0),
-        dim,
-    );
-    painter.text(
-        egui::pos2(rect.right() - 16.0, rect.center().y),
-        Align2::RIGHT_CENTER,
-        keys,
-        FontId::monospace(11.0),
-        dim,
-    );
-    ui.add_space(2.0);
-    response
-        .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .clicked()
-}
-
-/// The recent projects matching `filter`, a row each, with the problems of invalid ones.
-fn recent_list(ui: &mut Ui, filter: &mut String, recent: &Recent) -> Option<Pick> {
-    let mut pick = None;
-    ui.horizontal(|ui| {
-        ui.label(RichText::new("RECENT PROJECTS").strong().size(13.0));
-        theme::hint(ui, &recent.entries.len().to_string());
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            let field = ui.add(
-                egui::TextEdit::singleline(filter)
-                    .hint_text("Filter by name or path")
-                    .desired_width(280.0)
-                    .margin(egui::Margin {
-                        left: 30,
-                        right: 10,
-                        top: 8,
-                        bottom: 8,
-                    }),
-            );
-            let at = Rect::from_center_size(
-                egui::pos2(field.rect.left() + 16.0, field.rect.center().y),
-                vec2(12.0, 12.0),
-            );
-            icons::paint(ui.painter(), at, Icon::Search, theme::DIM);
-        });
-    });
-    ui.add_space(14.0);
-    if recent.entries.is_empty() {
-        theme::hint(
-            ui,
-            "No recent projects yet: create one, open a project file, or drop one below.",
+            side.inner(ratatui::layout::Margin::new(1, 1)),
         );
-        return None;
-    }
-
-    let needle = filter.trim().to_lowercase();
-    let shown: Vec<&Entry> = recent
-        .entries
-        .iter()
-        .filter(|entry| {
-            needle.is_empty()
-                || name(&entry.path).to_lowercase().contains(&needle)
-                || tilde(&entry.path).to_lowercase().contains(&needle)
-        })
-        .collect();
-    let columns = Columns::new(ui.available_rect_before_wrap());
-    header(ui, &columns);
-    let now = Zoned::now();
-    egui::ScrollArea::vertical()
-        .auto_shrink([false, true])
-        .show(ui, |ui| {
-            ui.spacing_mut().item_spacing.y = 4.0;
-            for entry in &shown {
-                if let Some(chosen) = row(ui, &columns, entry, &now) {
-                    pick = Some(chosen);
-                }
+        self.draw_list(
+            frame,
+            list.inner(ratatui::layout::Margin::new(2, 1)),
+            recent,
+        );
+        let status_line = match error {
+            Some(error) => Line::styled(format!(" {error}"), theme::error()),
+            None => Line::styled(
+                " rocky validate runs when a project opens · the recent list is stored on this machine",
+                theme::dim(),
+            ),
+        };
+        frame.render_widget(Paragraph::new(status_line), status);
+        match &self.mode {
+            Mode::New(form) => form.draw(frame, main),
+            Mode::Open(field) => {
+                let width = main.width.min(80);
+                let area = Rect::new(main.x + (main.width - width) / 2, main.y + 2, width, 3);
+                frame.render_widget(Clear, area);
+                let block = Block::bordered()
+                    .title(Span::styled(" Open a project file ", theme::bold()))
+                    .title_bottom(Line::styled(" enter open · esc cancel ", theme::dim()))
+                    .border_style(theme::accent());
+                let inner = block.inner(area);
+                frame.render_widget(block, area);
+                field.draw(frame, inner);
             }
-            if shown.is_empty() {
-                theme::hint(ui, "No recent project matches the filter.");
-            }
-            for entry in &shown {
-                if let Status::Invalid(error) = &entry.summary.status {
-                    ui.add_space(8.0);
-                    ui.horizontal(|ui| {
-                        ui.add_space(columns.name - columns.left);
-                        theme::problem(
-                            ui,
-                            &format!(
-                                "{} · {error} — opens with the problem highlighted",
-                                name(&entry.path)
-                            ),
-                        );
-                    });
-                }
-            }
-        });
-    pick
-}
-
-/// Where each column of the recent list starts, for a list `rect` wide.
-struct Columns {
-    left: f32,
-    name: f32,
-    jobs: f32,
-    status: f32,
-    /// Where the opened time ends.
-    opened: f32,
-    right: f32,
-}
-
-impl Columns {
-    fn new(rect: Rect) -> Columns {
-        let width = rect.width();
-        Columns {
-            left: rect.left(),
-            name: rect.left() + 66.0,
-            jobs: rect.left() + width * 0.457,
-            status: rect.left() + width * 0.676,
-            opened: rect.right() - 60.0,
-            right: rect.right(),
+            Mode::List | Mode::Filter => {}
         }
     }
-}
 
-fn header(ui: &mut Ui, columns: &Columns) {
-    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 24.0), Sense::hover());
-    let y = rect.center().y;
-    for (x, align, text) in [
-        (columns.name, Align2::LEFT_CENTER, "NAME"),
-        (columns.jobs, Align2::LEFT_CENTER, "JOBS"),
-        (columns.status, Align2::LEFT_CENTER, "STATUS"),
-        (columns.opened, Align2::RIGHT_CENTER, "OPENED"),
-    ] {
-        ui.painter().text(
-            egui::pos2(x, y),
-            align,
-            text,
-            FontId::monospace(11.0),
-            theme::DIM,
+    fn draw_list(&mut self, frame: &mut Frame, area: Rect, recent: &Recent) {
+        let [head, rows] =
+            Layout::vertical([Constraint::Length(3), Constraint::Fill(1)]).areas(area);
+        let filter = match (&self.mode, self.filter.text.is_empty()) {
+            (Mode::Filter, _) => None,
+            (_, true) => Some(Span::styled("/ filter by name or path", theme::dim())),
+            (_, false) => Some(Span::styled(
+                format!("/ {}", self.filter.text),
+                theme::accent(),
+            )),
+        };
+        let mut title = vec![
+            Span::styled("RECENT PROJECTS ", theme::bold()),
+            Span::styled(format!("{}   ", recent.entries.len()), theme::dim()),
+        ];
+        title.extend(filter);
+        frame.render_widget(
+            Paragraph::new(vec![
+                Line::from(title),
+                Line::raw(""),
+                Line::styled(
+                    format!("  {:<36}{:<26}{:<20}{}", "NAME", "JOBS", "STATUS", "OPENED"),
+                    theme::dim(),
+                ),
+            ]),
+            head,
+        );
+        if let Mode::Filter = self.mode {
+            let x = 24 + u16::try_from(recent.entries.len().to_string().len()).unwrap_or(0);
+            let field = Rect::new(head.x + x, head.y, head.width.saturating_sub(x), 1);
+            self.filter.draw(frame, field);
+        }
+        if recent.entries.is_empty() {
+            frame.render_widget(
+                Paragraph::new(Line::styled(
+                    "No recent projects yet: create one (n) or open a project file (o).",
+                    theme::dim(),
+                )),
+                rows,
+            );
+            return;
+        }
+        let shown = self.shown(recent);
+        self.cursor = self.cursor.min(shown.len().saturating_sub(1));
+        let now = Zoned::now();
+        let mut lines = Vec::new();
+        for (index, entry) in shown.iter().enumerate() {
+            lines.extend(row(entry, &now, index == self.cursor));
+        }
+        if shown.is_empty() {
+            lines.push(Line::styled(
+                "No recent project matches the filter.",
+                theme::dim(),
+            ));
+        }
+        if let Some(Status::Invalid(error)) =
+            shown.get(self.cursor).map(|entry| &entry.summary.status)
+        {
+            lines.push(Line::raw(""));
+            lines.push(Line::styled(
+                format!("{error} — opens with the problem highlighted"),
+                theme::error(),
+            ));
+        }
+        let scroll = (self.cursor * 3 + 3).saturating_sub(usize::from(rows.height));
+        frame.render_widget(
+            Paragraph::new(lines).scroll((u16::try_from(scroll).unwrap_or(0), 0)),
+            rows,
         );
     }
-    ui.add_space(4.0);
 }
 
-/// One recent project: click to open it, `···` for more.
-fn row(ui: &mut Ui, columns: &Columns, entry: &Entry, now: &Zoned) -> Option<Pick> {
+/// Rocky's name and what it does, the ways to start, and whether `rocky` was found.
+fn sidebar(rocky: Option<&Path>) -> Vec<Line<'static>> {
+    let key = |key: &str, title: &str, detail: &str| {
+        vec![
+            Line::from(vec![
+                Span::styled(format!(" {key} "), theme::accent()),
+                Span::styled(title.to_string(), theme::bold()),
+            ]),
+            Line::styled(format!("   {detail}"), theme::dim()),
+            Line::raw(""),
+        ]
+    };
+    let mut lines = vec![
+        Line::styled("rocky", theme::bold()),
+        Line::styled("Build YAML jobs: commands, conditions,", theme::dim()),
+        Line::styled("loops and schedules, then run them.", theme::dim()),
+        Line::raw(""),
+    ];
+    lines.extend(key(
+        "n",
+        "New project…",
+        "Start from a basic or full starter",
+    ));
+    lines.extend(key(
+        "o",
+        "Open project…",
+        "Type the path of a project .yaml",
+    ));
+    if Path::new(EXAMPLE).is_file() {
+        lines.extend(key("e", "Open example", "examples/httpbin.yaml"));
+    }
+    lines.extend(key(
+        "↵",
+        "Open recent",
+        "/ filter · x forget · r refresh · q quit",
+    ));
+    match rocky {
+        Some(path) => {
+            lines.push(Line::styled("● rocky CLI found", theme::ok()));
+            lines.push(Line::styled(tilde(path), theme::dim()));
+        }
+        None => {
+            lines.push(Line::styled("● rocky CLI not found", theme::error()));
+            lines.push(Line::styled(
+                "Running and scheduling need it on PATH",
+                theme::dim(),
+            ));
+        }
+    }
+    lines
+}
+
+/// One recent project, on two lines and a gap.
+fn row(entry: &Entry, now: &Zoned, selected: bool) -> Vec<Line<'static>> {
     let missing = matches!(entry.summary.status, Status::Missing);
-    let (rect, response) = ui.allocate_exact_size(
-        vec2(ui.available_width(), 62.0),
-        if missing {
-            Sense::hover()
-        } else {
-            Sense::click()
-        },
-    );
-    let mut pick = response.clicked().then(|| Pick::Open(entry.path.clone()));
-    let response = if missing {
-        response.on_hover_text("The file is gone; remove it from the list with ⋯")
-    } else {
-        response
-            .on_hover_text(format!("Open {}", entry.path.display()))
-            .on_hover_cursor(egui::CursorIcon::PointingHand)
-    };
-    let painter = ui.painter();
-    if response.hovered() {
-        painter.rect(
-            rect,
-            4,
-            theme::CARD,
-            Stroke::new(1.0, theme::BORDER_STRONG),
-            egui::StrokeKind::Inside,
-        );
-    }
-    let fade = |color: egui::Color32| {
-        if missing {
-            color.gamma_multiply(0.5)
-        } else {
-            color
-        }
-    };
-    let y = rect.center().y;
-
-    let icon = Rect::from_center_size(egui::pos2(rect.left() + 33.0, y), vec2(38.0, 38.0));
-    painter.rect(
-        icon,
-        4,
-        theme::BG,
-        Stroke::new(1.0, theme::BORDER_STRONG),
-        egui::StrokeKind::Inside,
-    );
-    icons::paint(
-        painter,
-        icon.shrink(11.0),
-        Icon::File,
-        fade(theme::TEXT_DIM),
-    );
-
-    let text = |x: f32, y: f32, align: Align2, text: &str, size: f32, color| {
-        painter.text(
-            egui::pos2(x, y),
-            align,
-            text,
-            FontId::monospace(size),
-            fade(color),
-        );
-    };
-    text(
-        columns.name,
-        y - 9.0,
-        Align2::LEFT_CENTER,
-        &name(&entry.path),
-        14.0,
-        theme::TEXT,
-    );
-    text(
-        columns.name,
-        y + 10.0,
-        Align2::LEFT_CENTER,
-        &tilde(&entry.path),
-        12.0,
-        theme::DIM,
-    );
-
     let summary = &entry.summary;
     let jobs = if missing {
         "—".to_string()
@@ -489,99 +326,36 @@ fn row(ui: &mut Ui, columns: &Columns, entry: &Entry, now: &Zoned) -> Option<Pic
             summary.scheduled
         )
     };
-    text(
-        columns.jobs,
-        y,
-        Align2::LEFT_CENTER,
-        &jobs,
-        12.0,
-        theme::TEXT,
-    );
-
-    let (dot, status, color) = match &summary.status {
-        Status::Running => ("●", "running · socket", theme::WHILE),
-        Status::Valid => ("●", "valid", theme::OK),
-        Status::Invalid(_) => ("●", "invalid", theme::ERROR),
-        Status::Missing => ("○", "file not found", theme::DIM),
+    let (status, style) = match &summary.status {
+        Status::Running => (
+            "● running · socket",
+            ratatui::style::Style::new().fg(theme::WHILE),
+        ),
+        Status::Valid => ("● valid", theme::ok()),
+        Status::Invalid(_) => ("● invalid", theme::error()),
+        Status::Missing => ("○ file not found", theme::dim()),
     };
-    text(columns.status, y, Align2::LEFT_CENTER, dot, 9.0, color);
-    text(
-        columns.status + 14.0,
-        y,
-        Align2::LEFT_CENTER,
-        status,
-        12.0,
-        color,
-    );
-    text(
-        columns.opened,
-        y,
-        Align2::RIGHT_CENTER,
-        &ago(entry.opened, now),
-        12.0,
-        theme::DIM,
-    );
-
-    let more = Rect::from_center_size(egui::pos2(columns.right - 30.0, y), vec2(22.0, 22.0));
-    ui.scope_builder(egui::UiBuilder::new().max_rect(more), |ui| {
-        widgets::more_menu(ui, "More", |ui| {
-            if ui.button("Remove from recent").clicked() {
-                pick = Some(Pick::Forget(entry.path.clone()));
-            }
-            if ui.button("Copy path").clicked() {
-                ui.ctx().copy_text(entry.path.display().to_string());
-            }
-        });
-    });
-    pick
-}
-
-/// A dashed box to drop a project file on; it lights up while a file is dragged over.
-fn drop_zone(ui: &mut Ui) {
-    let hovering = ui.input(|input| !input.raw.hovered_files.is_empty());
-    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 120.0), Sense::hover());
-    let color = if hovering {
-        theme::ACCENT
+    let marker = if selected {
+        Span::styled("▌ ", theme::accent())
     } else {
-        theme::BORDER
+        Span::raw("  ")
     };
-    if hovering {
-        ui.painter().rect_filled(rect, 4, theme::ACCENT_BG);
-    }
-    let corners = [
-        rect.left_top(),
-        rect.right_top(),
-        rect.right_bottom(),
-        rect.left_bottom(),
-        rect.left_top(),
-    ];
-    ui.painter().extend(egui::Shape::dashed_line(
-        &corners,
-        Stroke::new(1.0, color),
-        4.0,
-        4.0,
-    ));
-    let color = if hovering { theme::ACCENT } else { theme::DIM };
-    let text = ui.painter().text(
-        rect.center() + vec2(11.0, 0.0),
-        Align2::CENTER_CENTER,
-        "Drop a project .yaml file here to open it",
-        FontId::monospace(13.0),
-        color,
-    );
-    let at = Rect::from_center_size(
-        egui::pos2(text.left() - 12.0, rect.center().y),
-        vec2(14.0, 14.0),
-    );
-    icons::paint(ui.painter(), at, Icon::Folder, color);
-}
-
-/// The system's Open panel, for YAML files. `None` if cancelled.
-fn open_dialog() -> Option<PathBuf> {
-    rfd::FileDialog::new()
-        .set_title("Open a rocky project")
-        .add_filter("YAML", &["yaml", "yml"])
-        .pick_file()
+    let name_style = match (selected, missing) {
+        (_, true) => theme::dim(),
+        (true, false) => theme::accent(),
+        (false, false) => theme::bold(),
+    };
+    vec![
+        Line::from(vec![
+            marker.clone(),
+            Span::styled(format!("{:<36}", name(&entry.path)), name_style),
+            Span::styled(format!("{jobs:<26}"), theme::text()),
+            Span::styled(format!("{status:<20}"), style),
+            Span::styled(ago(entry.opened, now), theme::dim()),
+        ]),
+        Line::from(vec![marker, Span::styled(tilde(&entry.path), theme::dim())]),
+        Line::raw(""),
+    ]
 }
 
 /// A project's name: its folder for `project.yaml`, else the file's name without `.yaml`.
@@ -621,11 +395,14 @@ fn ago(opened: Timestamp, now: &Zoned) -> String {
 
 #[cfg(test)]
 mod tests {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
     use super::*;
 
-    /// Draws valid, invalid and missing projects, the filter, and the New project sheet.
+    /// Draws valid, invalid and missing projects, the filter, and the New project form.
     #[test]
-    fn draws_the_list_and_the_sheet() {
+    fn draws_the_list_and_the_form() {
         let dir = tempfile::tempdir().unwrap();
         let valid = dir.path().join("valid.yaml");
         let invalid = dir.path().join("invalid.yaml");
@@ -635,22 +412,24 @@ mod tests {
         for path in [&valid, &invalid, &dir.path().join("gone.yaml")] {
             recent.record(path).unwrap();
         }
-        let ctx = egui::Context::default();
-        theme::apply(&ctx);
+        let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
         let mut start = Start::default();
-        for (filter, sheet) in [("", false), ("inval", false), ("", true)] {
-            start.filter = filter.to_string();
-            if sheet {
-                start.sheet = Some(NewSheet::new(dir.path()));
-            }
-            for _ in 0..2 {
-                let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-                    assert!(start.show(ui, &recent, None).is_none());
-                });
-                output.textures_delta.clear();
-            }
+        let screen = |terminal: &mut Terminal<TestBackend>, start: &mut Start| {
+            terminal
+                .draw(|frame| start.draw(frame, frame.area(), &recent, None))
+                .unwrap();
+            format!("{:?}", terminal.backend().buffer())
+        };
+        let all = screen(&mut terminal, &mut start);
+        assert!(all.contains("valid") && all.contains("invalid") && all.contains("gone"));
+        for key in [KeyCode::Char('/'), KeyCode::Char('i'), KeyCode::Char('n')] {
+            assert!(start.handle(KeyEvent::from(key), &recent).is_none());
         }
-        assert!(start.sheet.is_some());
+        let filtered = screen(&mut terminal, &mut start);
+        assert!(filtered.contains("invalid.yaml") && !filtered.contains("gone.yaml"));
+        start.handle(KeyEvent::from(KeyCode::Esc), &recent);
+        start.handle(KeyEvent::from(KeyCode::Char('n')), &recent);
+        assert!(screen(&mut terminal, &mut start).contains("New project"));
     }
 
     #[test]

@@ -124,11 +124,6 @@ pub fn parse_scalar(text: &str) -> Value {
     }
 }
 
-/// The string under `key`, if it is one.
-pub fn get_str<'a>(map: &'a Mapping, key: &str) -> Option<&'a str> {
-    map.get(key).and_then(Value::as_str)
-}
-
 /// Sets `key` to `value`, or removes it (keeping the order of the rest) when `None`.
 pub fn set(map: &mut Mapping, key: &str, value: Option<Value>) {
     match value {

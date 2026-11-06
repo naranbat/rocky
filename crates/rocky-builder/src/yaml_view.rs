@@ -1,20 +1,19 @@
 //! The read-only YAML view of the document, as Save would write it.
 
-use eframe::egui::{self, RichText};
+use ratatui::Frame;
+use ratatui::layout::Rect;
+use ratatui::widgets::Paragraph;
 
 use crate::theme;
 
-pub fn show(ui: &mut egui::Ui, text: &str) {
-    theme::section(
-        ui,
-        "YAML",
-        "what Save writes · comments in the original file are not kept",
+/// Draws `text` in `area` from line `scroll`, keeping `scroll` within the text.
+pub fn draw(frame: &mut Frame, area: Rect, text: &str, scroll: &mut u16) {
+    let lines = u16::try_from(text.lines().count()).unwrap_or(u16::MAX);
+    *scroll = (*scroll).min(lines.saturating_sub(area.height));
+    frame.render_widget(
+        Paragraph::new(text.to_string())
+            .style(theme::text())
+            .scroll((*scroll, 0)),
+        area,
     );
-    ui.add_space(4.0);
-    egui::ScrollArea::both().auto_shrink(false).show(ui, |ui| {
-        theme::inset().show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.add(egui::Label::new(RichText::new(text).size(13.0)).selectable(true));
-        });
-    });
 }

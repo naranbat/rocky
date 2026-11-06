@@ -1,93 +1,34 @@
 //! The left sidebar: the project's settings and the list of jobs.
 
-use eframe::egui::{self, RichText, Stroke};
+use ratatui::Frame;
+use ratatui::layout::Rect;
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, Borders, Paragraph};
 use serde_yaml::{Mapping, Value};
 
 use crate::doc::{self, Doc};
-use crate::icons::Icon;
 use crate::job;
 use crate::project;
 use crate::scheduler::Scheduler;
 use crate::theme;
 use crate::validate::Problem;
-use crate::widgets;
 
 /// What the main area shows.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Selection {
     Project,
     Job(String),
 }
 
-/// Draws the sidebar. Returns `true` when it changed the document (a job was added).
-pub fn show(
-    ui: &mut egui::Ui,
-    doc: &mut Doc,
-    selection: &mut Selection,
-    problem: Option<&Problem>,
-    scheduler: Option<&Scheduler>,
-) -> bool {
-    let mut changed = false;
-    ui.add_space(8.0);
-    theme::hint(ui, "PROJECT");
-    let values = doc
-        .root
-        .get("values")
-        .and_then(Value::as_mapping)
-        .map_or(0, Mapping::len);
-    let env_file = doc
-        .root
-        .get("env_file")
-        .map(doc::scalar_text)
-        .unwrap_or_else(|| "none".into());
-    let defaults = project::defaults_summary(&doc.root);
-    let on_project = *selection == Selection::Project;
-    for (label, value) in [
-        ("Values", values.to_string()),
-        ("Env file", env_file),
-        ("Defaults", defaults),
-    ] {
-        if row(ui, label, &value, on_project).clicked() {
-            *selection = Selection::Project;
-        }
-    }
-    ui.add_space(16.0);
-
-    let names = doc.job_names();
-    ui.horizontal(|ui| {
-        theme::hint(ui, &format!("JOBS · {}", names.len()));
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if widgets::icon_button(ui, Icon::Plus, theme::DIM, "Add a job").clicked() {
-                let jobs = doc.jobs_mut();
-                let name = doc::fresh_key(jobs, "new_job");
-                jobs.insert(Value::from(name.clone()), new_job());
-                *selection = Selection::Job(name);
-                changed = true;
-            }
-        });
-    });
-    egui::ScrollArea::vertical().show(ui, |ui| {
-        for name in &names {
-            let Some(job) = doc
-                .root
-                .get("jobs")
-                .and_then(|jobs| jobs.get(name.as_str()))
-            else {
-                continue;
-            };
-            let selected = *selection == Selection::Job(name.clone());
-            let broken = problem.is_some_and(|problem| problem.job.as_ref() == Some(name));
-            let running = scheduler.is_some_and(|scheduler| scheduler.is_running_job(name));
-            if job_item(ui, name, job, selected, broken, running).clicked() {
-                *selection = Selection::Job(name.clone());
-            }
-        }
-    });
-    changed
+/// Everything the sidebar lists, in order: the project, then each job.
+pub fn items(doc: &Doc) -> Vec<Selection> {
+    std::iter::once(Selection::Project)
+        .chain(doc.job_names().into_iter().map(Selection::Job))
+        .collect()
 }
 
-/// A job with one starter task, as added by `+`.
-fn new_job() -> Value {
+/// A job with one starter task, as added by `a`.
+pub fn new_job() -> Value {
     doc::map_of([(
         "tasks",
         doc::map_of([(
@@ -100,59 +41,100 @@ fn new_job() -> Value {
     )])
 }
 
-/// A clickable `label ……… value` row.
-fn row(ui: &mut egui::Ui, label: &str, value: &str, selected: bool) -> egui::Response {
-    ui.horizontal(|ui| {
-        ui.set_width(ui.available_width());
-        let color = if selected { theme::ACCENT } else { theme::TEXT };
-        ui.label(RichText::new(label).color(color));
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            theme::hint(ui, value);
-        });
-    })
-    .response
-    .interact(egui::Sense::click())
-    .on_hover_cursor(egui::CursorIcon::PointingHand)
-}
-
-/// One job in the list: its name, and a marker (a filled dot when scheduled, a play icon
-/// while the scheduler runs it, a cross when it has a problem) with its summary.
-fn job_item(
-    ui: &mut egui::Ui,
-    name: &str,
-    job: &Value,
-    selected: bool,
-    broken: bool,
-    running: bool,
-) -> egui::Response {
-    let scheduled = job.get("schedule").is_some();
-    let frame = if selected {
-        egui::Frame::new()
-            .fill(theme::CARD)
-            .stroke(Stroke::new(1.0, theme::BORDER_STRONG))
-    } else {
-        egui::Frame::new()
+pub fn draw(
+    frame: &mut Frame,
+    area: Rect,
+    doc: &Doc,
+    selection: &Selection,
+    focused: bool,
+    problem: Option<&Problem>,
+    scheduler: Option<&Scheduler>,
+) {
+    let marker = |on: bool| {
+        if on && focused {
+            Span::styled("▌", theme::accent())
+        } else if on {
+            Span::styled("▌", theme::dim())
+        } else {
+            Span::raw(" ")
+        }
     };
-    frame
-        .corner_radius(theme::RADIUS)
-        .inner_margin(egui::Margin::symmetric(10, 8))
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.label(RichText::new(name).strong());
-            ui.horizontal_wrapped(|ui| {
-                ui.spacing_mut().item_spacing.x = 4.0;
-                if broken {
-                    widgets::icon(ui, Icon::Close, 10.0, theme::ERROR);
-                } else if running {
-                    widgets::icon(ui, Icon::Play, 10.0, theme::ACCENT);
-                } else {
-                    let color = if scheduled { theme::OK } else { theme::DIM };
-                    widgets::dot(ui, color, scheduled);
-                }
-                theme::hint(ui, &job::summary(job));
-            });
-        })
-        .response
-        .interact(egui::Sense::click())
-        .on_hover_cursor(egui::CursorIcon::PointingHand)
+    let name_style = |on: bool| if on { theme::accent() } else { theme::text() };
+    let values = doc
+        .root
+        .get("values")
+        .and_then(Value::as_mapping)
+        .map_or(0, Mapping::len);
+    let env_file = doc
+        .root
+        .get("env_file")
+        .map(doc::scalar_text)
+        .unwrap_or_else(|| "none".into());
+    let on_project = *selection == Selection::Project;
+    let mut lines = vec![
+        Line::styled(" PROJECT", theme::heading()),
+        Line::from(vec![
+            marker(on_project),
+            Span::styled("Project", name_style(on_project)),
+        ]),
+        Line::styled(format!("  {values} values · env {env_file}"), theme::dim()),
+        Line::styled(
+            format!("  defaults {}", project::defaults_summary(&doc.root)),
+            theme::dim(),
+        ),
+        Line::raw(""),
+    ];
+    let names = doc.job_names();
+    lines.push(Line::styled(
+        format!(" JOBS · {}", names.len()),
+        theme::heading(),
+    ));
+    let mut selected_line = 1;
+    for name in &names {
+        let Some(job) = doc
+            .root
+            .get("jobs")
+            .and_then(|jobs| jobs.get(name.as_str()))
+        else {
+            continue;
+        };
+        let on = *selection == Selection::Job(name.clone());
+        if on {
+            selected_line = lines.len() + 1;
+        }
+        let broken = problem.is_some_and(|problem| problem.job.as_ref() == Some(name));
+        let running = scheduler.is_some_and(|scheduler| scheduler.is_running_job(name));
+        let scheduled = job.get("schedule").is_some();
+        let dot = if broken {
+            Span::styled("✗ ", theme::error())
+        } else if running {
+            Span::styled("▶ ", theme::accent())
+        } else if scheduled {
+            Span::styled("● ", theme::ok())
+        } else {
+            Span::styled("○ ", theme::dim())
+        };
+        lines.push(Line::from(vec![
+            marker(on),
+            dot,
+            Span::styled(name.clone(), name_style(on)),
+        ]));
+        lines.push(Line::styled(
+            format!("    {}", job::summary(job)),
+            theme::dim(),
+        ));
+    }
+    let height = usize::from(area.height);
+    let scroll = (selected_line + 2).saturating_sub(height);
+    let border = if focused {
+        theme::accent()
+    } else {
+        theme::dim()
+    };
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(Block::new().borders(Borders::RIGHT).border_style(border))
+            .scroll((u16::try_from(scroll).unwrap_or(0), 0)),
+        area,
+    );
 }

@@ -2,16 +2,17 @@
 
 mod app;
 mod autocomplete;
-mod chips;
 mod complete;
 mod condition;
 mod doc;
 mod edit;
+mod form;
 mod home;
-mod icons;
+mod input;
 mod job;
 mod legacy;
-mod new_sheet;
+mod new_project;
+mod node;
 mod project;
 mod recent;
 mod results;
@@ -29,26 +30,38 @@ mod task_loop;
 mod task_trigger;
 mod theme;
 mod validate;
-mod widgets;
+mod vars;
 mod yaml_view;
 
 use std::path::PathBuf;
 
-use eframe::egui;
+use ratatui::DefaultTerminal;
+use ratatui::crossterm::event::{self, Event, KeyEventKind};
 
-/// Opens the builder, on the project file given as the first argument if any.
-fn main() -> eframe::Result {
+use crate::app::App;
+use crate::recent::Recent;
+
+/// Opens the builder in the terminal, on the project file given as the first argument if any.
+fn main() -> anyhow::Result<()> {
     let path = std::env::args_os().nth(1).map(PathBuf::from);
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_title("Rocky Builder")
-            .with_inner_size([1280.0, 860.0])
-            .with_min_inner_size([800.0, 500.0]),
-        ..Default::default()
-    };
-    eframe::run_native(
-        "Rocky Builder",
-        options,
-        Box::new(|cc| Ok(Box::new(app::App::new(cc, path)))),
-    )
+    let mut app = App::new(path, Recent::load());
+    // Restores the terminal on a panic too.
+    let mut terminal = ratatui::init();
+    let result = run(&mut terminal, &mut app);
+    ratatui::restore();
+    result
+}
+
+fn run(terminal: &mut DefaultTerminal, app: &mut App) -> anyhow::Result<()> {
+    while !app.quit {
+        let wait = app.tick();
+        terminal.draw(|frame| app.draw(frame))?;
+        if event::poll(wait)?
+            && let Event::Key(key) = event::read()?
+            && key.kind == KeyEventKind::Press
+        {
+            app.handle(key);
+        }
+    }
+    Ok(())
 }

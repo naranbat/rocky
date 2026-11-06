@@ -2,6 +2,7 @@
 //! JSON objects `rocky run` logs, with `job` and, for tasks, the full `result`).
 
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
@@ -96,6 +97,31 @@ impl Results {
             .fold((0, 0), |(runs, failures), (_, run)| {
                 (runs + run.runs, failures + run.failures)
             })
+    }
+}
+
+/// One run as the editor shows it: a run started in the builder, or the latest run of a
+/// job that the scheduler reported.
+#[derive(Clone, Copy)]
+pub struct Shown<'a> {
+    pub results: &'a Results,
+    /// The job the run started with, and the task it stops after.
+    pub job: &'a str,
+    pub until: Option<&'a str>,
+    pub started: Instant,
+    pub elapsed: Duration,
+    /// Who ran it, when it wasn't the builder: `scheduler`.
+    pub by: Option<&'static str>,
+}
+
+impl Shown<'_> {
+    pub fn is_running(&self) -> bool {
+        self.results.end.is_none()
+    }
+
+    /// Whether this run reported anything about `job`.
+    pub fn covers(&self, job: &str) -> bool {
+        self.job == job || self.results.jobs.iter().any(|name| name == job)
     }
 }
 

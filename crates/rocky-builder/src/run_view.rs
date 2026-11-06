@@ -1,50 +1,26 @@
-//! How a run shows in the editor: a result strip under each task card (exit badge, timing,
-//! output tabs) and a status line under the job header.
+//! How a run shows in the editor: a status line under the job header, a marker on each task
+//! row, a summary in the task's own rows, and its output in a pane.
 
-use std::time::{Duration, Instant};
-
-use eframe::egui::{self, RichText};
+use ratatui::Frame;
+use ratatui::layout::Rect;
+use ratatui::style::Style;
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 use serde_json::Value;
 
-use crate::icons::Icon;
-use crate::results::{End, Results, TaskRun};
+use crate::form::{Action, Row};
+use crate::results::{End, Shown, TaskRun};
 use crate::theme;
-use crate::widgets;
-
-/// One run as the editor shows it: a run started in the builder, or the latest run of a
-/// job that the scheduler reported.
-#[derive(Clone, Copy)]
-pub struct Shown<'a> {
-    pub results: &'a Results,
-    /// The job the run started with, and the task it stops after.
-    pub job: &'a str,
-    pub until: Option<&'a str>,
-    pub started: Instant,
-    pub elapsed: Duration,
-    /// Who ran it, when it wasn't the builder: `scheduler`.
-    pub by: Option<&'static str>,
-}
-
-impl Shown<'_> {
-    pub fn is_running(&self) -> bool {
-        self.results.end.is_none()
-    }
-
-    /// Whether this run reported anything about `job`.
-    pub fn covers(&self, job: &str) -> bool {
-        self.job == job || self.results.jobs.iter().any(|name| name == job)
-    }
-}
 
 /// Longest preview of a result shown inline.
 const PREVIEW_CHARS: usize = 60;
 
 /// The run's state for `job`, under the job header.
-pub fn job_status(ui: &mut egui::Ui, run: Shown, job: &str) {
-    let results = run.results;
+pub fn job_status(run: Shown, job: &str) -> Option<Line<'static>> {
     if !run.covers(job) {
-        return;
+        return None;
     }
+    let results = run.results;
     let (runs, failures) = results.job_counts(job);
     let secs = run.elapsed.as_secs_f32();
     let mut upto = run
@@ -55,116 +31,134 @@ pub fn job_status(ui: &mut egui::Ui, run: Shown, job: &str) {
     if let Some(by) = run.by {
         upto.push_str(&format!(" · by the {by}"));
     }
-    ui.horizontal(|ui| {
-        match &results.end {
-            None => {
-                ui.spinner();
-                theme::hint(
-                    ui,
-                    &format!("RUNNING{upto} · {runs} task runs · {secs:.1}s"),
-                );
-            }
-            Some(End::Done { failed: None }) => {
-                theme::badge(ui, Some(Icon::Check), "LAST RUN OK", theme::OK);
-                theme::hint(ui, &format!("{runs} task runs in {secs:.2}s{upto}"));
-            }
-            Some(End::Done {
-                failed: Some(reason),
-            }) => {
-                theme::badge(ui, Some(Icon::Close), "LAST RUN FAILED", theme::ERROR);
-                ui.label(RichText::new(reason).color(theme::ERROR).size(12.0));
-            }
-            Some(End::Error(error)) => {
-                theme::badge(ui, Some(Icon::Close), "RUN ERROR", theme::ERROR);
-                ui.label(RichText::new(error).color(theme::ERROR).size(12.0));
-            }
+    let mut spans = match &results.end {
+        None => vec![Span::styled(
+            format!("● RUNNING{upto} · {runs} task runs · {secs:.1}s"),
+            theme::accent(),
+        )],
+        Some(End::Done { failed: None }) => vec![
+            Span::styled("✓ LAST RUN OK ", theme::ok()),
+            Span::styled(
+                format!("{runs} task runs in {secs:.2}s{upto}"),
+                theme::dim(),
+            ),
+        ],
+        Some(End::Done {
+            failed: Some(reason),
+        }) => vec![Span::styled(
+            format!("✗ LAST RUN FAILED {reason}"),
+            theme::error(),
+        )],
+        Some(End::Error(error)) => {
+            vec![Span::styled(format!("✗ RUN ERROR {error}"), theme::error())]
         }
-        if failures > 0 && results.end.is_some() {
-            theme::hint(ui, &format!("· {failures} failed runs"));
-        }
-    });
-}
-
-/// The strip under task `name`'s card: what its last run did, and its output on demand.
-pub fn task_strip(ui: &mut egui::Ui, run: Shown, job: &str, name: &str) {
-    let Some(task) = run.results.task(job, name) else {
-        if run.is_running() && run.job == job {
-            ui.separator();
-            theme::hint(ui, "waiting…");
-        }
-        return;
     };
-    ui.separator();
-    ui.horizontal_wrapped(|ui| summary(ui, task, name));
-    if let Some(result) = task.last.as_ref().map(|event| &event["result"])
-        && !result.is_null()
-    {
-        output(ui, result);
+    if failures > 0 && results.end.is_some() {
+        spans.push(Span::styled(
+            format!(" · {failures} failed runs"),
+            theme::dim(),
+        ));
     }
+    Some(Line::from(spans))
 }
 
-/// The badge and one-line summary of a task's runs.
-fn summary(ui: &mut egui::Ui, task: &TaskRun, name: &str) {
+/// A short marker for task `name`'s last run, for its row in the task list.
+pub fn marker(run: Shown, job: &str, name: &str) -> Option<Span<'static>> {
+    let Some(task) = run.results.task(job, name) else {
+        return (run.is_running() && run.job == job).then(|| Span::styled("…", theme::dim()));
+    };
+    let (text, style) = badge(task);
+    Some(Span::styled(text, style))
+}
+
+/// The badge of a task's runs: what it did, in a word or two, and its color.
+fn badge(task: &TaskRun) -> (String, Style) {
     if task.skipped {
-        theme::badge(ui, Some(Icon::Skip), "skipped", theme::DIM);
-        theme::hint(ui, &format!("when was false · tasks.{name} stays unset"));
-        return;
+        return ("⤼ skipped".to_string(), theme::dim());
     }
     if let Some(target) = &task.queued {
-        theme::badge(
-            ui,
-            Some(Icon::Check),
-            &format!("queued {target}"),
-            theme::OK,
-        );
-        theme::hint(ui, &format!("{target} runs after this job"));
-        return;
+        return (format!("✓ queued {target}"), theme::ok());
     }
     if let Some(items) = task.items {
-        theme::badge(
-            ui,
-            Some(Icon::Loop),
-            &format!("{items} items"),
-            theme::FOR_EACH,
-        );
-        theme::hint(ui, "each item ran do; see its tasks below");
-        return;
+        return (format!("↻ {items} items"), theme::text());
     }
-    if let Some((checks, holds)) = task.check {
-        theme::badge(
-            ui,
-            Some(Icon::While),
-            &format!("{checks} checks"),
-            theme::WHILE,
-        );
-        let state = if holds {
-            "still true"
-        } else {
-            "condition false, loop done"
-        };
-        theme::hint(ui, state);
-        return;
+    if let Some((checks, _)) = task.check {
+        return (format!("↻ {checks} checks"), theme::text());
     }
     let Some(last) = &task.last else {
-        return;
+        return (String::new(), theme::dim());
     };
     let ok = last["ok"] == Value::Bool(true);
     let label = match last.get("exit_code") {
         Some(code) => format!("exit {code}"),
         None => "error".to_string(),
     };
-    let (icon, color) = if ok {
-        (Icon::Check, theme::OK)
-    } else {
-        (Icon::Close, theme::ERROR)
-    };
-    theme::badge(ui, Some(icon), &label, color);
     let ms = last["ms"].as_u64().unwrap_or_default();
-    let mut text = format!(
-        "{} · {:.2}s",
-        if ok { "ok" } else { "failed" },
-        ms as f64 / 1000.0
-    );
+    let secs = ms as f64 / 1000.0;
+    if ok {
+        (format!("✓ {label} {secs:.2}s"), theme::ok())
+    } else {
+        (format!("✗ {label} {secs:.2}s"), theme::error())
+    }
+}
+
+/// What task `name`'s last run did, under its own rows, and a row that opens its output.
+pub fn task_rows(run: Shown, job: &str, name: &str) -> Vec<Row> {
+    let Some(task) = run.results.task(job, name) else {
+        if run.is_running() && run.job == job {
+            return vec![Row::heading("LAST RUN", "waiting…")];
+        }
+        return Vec::new();
+    };
+    let (text, style) = badge(task);
+    let mut rows = vec![
+        Row::heading("LAST RUN", ""),
+        Row::note(Line::from(vec![
+            Span::styled(text, style),
+            Span::styled(format!("  {}", detail(task, name)), theme::dim()),
+        ])),
+    ];
+    if task
+        .last
+        .as_ref()
+        .is_some_and(|event| !event["result"].is_null())
+    {
+        rows.push(
+            Row::field(
+                "output",
+                Line::styled("view stdout · stderr · result (o)", theme::text()),
+                Action::Output(name.to_string()),
+            )
+            .for_task(name),
+        );
+    }
+    rows
+}
+
+/// The rest of a task's summary, after its badge.
+fn detail(task: &TaskRun, name: &str) -> String {
+    if task.skipped {
+        return format!("when was false · tasks.{name} stays unset");
+    }
+    if let Some(target) = &task.queued {
+        return format!("{target} runs after this job");
+    }
+    if task.items.is_some() {
+        return "each item ran do".to_string();
+    }
+    if let Some((_, holds)) = task.check {
+        return if holds {
+            "still true"
+        } else {
+            "condition false, loop done"
+        }
+        .to_string();
+    }
+    let Some(last) = &task.last else {
+        return String::new();
+    };
+    let ok = last["ok"] == Value::Bool(true);
+    let mut text = (if ok { "ok" } else { "failed" }).to_string();
     if last["allowed"] == Value::Bool(true) {
         text.push_str(" · allowed to fail");
     }
@@ -180,7 +174,7 @@ fn summary(ui: &mut egui::Ui, task: &TaskRun, name: &str) {
     } else if let Some(stdout) = last["result"].get("stdout") {
         text.push_str(&format!(" · tasks.{name}.stdout = {}", preview(stdout)));
     }
-    theme::hint(ui, &text);
+    text
 }
 
 /// A value on one short line.
@@ -197,79 +191,61 @@ fn preview(value: &Value) -> String {
     }
 }
 
-/// A collapsed `View stdout` toggle, opening stdout / stderr / result tabs with Copy.
-fn output(ui: &mut egui::Ui, result: &Value) {
-    let id = ui.make_persistent_id("output");
-    let (mut open, mut tab) =
-        ui.data_mut(|data| data.get_temp::<(bool, u8)>(id).unwrap_or((false, 0)));
-    let (toggle, chevron) = if open {
-        ("Hide output", Icon::ChevronUp)
-    } else {
-        ("View output", Icon::Chevron)
+/// The output pane's state: which task, which tab, and how far it is scrolled.
+pub struct Output {
+    pub task: String,
+    pub tab: usize,
+    pub scroll: u16,
+}
+
+/// Draws task `output.task`'s last result over `area`: stdout, stderr or the whole result.
+pub fn draw_output(frame: &mut Frame, area: Rect, run: Option<Shown>, job: &str, output: &Output) {
+    let result = run
+        .and_then(|run| run.results.task(job, &output.task))
+        .and_then(|task| task.last.as_ref())
+        .map(|event| event["result"].clone())
+        .unwrap_or(Value::Null);
+    let stderr = result["stderr"].as_str().unwrap_or_default();
+    let tabs = [
+        "stdout".to_string(),
+        match stderr.lines().count() {
+            0 => "stderr · empty".to_string(),
+            1 => "stderr · 1 line".to_string(),
+            n => format!("stderr · {n} lines"),
+        },
+        "result JSON".to_string(),
+    ];
+    let text = match output.tab {
+        0 => match &result["stdout"] {
+            Value::String(text) => text.clone(),
+            other => serde_json::to_string_pretty(other).unwrap_or_default(),
+        },
+        1 => stderr.to_string(),
+        _ => serde_json::to_string_pretty(&result).unwrap_or_default(),
     };
-    let button = ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
-        widgets::icon(ui, Icon::Terminal, 12.0, theme::DIM);
-        ui.label(RichText::new(toggle).color(theme::TEXT_DIM).size(12.0));
-        widgets::icon(ui, chevron, 10.0, theme::DIM);
-    });
-    if button
-        .response
-        .interact(egui::Sense::click())
-        .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .clicked()
-    {
-        open = !open;
-    }
-    if open {
-        let stderr = result["stderr"].as_str().unwrap_or_default();
-        let tabs = [
-            "stdout".to_string(),
-            match stderr.lines().count() {
-                0 => "stderr · empty".to_string(),
-                1 => "stderr · 1 line".to_string(),
-                n => format!("stderr · {n} lines"),
-            },
-            "result JSON".to_string(),
-        ];
-        let text = match tab {
-            0 => match &result["stdout"] {
-                Value::String(text) => text.clone(),
-                other => serde_json::to_string_pretty(other).unwrap_or_default(),
-            },
-            1 => stderr.to_string(),
-            _ => serde_json::to_string_pretty(result).unwrap_or_default(),
+    let mut title = vec![Span::styled(format!(" {} ", output.task), theme::bold())];
+    for (index, tab) in tabs.iter().enumerate() {
+        let style = if index == output.tab {
+            theme::accent()
+        } else {
+            theme::dim()
         };
-        theme::inset().show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.horizontal(|ui| {
-                for (index, label) in tabs.iter().enumerate() {
-                    if ui
-                        .selectable_label(tab as usize == index, label.as_str())
-                        .clicked()
-                    {
-                        tab = index as u8;
-                    }
-                }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if widgets::icon_button(ui, Icon::Copy, theme::DIM, "Copy").clicked() {
-                        ui.ctx().copy_text(text.clone());
-                    }
-                    if tab == 0 && !result["stdout"].is_string() && !result["stdout"].is_null() {
-                        theme::hint(ui, "parsed as JSON");
-                    }
-                });
-            });
-            ui.separator();
-            egui::ScrollArea::vertical()
-                .max_height(240.0)
-                .show(ui, |ui| {
-                    ui.add(
-                        egui::Label::new(RichText::new(text).color(theme::NUMBER).size(12.0))
-                            .selectable(true),
-                    );
-                });
-        });
+        title.push(Span::styled(format!(" {tab} "), style));
     }
-    ui.data_mut(|data| data.insert_temp(id, (open, tab)));
+    let block = Block::bordered()
+        .title(Line::from(title))
+        .title_bottom(Line::styled(
+            " tab switch · ↑↓ scroll · esc close ",
+            theme::dim(),
+        ))
+        .border_style(theme::dim());
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Paragraph::new(text)
+            .style(Style::new().fg(theme::NUMBER))
+            .block(block)
+            .wrap(Wrap { trim: false })
+            .scroll((output.scroll, 0)),
+        area,
+    );
 }

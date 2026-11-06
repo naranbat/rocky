@@ -1,133 +1,61 @@
-//! The project-level panels: values, env file, and defaults.
+//! The project-level rows: values, env file, and defaults.
 
-use eframe::egui::{self, RichText};
-use serde_yaml::{Mapping, Value};
+use serde_yaml::Value;
 
-use crate::chips;
 use crate::doc;
-use crate::edit::Edit;
+use crate::form::{Action, Field, Row};
+use crate::node::Path;
 use crate::task_cmd;
-use crate::theme;
+use crate::vars;
 
-/// Edits the project's `values`, `env_file` and `defaults`.
-pub fn editor(ui: &mut egui::Ui, ed: &mut Edit, project: &mut Mapping) {
-    ui.heading("Project");
-    theme::hint(ui, "Shared by every job, job files included.");
-    ui.add_space(12.0);
-
-    theme::section(
-        ui,
-        "VALUES",
-        "read as ${NAME} by every job; a job's own value wins",
+/// The project's `values`, `env_file` and `defaults`.
+pub fn rows(root: &Value) -> Vec<Row> {
+    let top = Path::default();
+    let mut rows = vec![
+        Row::heading("PROJECT", "shared by every job, job files included"),
+        Row::heading(
+            "VALUES",
+            "read as ${NAME} by every job; a job's own value wins",
+        ),
+    ];
+    rows.extend(vars::rows(root, &top.key("values"), "value"));
+    rows.push(Row::heading("ENV FILE", "a .env file shared by all jobs"));
+    rows.push(
+        Row::edit("env_file", root, top.key("env_file"), Field::Optional)
+            .removable(top.key("env_file")),
     );
-    theme::card().show(ui, |ui| {
-        ui.set_width(ui.available_width());
-        let values = project
-            .entry(Value::from("values"))
-            .or_insert_with(|| Value::Mapping(Mapping::new()));
-        chips::vars(ui, ed, "values", doc::as_map(values), "NAME");
-    });
-    if project
-        .get("values")
-        .and_then(Value::as_mapping)
-        .is_some_and(Mapping::is_empty)
-    {
-        project.shift_remove("values");
-    }
-    ui.add_space(12.0);
-
-    theme::section(ui, "ENV FILE", "a .env file shared by all jobs");
-    theme::card().show(ui, |ui| {
-        ui.set_width(ui.available_width());
-        chips::row(ui, "env_file", |ui| {
-            chips::str_field(ui, ed, project, "env_file", ".env", 120.0);
-            theme::hint(ui, "relative to the project file");
-        });
-    });
-    ui.add_space(12.0);
-
-    theme::section(
-        ui,
+    rows.push(Row::heading(
         "DEFAULTS",
         "every cmd task gets these unless it sets them",
-    );
-    match project.get_mut("defaults") {
-        Some(defaults) => {
-            if defaults_editor(ui, ed, doc::as_map(defaults)) {
-                doc::set(project, "defaults", None);
-                ed.changed = true;
-            }
-        }
-        None => {
-            if chips::add_button(ui, "defaults").clicked() {
-                project.insert(
-                    Value::from("defaults"),
-                    doc::map_of([("timeout", Value::from("30s"))]),
-                );
-                ed.changed = true;
-            }
-        }
-    }
+    ));
+    rows.extend(defaults(root, &top.key("defaults"), "defaults"));
+    rows
 }
 
-/// Edits a `defaults` mapping (timeout, cwd, env, retry). Returns `true` to remove it.
-pub fn defaults_editor(ui: &mut egui::Ui, ed: &mut Edit, defaults: &mut Mapping) -> bool {
-    let mut remove = false;
-    theme::card().show(ui, |ui| {
-        ui.set_width(ui.available_width());
-        chips::row(ui, "timeout", |ui| {
-            chips::str_field(ui, ed, defaults, "timeout", "30s", 40.0)
-        });
-        chips::row(ui, "cwd", |ui| {
-            chips::str_field(ui, ed, defaults, "cwd", ".", 80.0)
-        });
-        chips::row(ui, "env", |ui| {
-            let env = defaults
-                .entry(Value::from("env"))
-                .or_insert_with(|| Value::Mapping(Mapping::new()));
-            chips::vars(ui, ed, "env", doc::as_map(env), "NAME");
-        });
-        if defaults
-            .get("env")
-            .and_then(Value::as_mapping)
-            .is_some_and(Mapping::is_empty)
-        {
-            defaults.shift_remove("env");
-        }
-        match defaults.get_mut("retry") {
-            Some(retry) => {
-                let mut drop = false;
-                chips::row(ui, "retry", |ui| {
-                    drop = task_cmd::retry_editor(ui, ed, doc::as_map(retry))
-                });
-                if drop {
-                    doc::set(defaults, "retry", None);
-                    ed.changed = true;
-                }
-            }
-            None => {
-                chips::row(ui, "retry", |ui| {
-                    if chips::add_button(ui, "retry").clicked() {
-                        defaults.insert(
-                            Value::from("retry"),
-                            doc::map_of([
-                                ("attempts", Value::from(3)),
-                                ("delay", Value::from("2s")),
-                            ]),
-                        );
-                        ed.changed = true;
-                    }
-                });
-            }
-        }
-        if ui
-            .small_button(RichText::new("remove defaults").color(theme::DIM))
-            .clicked()
-        {
-            remove = true;
-        }
-    });
-    remove
+/// The rows of a `defaults` mapping (timeout, cwd, env, retry), or a row that adds one.
+pub fn defaults(root: &Value, path: &Path, label: &str) -> Vec<Row> {
+    if crate::node::get(root, path).is_none() {
+        return vec![Row::add(
+            label,
+            Action::Set(
+                path.clone(),
+                Some(doc::map_of([("timeout", Value::from("30s"))])),
+            ),
+        )];
+    }
+    let mut rows = Vec::new();
+    for key in ["timeout", "cwd"] {
+        rows.push(Row::edit(key, root, path.key(key), Field::Optional).removable(path.key(key)));
+    }
+    rows.push(Row::hint("env"));
+    rows.extend(vars::rows(root, &path.key("env"), "env"));
+    rows.extend(task_cmd::retry(root, &path.key("retry")));
+    rows.push(Row::field(
+        "",
+        ratatui::text::Line::styled(format!("× remove {label}"), crate::theme::dim()),
+        Action::Set(path.clone(), None),
+    ));
+    rows
 }
 
 /// The sidebar's one-line summary of the project's defaults.

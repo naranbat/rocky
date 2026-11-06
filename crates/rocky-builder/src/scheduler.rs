@@ -16,8 +16,7 @@ use nix::unistd::Pid;
 use rocky_core::schedule::Schedule;
 use serde_json::{Value, json};
 
-use crate::results::Results;
-use crate::run_view::Shown;
+use crate::results::{Results, Shown};
 
 /// A line the child wrote: a JSON event on stdout, or text on stderr.
 enum Line {
