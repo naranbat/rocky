@@ -11,23 +11,14 @@ use crate::vars;
 /// The project's `values`, `env_file` and `defaults`.
 pub fn rows(root: &Value) -> Vec<Row> {
     let top = Path::default();
-    let mut rows = vec![
-        Row::heading("PROJECT", "rocky.yaml · shared by every job"),
-        Row::heading(
-            "VALUES",
-            "read as ${NAME} by every job; a job's own value wins",
-        ),
-    ];
+    let mut rows = vec![Row::heading("PROJECT", ""), Row::heading("VALUES", "")];
     rows.extend(vars::rows(root, &top.key("values"), "value"));
-    rows.push(Row::heading("ENV FILE", "a .env file shared by all jobs"));
+    rows.push(Row::heading("ENV FILE", ""));
     rows.push(
         Row::edit("env_file", root, top.key("env_file"), Field::Optional)
             .removable(top.key("env_file")),
     );
-    rows.push(Row::heading(
-        "DEFAULTS",
-        "every cmd task gets these unless it sets them",
-    ));
+    rows.push(Row::heading("DEFAULTS", ""));
     rows.extend(defaults(root, &top.key("defaults"), "defaults"));
     rows
 }
