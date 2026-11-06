@@ -19,7 +19,7 @@ Each task is exactly one of the following. Any of them can also have [`when`](co
 |---|---|---|
 | `cmd` | cmd tasks | Required, and must not be empty. |
 | `pipe` | cmd tasks | Optional further commands connected to `cmd` by pipes. See [Pipes](cmd-tasks.md#pipes). |
-| `timeout` | cmd tasks | How long before the command is killed and the task fails: a [duration](yaml.md#durations-and-times) such as `30s`, `5m` or `2h`. No default. |
+| `timeout` | cmd tasks | How long before the command is killed and the task fails: a [duration](yaml.md#durations-and-times) such as `30s`, `5m` or `2h`. No default, unless set by [`defaults`](projects.md#defaults). |
 | `cwd`, `stdin`, `env`, `capture_stdout`, `stdout_file` | cmd tasks | Working directory, standard input, environment variables, and whether stdout is kept or written to a file. See [Cmd tasks](cmd-tasks.md#options). |
 | `retry` | cmd tasks | Run the command again until it succeeds or a condition holds. See [Retry](cmd-tasks.md#retry). |
 | `allow_failure` | cmd tasks | `true` to continue the job when the task fails. See [Failures](#failures-and-allow_failure). |
@@ -61,6 +61,6 @@ A cmd task **fails** when its exit code isn't `0`. `curl` exits `0` for any HTTP
 - **With `allow_failure: true`:** the job continues. The result is still saved as `tasks.<name>`, so a later task's `when` can test `${tasks.x.exit_code}`.
 - **Inside a loop with `on_failure: next`:** the rest of that iteration is skipped and the loop goes on with its next element or condition check (see [Loops](loops.md#behaviour)).
 
-`allow_failure: true` also lets the job continue after a **timeout** (a command that runs past its `timeout`) or a [`retry`](cmd-tasks.md#retry) whose `until` never held. The task has no exit code or output, so its result is just the error, e.g. `tasks.<name>` is ``{"ok": false, "error": "command `curl` timed out after 5s"}``. To react to any failure, a non-zero exit or a timeout alike, test `ok`: `when: {this: tasks.<name>.ok, eq: false}`.
+`allow_failure: true` (or a loop with `on_failure: next`) also lets the job continue after a **timeout** (a command that runs past its `timeout`) or a [`retry`](cmd-tasks.md#retry) whose `until` never held. The task has no exit code or output, so its result is just the error, e.g. `tasks.<name>` is ``{"ok": false, "error": "command `curl` timed out after 5s"}``. To react to any failure, a non-zero exit or a timeout alike, test `ok`: `when: {this: tasks.<name>.ok, eq: false}`.
 
 Other errors stop the job no matter what `allow_failure` says: an undefined variable, a missing program, a missing `cwd`. Without `allow_failure`, so do timeouts. See [Command line](cli.md#errors-and-exit-codes).

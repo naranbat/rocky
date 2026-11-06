@@ -70,6 +70,15 @@ rocky new job deploy                    # jobs/deploy.yaml
 rocky new project full --level full     # every field, with comments, in full/
 ```
 
+## Builder
+
+`rocky-builder` is a terminal UI for building projects: it edits job files, and runs and validates them through the same library as the CLI. It is a separate binary, which `cargo install --path crates/rocky` doesn't install:
+
+```sh
+cargo install --path crates/rocky-builder   # puts `rocky-builder` on your PATH
+rocky-builder path/to/project               # or no argument, to pick or create one
+```
+
 ## Agent skill
 
 [`skills/rocky/`](skills/rocky/SKILL.md) teaches Claude Code and OpenCode agents to write, validate and run rocky projects. Link it into your agent's skills directory:

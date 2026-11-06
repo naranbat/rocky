@@ -52,7 +52,7 @@ Examples, each a project directory to run from: [`httpbin/`](../examples/httpbin
 
 ## Job files
 
-- Every `*.yaml` file directly in `jobs/` is a job, named by its file name without `.yaml`. Other files and sub-directories in `jobs/` are ignored.
+- Every `*.yaml` file directly in `jobs/` is a job, named by its file name without `.yaml`. Other files and sub-directories in `jobs/` are ignored. A `*.yaml` file whose name starts with `.` (e.g. `.draft.yaml`) is not ignored: it fails the project load.
 - A project needs at least one job file.
 - To run one job with different values or schedules, copy its file.
 
@@ -121,13 +121,15 @@ tasks:
 
 The whole project, `rocky.yaml` and every job file including nested loops, is checked when it loads, before any task runs. `rocky validate` runs these checks alone, without running anything. These fail immediately:
 
-- no job file in `jobs/` (or no `jobs/`), an empty `tasks`, an empty `cmd` or `do`
+- no job file in `jobs/` (or no `jobs/`), an empty `tasks`, an empty `cmd`, `pipe` stage or `do`
 - `tasks` or `do` written as a list instead of a map, or two tasks with the same key in one map
 - a task without `cmd` that isn't a loop or trigger
 - a trigger with any other field, or whose job isn't a job of the project
 - `pipe`, `cwd`, `stdin`, `env`, `capture_stdout`, `stdout_file` or `retry` without `cmd`; both `stdout_file` and `capture_stdout`; `timeout` on a loop; `allow_failure` on a loop (use `on_failure: next`), or `on_failure` on anything but a loop; `do` without `for_each` or `while`; `as` without `for_each`; `attempts` without `while`
-- a name that appears twice in a cmd task's `env` or in `values`
-- a [variable name](variables.md#names) in `as` that isn't uppercase (`A-Z`, `0-9`, `_`), or a task key that isn't an identifier or is `tasks`
+- a name that appears twice in a cmd task's `env`, in `defaults`' `env` or in `values`
+- a [variable name](variables.md#names) in `as` or `values` that isn't uppercase (`A-Z`, `0-9`, `_`), or a task key that isn't an identifier or is `tasks`
+- `retry` `attempts` below 1 (in a task or in `defaults`), `attempts: 0` on a `while` loop, or `max` on a `while` loop (now `attempts`)
+- a job file name starting with `.`
 - an invalid [condition](conditions.md) or [schedule](schedules.md)
 - unknown keys anywhere, including `jobs` or `schedules` in `rocky.yaml` and `vars` anywhere
 

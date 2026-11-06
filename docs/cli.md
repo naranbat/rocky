@@ -28,7 +28,9 @@ $ rocky exec deploy
 Error: no job `deploy` (available: `login`, `report`)
 ```
 
-Jobs that [`trigger` tasks](triggers.md#trigger-tasks) queue run after the job, one at a time in the order they were triggered, together with any jobs they trigger. They run even when the job failed. Only the job's own result is printed. If a triggered job fails, `exec` exits `1` with ``Error: triggered job `report`: task `send` exited with code 22``.
+Jobs that [`trigger` tasks](triggers.md#trigger-tasks) queue run after the job, one at a time in the order they were triggered, together with any jobs they trigger. They run even when a task of the job exited non-zero. Only the job's own result is printed. If a triggered job's task exits non-zero, `exec` exits `1` with ``Error: triggered job `report`: task `send` exited with code 22``.
+
+An error that stops a job (an undefined variable, a timeout, a missing program; see [Errors and exit codes](#errors-and-exit-codes)) ends `exec` at once: if it is the job itself, nothing is printed and no queued job runs; if it is a triggered job, the error is reported as for the job itself, without the ``triggered job`` prefix, and the jobs still queued don't run.
 
 `--verbose` (or `-v`) prints each command to stderr just before it runs, with `${VAR}`s filled in, so values from the `env_file` (secrets included) show. Pipe stages are joined with `|`, and an argument with spaces or shell characters is single-quoted:
 
@@ -91,7 +93,7 @@ run it from the project directory: rocky exec deploy
 
 ## Output streams
 
-- **stdout** holds only results: one JSON document for `exec`, one JSON log line per task, skip, loop, finished run, error and stopped schedule for `run`. It is safe to pipe into `jq`.
+- **stdout** holds only results: one JSON document for `exec`, one JSON log line per [event](run.md#output) for `run`. It is safe to pipe into `jq`.
 - **stderr** holds errors, `exec --verbose`'s command lines and `run`'s ``cannot write log file`` messages.
 
 ## Errors and exit codes

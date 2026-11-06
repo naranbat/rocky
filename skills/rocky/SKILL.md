@@ -171,7 +171,7 @@ Loops have no `cmd`, `timeout` or `allow_failure` (that's for cmd tasks); a loop
 `trigger: JOB` queues a run of another job of the project (`jobs/JOB.yaml`) (scheduled or not) and the job goes on without waiting. It saves no result and can't fail.
 
 - In `rocky run`, the queued run starts right away (after any run of that job already going).
-- In `rocky exec`, queued jobs run after the job, in order, even if it failed; only the job's own result is printed.
+- In `rocky exec`, queued jobs run after the job, in order, even if a task exited non-zero (but not after an error such as an undefined variable or a timeout); only the job's own result is printed.
 - A job that triggers itself without a `when` never stops.
 
 ## Schedules and `rocky run`

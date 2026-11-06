@@ -84,8 +84,8 @@ Only in `rocky.yaml`, with a path relative to the project directory. It applies 
 
 | Expanded | Not expanded |
 |---|---|
-| each [`cmd`](cmd-tasks.md) argument | `stdin` keys, `env` names |
-| a cmd task's `cwd` | schedules, `matches` patterns |
+| each [`cmd`](cmd-tasks.md) and `pipe` argument | `stdin` keys, `env` names |
+| a cmd task's `cwd` and `stdout_file` | schedules, `matches` patterns |
 | any string inside a cmd task's `stdin` | |
 | any string inside a cmd task's [`env`](cmd-tasks.md#options) values | |
 | condition operator values other than `matches` | project and job `values` |

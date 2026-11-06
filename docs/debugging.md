@@ -17,7 +17,7 @@ See [`rocky exec`](cli.md#rocky-exec-job).
 
 ## Read `run`'s log lines
 
-`run` writes one JSON line on **stdout** per task as it finishes, plus a line per skipped task, loop and `while` check, and a line when the run ends. `exec` doesn't write them. They are easy to filter with `jq`:
+`run` writes one JSON line on **stdout** per task as it finishes, plus a line per skipped task, loop, `while` check and `trigger` task, and a `done` (or `error`) line when the run ends. `exec` doesn't write them. They are easy to filter with `jq`:
 
 ```
 $ rocky run | jq -c '{event, task, ok}'

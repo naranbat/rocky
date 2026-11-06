@@ -38,7 +38,7 @@ Example: [`examples/httpbin/jobs/mixed.yaml`](../examples/httpbin/jobs/mixed.yam
 | `cmd` | A non-empty list of strings: the program, then its arguments. A single string such as `cmd: "ls -la"` is rejected; write `[ls, -la]`. Quote numeric arguments: write `[sleep, "5"]`, not `[sleep, 5]`. |
 | `pipe` | Optional. A list of further commands, each written like `cmd` as a non-empty list of strings, connected by pipes. See [Pipes](#pipes). |
 
-Fields every task kind shares, such as `when` and `allow_failure`, are described in [Tasks](tasks.md#task-fields).
+Other fields, such as `when` (every task kind) and `allow_failure` (cmd tasks), are described in [Tasks](tasks.md#task-fields).
 
 ## Arguments and substitution
 
@@ -77,14 +77,14 @@ top_titles:
 
 | Field | Value |
 |---|---|
-| `ok` | `true` unless the task failed: a non-zero exit, or (with `allow_failure`) a timeout or a [`retry`](#retry) that ran out. |
+| `ok` | `true` unless the task failed: a non-zero exit, or a timeout or a [`retry`](#retry) that ran out (with `allow_failure`, or inside a loop with [`on_failure: next`](loops.md#behaviour)). |
 | `exit_code` | The exit code, or `-1` if the process was killed by a signal. |
 | `stdout` | Parsed as JSON if the whole output is valid JSON (`echo 42` gives the number `42`). Otherwise text with trailing newlines (`\n`, `\r`) removed. `null` with `capture_stdout: false`. |
 | `stderr` | Always text, with trailing newlines removed. |
 
 Invalid UTF-8 in `stdout` or `stderr` is replaced with `�`.
 
-A non-zero exit code fails the task unless `allow_failure: true`. A timeout with `allow_failure` gives `{ok: false, error}` instead of these fields. See [Failures and `allow_failure`](tasks.md#failures-and-allow_failure).
+A non-zero exit code fails the task unless `allow_failure: true`. A timeout with `allow_failure` (or inside a loop with `on_failure: next`) gives `{ok: false, error}` instead of these fields. See [Failures and `allow_failure`](tasks.md#failures-and-allow_failure).
 
 ## Options
 
@@ -100,10 +100,10 @@ build:
 
 | Field | Default | Meaning |
 |---|---|---|
-| `timeout` | none | How long before the command is killed: a [duration](yaml.md#durations-and-times) (`30s`, `5m`, `2h`). The task then fails with ``command `make` timed out after 5m``. Processes the command started itself (e.g. under `sh -c`) are killed too. |
-| `cwd` | your current directory | Directory to run in. `${...}` is substituted first; a relative result is resolved against the directory of the file the task is written in. A missing directory fails the task with `` `cwd` <path> is not a directory ``, even with `allow_failure`. |
+| `timeout` | none, unless set by [`defaults`](projects.md#defaults) | How long before the command is killed: a [duration](yaml.md#durations-and-times) (`30s`, `5m`, `2h`). The task then fails with ``command `make` timed out after 300s`` (always in seconds). Processes the command started itself (e.g. under `sh -c`) are killed too. |
+| `cwd` | your current directory, unless set by [`defaults`](projects.md#defaults) | Directory to run in. `${...}` is substituted first; a relative result is resolved against the directory of the file the task is written in. A missing directory fails the task with `` `cwd` <path> is not a directory ``, even with `allow_failure`. |
 | `stdin` | empty | Written to the command's standard input, like `cmd < file`. See [`stdin`](#stdin). |
-| `env` | none | Map of name → value, added to the environment the command inherits (replacing a variable of the same name). `${...}` is substituted; a string is used as-is and any other value is written as compact JSON, as for `stdin`. A name can't appear twice. |
+| `env` | none, unless set by [`defaults`](projects.md#defaults) | Map of name → value, added to the environment the command inherits (replacing a variable of the same name). `${...}` is substituted; a string is used as-is and any other value is written as compact JSON, as for `stdin`. A name can't appear twice. |
 | `capture_stdout` | `true` | `false` sends stdout to `/dev/null` instead of keeping it in memory, and the result's `stdout` is `null`. Use it for commands with large output you don't need. `stderr` and `exit_code` are still kept. |
 | `stdout_file` | none | Write stdout to this file instead of keeping it; the result's `stdout` is `null`. See [Reading and writing files](#reading-and-writing-files). Can't be combined with `capture_stdout`. |
 
@@ -138,8 +138,8 @@ check:                          # wait for a status instead of a successful exit
 | `until` | Optional. A [condition](conditions.md#condition-shape), checked after each run. Without it, a run is enough when it exits `0`. |
 
 - Each run is saved as `tasks.<name>` before `until` is checked, so `until` reads the run that just finished.
-- A run that exits non-zero or times out is just tried again, unless it is the last one.
-- When a run is enough, retrying stops and that run is the task's result. It is then treated like any cmd task: with `until`, a non-zero exit still fails the task.
+- A run that exits non-zero or times out is just tried again, unless it is the last one. A last run that times out fails the task with the timeout error (or gives `{"ok": false, "error": "…"}` with `allow_failure`).
+- When a run is enough, retrying stops and that run is the task's result. It is then treated like any cmd task: with `until`, a non-zero exit or a timeout still fails the task.
 - When the last run isn't enough:
   - **Without `until`:** that run is the task's result, and it fails the task as usual.
   - **With `until`:** the task fails with ``retry: `until` still false after N attempts``. With `allow_failure`, the job goes on and `tasks.<name>` is `{"ok": false, "error": "…"}`, like after a timeout.
@@ -167,7 +167,7 @@ load:
 
 ## Environment
 
-- Without `cwd`, commands run in **your current directory**, which is the project directory when you run `rocky` from there, not the job file's directory.
+- Without `cwd` (here or in [`defaults`](projects.md#defaults)), commands run in **your current directory**, which is the project directory when you run `rocky` from there, not the job file's directory.
 - They inherit the environment of `rocky`. Env file values are **not** exported to them; list the ones a command needs under [`env`](#options), or pass them as arguments or `stdin`.
 - Without `timeout`, a command that never exits blocks the job until `rocky` is stopped (Ctrl-C, SIGTERM, SIGHUP or SIGQUIT), which kills it and everything it started.
 - A program that can't be found or started fails the task with ``failed to start command `x` ``, even with `allow_failure`.

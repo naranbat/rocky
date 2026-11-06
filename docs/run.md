@@ -47,7 +47,7 @@ The whole project is loaded and checked before anything runs. Any error stops `r
 
 ## Output
 
-Every log line is one JSON object on **stdout**, with `job`, `time` (local time with offset) and `event` fields. The same lines are appended to `.rocky/logs/YYYY-MM-DD.log` in the current directory, one file per day by each line's date (`.rocky/logs/NAME-YYYY-MM-DD.log` with `--service NAME`); the `.rocky/logs` directory is created if missing, and a failed write is reported on stderr without stopping `run`. If stdout is closed (`run | head`), `run` keeps running and logging to the file. Each run writes a line per task, skipped task, loop and `while` check as it goes, then a `done` line:
+Every log line is one JSON object on **stdout**, with `job`, `time` (local time with offset) and `event` fields. The same lines are appended to `.rocky/logs/YYYY-MM-DD.log` in the current directory, one file per day by each line's date (`.rocky/logs/NAME-YYYY-MM-DD.log` with `--service NAME`); the `.rocky/logs` directory is created if missing, and a failed write is reported on stderr without stopping `run`. If stdout is closed (`run | head`), `run` keeps running and logging to the file. Each run writes a line per task, skipped task, loop, `while` check and `trigger` task as it goes, then a `done` line, or an `error` line if it stopped on an error:
 
 ```json
 {"job":"poll","time":"2026-10-09T09:30:00+09:00","event":"task","task":"fetch","exit_code":0,"ms":412,"ok":true}
@@ -56,9 +56,9 @@ Every log line is one JSON object on **stdout**, with `job`, `time` (local time 
 
 | `event` | Meaning and other fields |
 |---|---|
-| `task` | A cmd task finished, or one run of a task with [`retry`](cmd-tasks.md#retry) did. `task` (the task's key), then `exit_code` or `error` (a timeout with `allow_failure`), `ms`, `ok`, and `allowed: true` when it failed with `allow_failure`, or inside a loop with `on_failure: next`, and the job continued |
+| `task` | A cmd task finished, or one run of a task with [`retry`](cmd-tasks.md#retry) did. `task` (the task's key), then `exit_code` or `error` (a timeout with `allow_failure`), `ms`, `ok`, and `allowed: true` when it failed and the job continued: with `allow_failure`, inside a loop with `on_failure: next`, or on a `retry` run before the last. `error` also appears for a timeout in those cases |
 | `skip` | `task`, for a task whose [`when`](conditions.md) doesn't hold |
-| `for_each` | A [`for_each` loop](loops.md#for_each) started: `task`, `var`, `items` (the list length) |
+| `for_each` | A [`for_each` loop](loops.md#for_each) started: `task`, `var` (the `for_each` path, e.g. `tasks.users.stdout.items`), `items` (the list length) |
 | `while` | A [`while` loop](loops.md#while) checked its condition: `task`, `iteration` (which check this is, from 1), `holds` (whether the condition held, so `do` runs again) |
 | `trigger` | `task`, `target`: a [`trigger` task](triggers.md#trigger-tasks) queued a run of the job `target` |
 | `triggered` | — (a client of the [socket](triggers.md#triggering-jobs-over-a-socket) or a [`trigger` task](triggers.md#trigger-tasks) asked for a run; the run's own lines follow once it starts) |
