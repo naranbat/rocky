@@ -143,10 +143,13 @@ async fn main() -> anyhow::Result<()> {
         Command::New { kind, level } => {
             let (kind, path) = match kind {
                 NewKind::Project { dir } => (new::Kind::Project, dir),
-                NewKind::Job { name } => (
-                    new::Kind::Job,
-                    PathBuf::from(project::JOBS_DIR).join(format!("{name}.yaml")),
-                ),
+                NewKind::Job { name } => {
+                    project::check_job_name(&name)?;
+                    (
+                        new::Kind::Job,
+                        PathBuf::from(project::JOBS_DIR).join(format!("{name}.yaml")),
+                    )
+                }
             };
             let level = match level {
                 Level::Basic => new::Level::Basic,
