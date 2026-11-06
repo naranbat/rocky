@@ -17,14 +17,6 @@ pub struct Task {
     /// Its key in the enclosing `tasks` or `do` map.
     #[serde(skip)]
     pub name: String,
-    /// A task YAML file, relative to the file that declares this task, used in its place:
-    /// the entry's value when it is a string, or its `file`.
-    #[serde(rename = "file")]
-    pub r#use: Option<PathBuf>,
-    /// Next to `file`: inputs for `${NAME}` while that task runs, winning over the job's and
-    /// the project's values.
-    #[serde(default, rename = "with", deserialize_with = "project::unique")]
-    pub inputs: BTreeMap<String, Value>,
     /// Program and arguments, run directly without a shell; `${VAR}` is substituted per element.
     #[serde(default, deserialize_with = "command")]
     pub cmd: Option<Vec<String>>,
@@ -172,7 +164,7 @@ pub(crate) fn duration<'de, D: Deserializer<'de>>(
     deserializer.deserialize_str(DurationVisitor).map(Some)
 }
 
-/// Reads a map of task name to task, or to the path of a task file, keeping its order.
+/// Reads a map of task name to task, keeping its order.
 pub fn named<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<Task>, D::Error> {
     struct NamedVisitor;
 
@@ -180,7 +172,7 @@ pub fn named<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<Task>, D:
         type Value = Vec<Task>;
 
         fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
-            f.write_str("a map of task name to a task or a task file path")
+            f.write_str("a map of task name to a task")
         }
 
         fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Vec<Task>, A::Error> {
@@ -189,7 +181,7 @@ pub fn named<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<Task>, D:
                 if tasks.iter().any(|task| task.name == name) {
                     return Err(de::Error::custom(format!("duplicate task `{name}`")));
                 }
-                let Source(mut task) = map.next_value()?;
+                let mut task: Task = map.next_value()?;
                 task.name = name;
                 tasks.push(task);
             }
@@ -200,47 +192,15 @@ pub fn named<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<Task>, D:
     deserializer.deserialize_map(NamedVisitor)
 }
 
-/// Parses `yaml`, a map of task name to task, without resolving task files.
+/// Parses `yaml`, a map of task name to task, without resolving it.
 #[cfg(test)]
 pub(crate) fn parse_named(yaml: &str) -> Result<Vec<Task>, serde_yaml::Error> {
     named(serde_yaml::Deserializer::from_str(yaml))
 }
 
-/// An entry's value: a task file path, or the task's fields inline.
-struct Source(Task);
-
-/// Picks the variant by YAML shape, so a mistake in an inline task reports the real cause
-/// and line instead of a generic untagged-enum error.
-impl<'de> Deserialize<'de> for Source {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        struct SourceVisitor;
-
-        impl<'de> Visitor<'de> for SourceVisitor {
-            type Value = Source;
-
-            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
-                f.write_str("a task file path or a task")
-            }
-
-            fn visit_str<E: de::Error>(self, path: &str) -> Result<Source, E> {
-                Ok(Source(Task {
-                    r#use: Some(PathBuf::from(path)),
-                    ..Task::default()
-                }))
-            }
-
-            fn visit_map<A: MapAccess<'de>>(self, map: A) -> Result<Source, A::Error> {
-                Task::deserialize(de::value::MapAccessDeserializer::new(map)).map(Source)
-            }
-        }
-
-        deserializer.deserialize_any(SourceVisitor)
-    }
-}
-
 impl Task {
-    /// Whether any field other than `with` and `when` is set, on an entry that has `file`.
-    fn has_fields_besides_inputs(&self) -> bool {
+    /// Whether any field other than `when` is set.
+    fn has_fields_besides_when(&self) -> bool {
         self.cmd.is_some()
             || !self.pipe.is_empty()
             || self.timeout.is_some()
@@ -264,18 +224,13 @@ impl Task {
 
 /// Validates tasks (recursively through loops) and resolves their paths against `dir`.
 pub fn resolve(tasks: &mut [Task], dir: &Path) -> Result<(), Error> {
-    resolve_all(tasks, dir, &mut Vec::new())
-}
-
-/// [`resolve`], with `stack` holding the task files being loaded, to detect task file cycles.
-fn resolve_all(tasks: &mut [Task], dir: &Path, stack: &mut Vec<PathBuf>) -> Result<(), Error> {
     for task in tasks {
-        resolve_one(task, dir, stack)?;
+        resolve_one(task, dir)?;
     }
     Ok(())
 }
 
-fn resolve_one(task: &mut Task, dir: &Path, stack: &mut Vec<PathBuf>) -> Result<(), Error> {
+fn resolve_one(task: &mut Task, dir: &Path) -> Result<(), Error> {
     let name = task.name.clone();
     if !var_name::is_valid(&name) {
         return Err(Error::InvalidTask(format!(
@@ -287,29 +242,6 @@ fn resolve_one(task: &mut Task, dir: &Path, stack: &mut Vec<PathBuf>) -> Result<
         condition
             .validate()
             .map_err(|source| Error::InvalidTask(format!("`{name}`: {source}")))?;
-    }
-    if let Some(path) = task.r#use.take() {
-        if task.has_fields_besides_inputs() {
-            return Err(Error::InvalidTask(format!(
-                "`{name}` has `file`, so its other fields go in that file; only `with` and `when` can be next to it"
-            )));
-        }
-        if let Some(var) = task.inputs.keys().find(|var| !var_name::is_valid_var(var)) {
-            return Err(Error::InvalidTask(format!(
-                "`{name}`: `with` name `{var}` {}",
-                var_name::VAR_RULE
-            )));
-        }
-        let inputs = std::mem::take(&mut task.inputs);
-        resolve_use(task, path, dir, stack)?;
-        // Over those of a `file` entry the loaded file may itself be.
-        task.inputs.extend(inputs);
-        return Ok(());
-    }
-    if !task.inputs.is_empty() {
-        return Err(Error::InvalidTask(format!(
-            "`{name}` has `with`, which only works next to `file`"
-        )));
     }
     for (field, set) in [
         ("cwd", task.cwd.is_some()),
@@ -337,7 +269,7 @@ fn resolve_one(task: &mut Task, dir: &Path, stack: &mut Vec<PathBuf>) -> Result<
         return resolve_trigger(task, &name);
     }
     if task.for_each.is_some() {
-        return resolve_loop(task, &name, dir, stack);
+        return resolve_loop(task, &name, dir);
     }
     if task.item_var.is_some() {
         return Err(Error::InvalidTask(format!(
@@ -345,7 +277,7 @@ fn resolve_one(task: &mut Task, dir: &Path, stack: &mut Vec<PathBuf>) -> Result<
         )));
     }
     if task.repeat.is_some() {
-        return resolve_while(task, &name, dir, stack);
+        return resolve_while(task, &name, dir);
     }
     if !task.body.is_empty() || task.attempts.is_some() {
         return Err(Error::InvalidTask(format!(
@@ -360,46 +292,7 @@ fn resolve_one(task: &mut Task, dir: &Path, stack: &mut Vec<PathBuf>) -> Result<
     resolve_leaf(task, &name)
 }
 
-/// Replaces `task` with the task file at `path`, named by `task`'s key. The entry's `when`
-/// and the file's own must both hold, the entry's checked first.
-fn resolve_use(
-    task: &mut Task,
-    path: PathBuf,
-    dir: &Path,
-    stack: &mut Vec<PathBuf>,
-) -> Result<(), Error> {
-    let path = dir.join(path);
-    let canonical = path.canonicalize().map_err(|source| Error::Io {
-        path: path.clone(),
-        source,
-    })?;
-    if stack.contains(&canonical) {
-        return Err(Error::InvalidTask(format!(
-            "`{}`: task file cycle through {}",
-            task.name,
-            path.display()
-        )));
-    }
-    let mut loaded: Task = project::read_yaml(&path)?;
-    loaded.name = std::mem::take(&mut task.name);
-    loaded.when = match (task.when.take(), loaded.when.take()) {
-        (Some(entry), Some(own)) => Some(Condition::all(vec![entry, own])),
-        (entry, own) => entry.or(own),
-    };
-    let file_dir = path.parent().unwrap_or(Path::new(""));
-    stack.push(canonical);
-    resolve_one(&mut loaded, file_dir, stack)?;
-    stack.pop();
-    *task = loaded;
-    Ok(())
-}
-
-fn resolve_loop(
-    task: &mut Task,
-    name: &str,
-    dir: &Path,
-    stack: &mut Vec<PathBuf>,
-) -> Result<(), Error> {
+fn resolve_loop(task: &mut Task, name: &str, dir: &Path) -> Result<(), Error> {
     if task.allow_failure {
         return Err(Error::InvalidTask(format!(
             "`{name}` is a loop (`for_each`): `allow_failure` only works on cmd tasks; use `on_failure: next` to skip to the next iteration when a `do` task fails"
@@ -427,15 +320,10 @@ fn resolve_loop(
             var_name::VAR_RULE
         )));
     }
-    resolve_all(&mut task.body, dir, stack)
+    resolve(&mut task.body, dir)
 }
 
-fn resolve_while(
-    task: &mut Task,
-    name: &str,
-    dir: &Path,
-    stack: &mut Vec<PathBuf>,
-) -> Result<(), Error> {
+fn resolve_while(task: &mut Task, name: &str, dir: &Path) -> Result<(), Error> {
     if task.allow_failure {
         return Err(Error::InvalidTask(format!(
             "`{name}` is a loop (`while`): `allow_failure` only works on cmd tasks; use `on_failure: next` to skip to the next iteration when a `do` task fails"
@@ -461,14 +349,14 @@ fn resolve_while(
             .validate()
             .map_err(|source| Error::InvalidTask(format!("`{name}`: {source}")))?;
     }
-    resolve_all(&mut task.body, dir, stack)
+    resolve(&mut task.body, dir)
 }
 
 /// Checks a trigger, which has no other fields. Whether its job exists is checked once the
 /// whole project is loaded.
 fn resolve_trigger(task: &mut Task, name: &str) -> Result<(), Error> {
     let job = task.trigger.take();
-    let has_others = task.has_fields_besides_inputs();
+    let has_others = task.has_fields_besides_when();
     task.trigger = job;
     if has_others {
         return Err(Error::InvalidTask(format!(
@@ -715,7 +603,6 @@ mod tests {
     fn rejects_invalid_task_name() {
         for (yaml, name) in [
             ("a.b:\n  cmd: [echo]\n", "a.b"),
-            ("a.b: x.yaml\n", "a.b"),
             ("a-b:\n  cmd: [echo]\n", "a-b"),
             ("1a:\n  cmd: [echo]\n", "1a"),
         ] {
@@ -894,138 +781,6 @@ mod tests {
     }
 
     #[test]
-    fn task_files_load_relative_to_themselves_named_by_key() {
-        let dir = tempfile::tempdir().unwrap();
-        let sub = dir.path().join("tasks");
-        std::fs::create_dir(&sub).unwrap();
-        std::fs::write(sub.join("login.yaml"), "cmd: [echo]\n").unwrap();
-        std::fs::write(
-            sub.join("each.yaml"),
-            "for_each: IDS\ndo:\n  inner: login.yaml\n  echo:\n    cmd: [echo]\n    cwd: w\n",
-        )
-        .unwrap();
-        let tasks = resolve_in(
-            dir.path(),
-            "login: tasks/login.yaml\nagain: tasks/login.yaml\neach: tasks/each.yaml\n",
-        )
-        .unwrap();
-        assert_eq!(tasks[0].name, "login");
-        assert_eq!(tasks[1].name, "again");
-        assert_eq!(tasks[2].name, "each");
-        assert_eq!(tasks[2].body[0].name, "inner");
-        assert_eq!(tasks[2].body[1].dir, sub);
-    }
-
-    #[test]
-    fn task_files_reject_names_missing_files_and_cycles() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("named.yaml"), "name: a\ncmd: [echo]\n").unwrap();
-        let err = resolve_in(dir.path(), "a: named.yaml\n").unwrap_err();
-        assert!(
-            matches!(&err, Error::Yaml { path, .. } if path.ends_with("named.yaml")),
-            "{err}"
-        );
-        let err = resolve_in(dir.path(), "a: nope.yaml\n").unwrap_err();
-        assert!(matches!(err, Error::Io { .. }), "{err}");
-
-        std::fs::write(
-            dir.path().join("a.yaml"),
-            "while: {this: X, eq: 1}\ndo: {b: b.yaml}\n",
-        )
-        .unwrap();
-        std::fs::write(dir.path().join("b.yaml"), "for_each: X\ndo: {a: a.yaml}\n").unwrap();
-        let err = resolve_in(dir.path(), "a: a.yaml\n").unwrap_err();
-        assert!(
-            matches!(&err, Error::InvalidTask(msg) if msg.contains("task file cycle through")),
-            "{err}"
-        );
-    }
-
-    #[test]
-    fn task_file_entries_take_inputs() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("greet.yaml"), "cmd: [echo, '${WHO}']\n").unwrap();
-        std::fs::write(
-            dir.path().join("wrap.yaml"),
-            "file: greet.yaml\nwith: {WHO: inner, KEEP: inner}\n",
-        )
-        .unwrap();
-        let tasks = resolve_in(
-            dir.path(),
-            "a: {file: greet.yaml, with: {WHO: a}}\nb: {file: greet.yaml}\n\
-             c: {file: wrap.yaml, with: {WHO: outer}}\n",
-        )
-        .unwrap();
-        let inputs = |task: &Task| serde_json::to_value(&task.inputs).unwrap();
-        assert_eq!(
-            tasks[0].cmd.as_deref(),
-            Some(&["echo".to_string(), "${WHO}".to_string()][..])
-        );
-        assert_eq!(inputs(&tasks[0]), serde_json::json!({"WHO": "a"}));
-        assert!(tasks[1].inputs.is_empty());
-        assert_eq!(
-            inputs(&tasks[2]),
-            serde_json::json!({"WHO": "outer", "KEEP": "inner"})
-        );
-
-        for (yaml, expected) in [
-            (
-                "a: {file: greet.yaml, cmd: [echo]}\n",
-                "`a` has `file`, so its other fields go in that file",
-            ),
-            (
-                "a: {file: greet.yaml, timeout: 5s}\n",
-                "`a` has `file`, so its other fields go in that file",
-            ),
-            (
-                "a: {cmd: [echo], with: {X: 1}}\n",
-                "`a` has `with`, which only works next to `file`",
-            ),
-            (
-                "a: {file: greet.yaml, with: {who: 1}}\n",
-                "`a`: `with` name `who`",
-            ),
-        ] {
-            match resolve_in(dir.path(), yaml) {
-                Err(Error::InvalidTask(msg)) => assert!(msg.contains(expected), "{yaml}: {msg}"),
-                other => panic!("{yaml}: expected an invalid task, got {other:?}"),
-            }
-        }
-        let err = parse_named("a: {file: greet.yaml, values: {WHO: a}}\n").unwrap_err();
-        assert!(err.to_string().contains("unknown field `values`"), "{err}");
-    }
-
-    #[test]
-    fn task_file_entries_take_when_and_keep_the_files_own() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("plain.yaml"), "cmd: [echo]\n").unwrap();
-        std::fs::write(
-            dir.path().join("gated.yaml"),
-            "when: {this: WHO, eq: b}\ncmd: [echo]\n",
-        )
-        .unwrap();
-        let tasks = resolve_in(
-            dir.path(),
-            "a: {file: plain.yaml, when: {this: X, eq: 1}}\nb: gated.yaml\n\
-             c: {file: gated.yaml, with: {WHO: c}, when: {this: X, eq: 1}}\n",
-        )
-        .unwrap();
-        let holds = |task: &Task, x: i64| {
-            let lookup = |var: &str| match var {
-                "X" => Some(serde_json::json!(x)),
-                "WHO" => Some(serde_json::json!("b")),
-                _ => None,
-            };
-            task.when.as_ref().unwrap().evaluate(&lookup).unwrap()
-        };
-        assert!(holds(&tasks[0], 1) && !holds(&tasks[0], 2));
-        assert!(holds(&tasks[1], 2));
-        assert!(holds(&tasks[2], 1) && !holds(&tasks[2], 2));
-        let msg = invalid_task("a:\n  file: plain.yaml\n  when: {this: X, gt: ten}\n");
-        assert!(msg.contains("`a`: invalid condition"), "{msg}");
-    }
-
-    #[test]
     fn rejects_invalid_condition() {
         let msg = invalid_task("r:\n  when: {this: X, gt: ten}\n  cmd: [echo]\n");
         assert!(
@@ -1044,11 +799,12 @@ mod tests {
     }
 
     #[test]
-    fn rejects_a_task_that_is_neither_a_path_nor_a_map() {
-        let err = parse_named("a: 5\n").unwrap_err();
-        assert!(
-            err.to_string().contains("a task file path or a task"),
-            "{err}"
-        );
+    fn rejects_a_task_that_is_not_a_map() {
+        for yaml in ["a: 5\n", "a: tasks/login.yaml\n"] {
+            let err = parse_named(yaml).unwrap_err();
+            assert!(err.to_string().contains("invalid type"), "{yaml}: {err}");
+        }
+        let err = parse_named("a: {file: tasks/login.yaml}\n").unwrap_err();
+        assert!(err.to_string().contains("unknown field `file`"), "{err}");
     }
 }

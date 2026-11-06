@@ -18,7 +18,6 @@ One page per topic. For installing and a first run, see the [project README](../
 | [Variables](variables.md) | `${NAME}` substitution, `values`, `.env` files, lookup order, typed values and dot paths |
 | [Conditions](conditions.md) | `when` on tasks, and condition operators |
 | [Loops](loops.md) | `for_each` and `while` loops |
-| [Task files](files.md) | Keeping tasks in their own files, and reusing them with `with` |
 | [Triggers](triggers.md) | `trigger` tasks, and running jobs over a socket with `rocky trigger` |
 
 ## Running

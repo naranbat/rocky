@@ -1,4 +1,0 @@
-# One task in its own file. Add it to a job's `tasks`: `login: path/to/login.yaml`.
-cmd: [curl, -sS, --fail-with-body, --json, '@-', '${BASE}/anything/login']   # --json sends stdin as the body
-stdin:
-  token: demo-token                 # httpbin echoes it back as stdout.json.token

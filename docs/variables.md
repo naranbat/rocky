@@ -52,9 +52,9 @@ tasks:
 
 Example: [`examples/values/`](../examples/values/).
 
-- `values` can go in `rocky.yaml` and in a job file. Tasks nested in loops, and task files, see their job's values. A [task file entry](files.md#reusing-a-task-file) can instead set runtime inputs under `with` for that file while it runs.
+- `values` can go in `rocky.yaml` and in a job file. Tasks nested in loops see their job's values.
 - A value can be a string, number, boolean, list or object, and keeps its JSON type (see [typed values](#typed-values)). Use a dot path to read inside one: `${SITE.name}`.
-- Project and job values are used as written: `${...}` inside a value is not expanded. A [task file entry's](files.md#reusing-a-task-file) `with` inputs are expanded when that task starts.
+- Project and job values are used as written: `${...}` inside a value is not expanded.
 - A job value with the same name as a project value replaces it for that job.
 
 ## Env file
@@ -63,7 +63,7 @@ Use an `env_file` to keep secrets such as API tokens out of the YAML that you co
 
 ### Where it can go
 
-Only in `rocky.yaml`, with a path relative to the project directory. It applies to every task of every job. Job files and task files can't have one: `env_file` there is an unknown field.
+Only in `rocky.yaml`, with a path relative to the project directory. It applies to every task of every job. Job files can't have one: `env_file` there is an unknown field.
 
 ### Format
 
@@ -88,8 +88,7 @@ Only in `rocky.yaml`, with a path relative to the project directory. It applies 
 | a cmd task's `cwd` | schedules, `matches` patterns |
 | any string inside a cmd task's `stdin` | |
 | any string inside a cmd task's [`env`](cmd-tasks.md#options) values | |
-| any string inside a [task file entry's](files.md#reusing-a-task-file) `with` inputs, when the task starts | project and job `values` |
-| condition operator values other than `matches` | |
+| condition operator values other than `matches` | project and job `values` |
 
 A [condition](conditions.md)'s `this` and [`for_each`](loops.md) name one variable rather than expand text, so `tasks.x.stdout` and `${tasks.x.stdout}` mean the same there. Anything else, such as `a${X}`, fails when the project loads.
 
@@ -101,7 +100,6 @@ An undefined variable fails the task: ``variable `NAME` is not defined (checked 
 |---|---|
 | earlier tasks, as `tasks.NAME...` ([Tasks](tasks.md#using-earlier-tasks-output)) | any JSON type |
 | loop element from [`for_each`](loops.md) | any JSON type |
-| a [task file entry's](files.md#reusing-a-task-file) `with` inputs | any JSON type |
 | the job's [`values`](#values) | any JSON type |
 | the project's [`values`](#values) | any JSON type |
 | the project's [env file](#env-file) | string |
@@ -114,11 +112,10 @@ These only fill in `${...}`. A command doesn't see env file values in its enviro
 First match wins, for every kind of task, and for a condition's `this` and `for_each`. An undefined variable fails the task, except with the [`exists`](conditions.md#operators) operator:
 
 1. loop variables and `tasks.NAME...`
-2. the `with` inputs of a [task file entry](files.md#reusing-a-task-file), while that task runs
-3. job `values`
-4. project `values`
-5. project `env_file`
-6. the process environment
+2. job `values`
+3. project `values`
+4. project `env_file`
+5. the process environment
 
 ## Names
 
@@ -126,7 +123,7 @@ A `values` name and a loop's `as` name must be uppercase: an uppercase letter or
 
 ## Typed values
 
-Values from env files and the environment are strings. Values from `values`, loops and `tasks` keep their JSON type when a **`stdin`** field, a condition operator value or a [task file entry's](files.md#reusing-a-task-file) `with` input is **exactly** `${NAME}`. Anywhere else, they're rendered as text, with objects and arrays as compact JSON.
+Values from env files and the environment are strings. Values from `values`, loops and `tasks` keep their JSON type when a **`stdin`** field or a condition operator value is **exactly** `${NAME}`. Anywhere else, they're rendered as text, with objects and arrays as compact JSON.
 
 ```yaml
 # after a task `stats` that printed {"count": 5, "tags": ["a", "b"]}

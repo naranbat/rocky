@@ -1,6 +1,6 @@
 # Projects
 
-A project is a **directory**: every file in its `jobs/` folder is one **job**, named by its file (`jobs/report.yaml` is job `report`), and an optional `rocky.yaml` holds settings shared by every job. A job is a map of named **[tasks](tasks.md)** that `rocky exec` executes in order, or that `rocky run` runs on its [schedule](schedules.md). A task runs a **command** (an HTTP request is a `curl` command), and every task can use the result of any earlier task. `exec` prints the result of the last task that ran as JSON. Tasks can also be kept in their own files (see [Task files](files.md)).
+A project is a **directory**: every file in its `jobs/` folder is one **job**, named by its file (`jobs/report.yaml` is job `report`), and an optional `rocky.yaml` holds settings shared by every job. A job is a map of named **[tasks](tasks.md)** that `rocky exec` executes in order, or that `rocky run` runs on its [schedule](schedules.md). A task runs a **command** (an HTTP request is a `curl` command), and every task can use the result of any earlier task. `exec` prints the result of the last task that ran as JSON.
 
 ```
 my-project/
@@ -8,8 +8,6 @@ my-project/
   jobs/
     report.yaml       # job `report`
     health.yaml       # job `health`
-  tasks/
-    login.yaml        # a task file, used by jobs as ../tasks/login.yaml
 ```
 
 `rocky` always works on the project in the current directory, so run it from there.
@@ -50,11 +48,11 @@ tasks:
 rocky exec report | jq .stdout.json   # {"date": "2026-10-09"}
 ```
 
-Examples, each a project directory to run from: [`httpbin/`](../examples/httpbin/) (jobs `login`, `mixed`, `conditional`, `health`, `loop`, `poll`, `files`, `report` and `status`, sharing an env file), [`env/`](../examples/env/) (jobs `user` and `greet`), [`pipe/`](../examples/pipe/) (job `words`), [`trigger/`](../examples/trigger/) (jobs `check`, `alert` and `report`), [`values/`](../examples/values/) (job `greet`).
+Examples, each a project directory to run from: [`httpbin/`](../examples/httpbin/) (jobs `login`, `mixed`, `conditional`, `health`, `loop`, `poll`, `report` and `status`, sharing an env file), [`env/`](../examples/env/) (jobs `user` and `greet`), [`pipe/`](../examples/pipe/) (job `words`), [`trigger/`](../examples/trigger/) (jobs `check`, `alert` and `report`), [`values/`](../examples/values/) (job `greet`).
 
 ## Job files
 
-- Every `*.yaml` file directly in `jobs/` is a job, named by its file name without `.yaml`. Other files and sub-directories in `jobs/` are ignored, so keep task files elsewhere, such as `tasks/`.
+- Every `*.yaml` file directly in `jobs/` is a job, named by its file name without `.yaml`. Other files and sub-directories in `jobs/` are ignored.
 - A project needs at least one job file.
 - To run one job with different values or schedules, copy its file.
 
@@ -75,7 +73,7 @@ The file is optional; without it, every job has only its own settings.
 | `schedule` | Optional. When `rocky run` runs this job. See [Schedules](schedules.md). `exec` checks it but doesn't run it. |
 | `values` | Map of uppercase name → fixed value, read as `${NAME}` by this job's tasks; wins over a `rocky.yaml` value of the same name. See [Variables](variables.md#values). |
 | `defaults` | Fields this job's cmd tasks get unless they set them; win over `rocky.yaml`'s. See [Defaults](#defaults). |
-| `tasks` | Required, and must not be empty. Map of task name → an inline task, a task-file path, or a task file with its own `with` inputs. Tasks run in the order they are written. See [Tasks](tasks.md). |
+| `tasks` | Required, and must not be empty. Map of task name → task. Tasks run in the order they are written. See [Tasks](tasks.md). |
 
 ## Defaults
 
@@ -110,7 +108,7 @@ tasks:
 | `retry` | Like a task's [`retry`](cmd-tasks.md#retry). |
 
 - A task's own value wins. A job's `defaults` win over the project's, field by field, and their `env` is merged by name.
-- Defaults reach every cmd task of the job: inside loops, and in task files. Loops themselves don't take them.
+- Defaults reach every cmd task of the job, inside loops too. Loops themselves don't take them.
 - Other fields, such as `allow_failure` or `stdout_file`, aren't allowed: unknown keys are an error.
 
 ## Execution
@@ -125,11 +123,9 @@ The whole project, `rocky.yaml` and every job file including nested loops, is ch
 
 - no job file in `jobs/` (or no `jobs/`), an empty `tasks`, an empty `cmd` or `do`
 - `tasks` or `do` written as a list instead of a map, or two tasks with the same key in one map
-- a task without `cmd` that isn't a loop, trigger or task file
+- a task without `cmd` that isn't a loop or trigger
 - a trigger with any other field, or whose job isn't a job of the project
 - `pipe`, `cwd`, `stdin`, `env`, `capture_stdout`, `stdout_file` or `retry` without `cmd`; both `stdout_file` and `capture_stdout`; `timeout` on a loop; `allow_failure` on a loop (use `on_failure: next`), or `on_failure` on anything but a loop; `do` without `for_each` or `while`; `as` without `for_each`; `attempts` without `while`
-- a missing task file, a task file with a `name` field, or a task file that uses itself, directly or through other files
-- a task entry with `file` and any field but `with`, or `with` without `file`
 - a name that appears twice in a cmd task's `env` or in `values`
 - a [variable name](variables.md#names) in `as` that isn't uppercase (`A-Z`, `0-9`, `_`), or a task key that isn't an identifier or is `tasks`
 - an invalid [condition](conditions.md) or [schedule](schedules.md)
@@ -148,4 +144,4 @@ Some problems only show up when the job runs: a missing `env_file` (loaded when 
 
 ## Paths
 
-Relative paths are resolved against the directory of **the file they are written in**: `rocky.yaml` (the project directory), a job file (`jobs/`) or a task file. That covers task file paths, `cwd` and `stdout_file`, so a job in `jobs/` reaches `tasks/login.yaml` as `../tasks/login.yaml`; a `cwd` from [`defaults`](#defaults) is relative to the file the defaults are in, and `env_file` to the project directory. Commands in `cmd:` tasks without `cwd` run in your current directory, which is the project directory when you run `rocky` from there.
+Relative paths are resolved against the directory of **the file they are written in**: `rocky.yaml` (the project directory) or a job file (`jobs/`). That covers `cwd` and `stdout_file`, so a job's `cwd: ..` is the project directory; a `cwd` from [`defaults`](#defaults) is relative to the file the defaults are in, and `env_file` to the project directory. Commands in `cmd:` tasks without `cwd` run in your current directory, which is the project directory when you run `rocky` from there.

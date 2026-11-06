@@ -63,7 +63,7 @@ fn env_names(text: &str) -> Vec<String> {
 /// `stderr`, and, after a run whose stdout was JSON, the fields inside it with their values.
 /// Loops and triggers leave nothing.
 pub fn task(name: &str, task: &Value, result: Option<&serde_json::Value>) -> Vec<Var> {
-    if !matches!(Kind::of(task), Some(Kind::Cmd | Kind::File)) {
+    if !matches!(Kind::of(task), Some(Kind::Cmd)) {
         return Vec::new();
     }
     let group = format!("EARLIER TASK · {name}");

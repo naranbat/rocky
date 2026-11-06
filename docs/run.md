@@ -27,7 +27,7 @@ tasks:
 cd examples/httpbin && rocky run
 ```
 
-Example: [`examples/httpbin/`](../examples/httpbin/) schedules `login`, `mixed`, `conditional` and `status`; `health`, `loop`, `poll`, `files` and `report` are not scheduled.
+Example: [`examples/httpbin/`](../examples/httpbin/) schedules `login`, `mixed`, `conditional` and `status`; `health`, `loop`, `poll` and `report` are not scheduled.
 
 ## Startup checks
 
@@ -41,7 +41,7 @@ The whole project is loaded and checked before anything runs. Any error stops `r
 
 - **Independent jobs:** each job runs on its own schedule, concurrently with the others. The job name labels its log lines and errors.
 - **No overlap:** a job never overlaps itself. If a run takes longer than its interval, the missed runs are skipped. A [triggered](triggers.md) run that arrives while the job is running waits for that run to finish, and so does a scheduled run that comes due during a triggered one.
-- **Live edits:** the project and its job and task files are re-read on every run, so edits to tasks and the env file apply from the next run. Schedules are read only at startup.
+- **Live edits:** `rocky.yaml` and the job files are re-read on every run, so edits to tasks and the env file apply from the next run. Schedules are read only at startup.
 - **Failures don't stop the job:** after a run that failed, errored or crashed, the job keeps its schedule and the other jobs are unaffected. If a job's schedule itself can't be computed, that job stops with a `stopped` line, and the other jobs keep running.
 - **Exit:** with `--socket`, `run` runs until stopped. Without it, `run` exits once no job has runs left: every scheduled job is an `at` or `run_on_start`-only job that has already run or was skipped, or has stopped after a `stopped` error, and no run a [`trigger` task](triggers.md#trigger-tasks) queued is waiting or still going.
 

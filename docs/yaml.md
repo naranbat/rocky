@@ -1,6 +1,6 @@
 # Writing YAML
 
-Rocky's `rocky.yaml`, job and task files use YAML. `rocky validate` checks both YAML syntax and Rocky's fields without running commands: unknown fields, wrong YAML types, invalid conditions and schedules, bad task combinations, missing imported files and duplicate names. See [Validation](projects.md#validation).
+Rocky's `rocky.yaml` and job files use YAML. `rocky validate` checks both YAML syntax and Rocky's fields without running commands: unknown fields, wrong YAML types, invalid conditions and schedules, bad task combinations and duplicate names. See [Validation](projects.md#validation).
 
 ## Editor schema
 
@@ -13,7 +13,7 @@ tasks:
     cmd: [echo, hello]
 ```
 
-The comment is ignored by Rocky. Task files are validated when their project loads; the schemas don't cover them on their own.
+The comment is ignored by Rocky.
 
 ## Quoting
 
@@ -89,7 +89,7 @@ Current Rocky syntax rejects these older forms:
 |---|---|
 | `timeout: 30` or retry `delay: 2` (integer seconds) | `30s`, `2s` |
 | `weekly` and `time` as sibling fields of `schedule` | `weekly: {days: [mon, fri], time: "09:30"}` |
-| `values` next to a task `file` | `with` (project, job and job-file `values` don't change) |
+| A task kept in its own file (`name: path.yaml`, or `file` with `with`) | the task written inline in the job; `file` and `with` fail as unknown fields |
 | `if`/`then`/`else` or `switch`/`cases`/`default` on a task | [`when`](conditions.md) on each task it should gate; the old keys fail as ``invalid YAML in <file>`` with ``unknown field `if` `` (or `switch`) |
 | `when` on a job | [`when`](conditions.md) on each task it should gate; fails as ``invalid YAML in <file>`` with ``unknown field `when` `` |
 | `max` on a `while` loop | `attempts`; `max` fails with `` `max` is now `attempts` `` |
@@ -101,10 +101,4 @@ schedule:
   weekly:
     days: [mon, fri]
     time: "09:30"
-
-tasks:
-  greet:
-    file: tasks/greet.yaml
-    with:
-      WHO: alice
 ```

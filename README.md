@@ -67,7 +67,6 @@ See [Command line](docs/cli.md) for every flag, [Schedules](docs/schedules.md) f
 ```sh
 rocky new project                       # a project with one job, here
 rocky new job deploy                    # jobs/deploy.yaml
-rocky new task tasks/login.yaml         # a task in its own file
 rocky new project full --level full     # every field, with comments, in full/
 ```
 
@@ -87,7 +86,7 @@ OpenCode also reads `~/.claude/skills/`, so the first link covers both.
 All pages are in [`docs/`](docs/README.md).
 
 - **Getting started:** [Projects](docs/projects.md), [Writing YAML](docs/yaml.md)
-- **Writing projects:** [Tasks](docs/tasks.md), [Cmd tasks](docs/cmd-tasks.md), [Variables](docs/variables.md), [Conditions](docs/conditions.md), [Loops](docs/loops.md), [Task files](docs/files.md), [Triggers](docs/triggers.md)
+- **Writing projects:** [Tasks](docs/tasks.md), [Cmd tasks](docs/cmd-tasks.md), [Variables](docs/variables.md), [Conditions](docs/conditions.md), [Loops](docs/loops.md), [Triggers](docs/triggers.md)
 - **Running:** [Command line](docs/cli.md), [Run](docs/run.md), [Schedules](docs/schedules.md), [Service](docs/service.md), [Debugging](docs/debugging.md)
 
 ## Limitations

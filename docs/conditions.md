@@ -30,10 +30,8 @@ Example: [`examples/httpbin/jobs/conditional.yaml`](../examples/httpbin/jobs/con
 | a cmd task | when the job reaches the task | the task doesn't run |
 | a `for_each` or `while` loop | once, when the job reaches the loop | the whole loop is skipped |
 | a `trigger` task | when the job reaches it | the job isn't queued |
-| a [task file entry](files.md#reusing-a-task-file) | when the job reaches it, with the entry's `with` inputs set | the task doesn't run |
 
 - **A skipped task has no result.** `tasks.NAME` stays undefined (or keeps the result of an earlier task with that name), so test it with `exists`: `when: {this: tasks.B, exists: false}` runs a task only if `B` was skipped.
-- **Task files:** `when` can sit next to `file` and `with`. If the task file has its own `when` too, both must hold; the entry's is checked first. The file's `when` can read the entry's `with` inputs.
 - With `run`, a skipped task writes a `skip` line with its `task`.
 
 ## Condition shape

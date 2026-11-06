@@ -2,7 +2,7 @@
 
 ## Check the project
 
-`rocky validate` loads the project in the current directory, its `rocky.yaml`, job and task files, and runs every [load-time check](projects.md#validation) without running a command. Some problems only show up when a job runs: a missing `env_file`, an undefined variable.
+`rocky validate` loads the project in the current directory, its `rocky.yaml` and job files, and runs every [load-time check](projects.md#validation) without running a command. Some problems only show up when a job runs: a missing `env_file`, an undefined variable.
 
 ## See what `exec` runs
 

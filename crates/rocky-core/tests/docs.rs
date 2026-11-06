@@ -48,7 +48,7 @@ fn project_schema_is_valid_json() {
         schema["$schema"],
         "https://json-schema.org/draft/2020-12/schema"
     );
-    assert!(schema["$defs"]["taskSource"].is_object());
+    assert!(schema["$defs"]["task"].is_object());
     assert!(schema["$defs"]["job"].is_object());
 
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schema/job.schema.json");

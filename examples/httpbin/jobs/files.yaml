@@ -1,8 +1,0 @@
-# A job that uses a task file, with `timeout`. Paths are relative to this file.
-#   rocky exec files
-tasks:
-  login: ../tasks/login.yaml       # a task from its own file
-
-  whoami:
-    cmd: [curl, -sS, --fail-with-body, -H, 'Authorization: Bearer ${tasks.login.stdout.json.token}', '${BASE}/headers']
-    timeout: 10s                     # or 5m, 2h

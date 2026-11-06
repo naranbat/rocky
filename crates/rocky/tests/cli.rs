@@ -702,36 +702,13 @@ fn new_creates_dirs_and_never_overwrites() {
     assert!(String::from_utf8_lossy(&out.stdout).contains("rocky exec deploy"));
     assert!(dir.path().join("jobs/deploy.yaml").exists());
 
-    let new_task = || rocky(&["new", "task", "tasks/a.yaml"], dir.path());
-    assert!(new_task().status.success());
-    let before = std::fs::read_to_string(dir.path().join("tasks/a.yaml")).unwrap();
-    let out = new_task();
+    let before = std::fs::read_to_string(dir.path().join("jobs/deploy.yaml")).unwrap();
+    let out = rocky(&["new", "job", "deploy"], dir.path());
     assert_eq!(out.status.code(), Some(1));
-    assert_stderr_contains(&out, "tasks/a.yaml already exists");
+    assert_stderr_contains(&out, "jobs/deploy.yaml already exists");
     assert_eq!(
-        std::fs::read_to_string(dir.path().join("tasks/a.yaml")).unwrap(),
+        std::fs::read_to_string(dir.path().join("jobs/deploy.yaml")).unwrap(),
         before
-    );
-}
-
-#[test]
-fn new_task_writes_a_cmd_task() {
-    let dir = tempfile::tempdir().unwrap();
-    let out = rocky_command(&["new", "task", "tasks/login.yaml"], dir.path())
-        .stdin(Stdio::null())
-        .output()
-        .unwrap();
-    assert!(out.status.success(), "{}", stderr(&out));
-    assert_eq!(stderr(&out), "");
-    let text = std::fs::read_to_string(dir.path().join("tasks/login.yaml")).unwrap();
-    assert!(
-        !text.contains("\nname:") && text.contains("\ncmd:"),
-        "{text}"
-    );
-    assert!(
-        String::from_utf8_lossy(&out.stdout).contains("login: tasks/login.yaml"),
-        "{}",
-        String::from_utf8_lossy(&out.stdout)
     );
 }
 

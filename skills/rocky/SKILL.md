@@ -13,7 +13,6 @@ rocky runs **projects**: a directory where every `jobs/NAME.yaml` file is one **
 rocky new project [DIR]                      # starter project: jobs/example.yaml in DIR (default .)
 rocky new project full --level full          # every field, with comments: the full reference
 rocky new job deploy                         # jobs/deploy.yaml
-rocky new task tasks/login.yaml              # a task in its own file
 rocky validate                               # load-time checks only, runs nothing
 rocky exec JOB                               # run jobs/JOB.yaml once, print last task's result as JSON
 rocky exec JOB --verbose                     # also print each command to stderr before it runs
@@ -64,9 +63,9 @@ tasks:
 | `jobs/NAME.yaml` (at least one) | `tasks` (required, non-empty map), `schedule`, `values` (win over `rocky.yaml` values), `defaults` (win over `rocky.yaml` defaults) |
 
 - Unknown keys anywhere are a load error.
-- `defaults: {timeout, cwd, env, retry}` fills those fields on every cmd task (nested ones and task files too) that doesn't set them; `env` merges by name. A default `cwd` is relative to the file the defaults are in. Use it instead of repeating `timeout`/`cwd: .`/`env` on each task.
-- Every `*.yaml` directly in `jobs/` is a job, so keep task files elsewhere (e.g. `tasks/`). To run a job with other values or a schedule, copy its file.
-- Relative paths (`cwd`, `stdout_file`, task files) resolve against the file they're written in, so a job reaches `tasks/login.yaml` as `../tasks/login.yaml`; `env_file` against the project directory. Commands **without** `cwd` run in the current directory.
+- `defaults: {timeout, cwd, env, retry}` fills those fields on every cmd task (nested ones too) that doesn't set them; `env` merges by name. A default `cwd` is relative to the file the defaults are in. Use it instead of repeating `timeout`/`cwd: .`/`env` on each task.
+- Every `*.yaml` directly in `jobs/` is a job; every task is written inline in its job file. To run a job with other values or a schedule, copy its file.
+- Relative paths (`cwd`, `stdout_file`) resolve against the file they're written in, so in a job `cwd: ..` is the project directory; `env_file` against the project directory. Commands **without** `cwd` run in the current directory.
 
 ## Tasks
 
@@ -77,7 +76,6 @@ A task is exactly one kind. Any task can also have `when`.
 | cmd | `cmd`, optionally `pipe` (see [Cmd tasks](#cmd-tasks)) |
 | loop | `for_each`/`as`/`do` or `while`/`attempts`/`do`, optionally `on_failure` (see [Loops](#loops)) |
 | trigger | `trigger: JOB`; no other fields but `when` (see [Triggers](#triggers)) |
-| task file | a path, or `{file: path, with: {...}, when: ...}` (see [Task files](#task-files)) |
 
 - Tasks are a **map**, never a list. The key is the name; there is no `name` field. Keys are identifiers (`user_id`), `tasks` is reserved, and keys are unique within one map.
 - There is no `if`/`then`/`else` or `switch`; use `when` on each task.
@@ -118,10 +116,10 @@ For HTTP use `curl -sS --fail-with-body` so 4xx/5xx exit non-zero; `--json '@-'`
 ## Variables
 
 - `${NAME}` or a dot path `${tasks.login.stdout.user.id}`, `${ITEMS.0.id}` (numeric segment = array index).
-- Expanded in `cmd`/`pipe` arguments, `cwd`, strings in `stdin` and `env` values, task-file `with` inputs, and condition operator values (except `matches`). Each `${...}` stays one argument. Project and job `values` are not expanded.
-- Lookup order: loop variables and `tasks.*` → task-file `with` inputs → job `values` → project `values` → `env_file` → process environment. Undefined fails the task.
+- Expanded in `cmd`/`pipe` arguments, `cwd`, strings in `stdin` and `env` values, and condition operator values (except `matches`). Each `${...}` stays one argument. Project and job `values` are not expanded.
+- Lookup order: loop variables and `tasks.*` → job `values` → project `values` → `env_file` → process environment. Undefined fails the task.
 - `env_file` lines are `KEY=value` strings, for secrets. They only fill `${...}`; a command sees one in its environment only if listed under `env`: `env: {TOKEN: '${API_TOKEN}'}`.
-- A `stdin` field, condition operand or task-file `with` input that is exactly `${NAME}` keeps its JSON type (number, list, object); anywhere else values render as text.
+- A `stdin` field or condition operand that is exactly `${NAME}` keeps its JSON type (number, list, object); anywhere else values render as text.
 - `$${` is a literal `${`. In `sh -c` scripts reading a variable from `env`, write `$NAME`.
 - `values` names and `as` names must be uppercase (`A-Z`, `0-9`, `_`).
 
@@ -129,7 +127,7 @@ For HTTP use `curl -sS --fail-with-body` so 4xx/5xx exit non-zero; `--json '@-'`
 
 - Quote `${...}` inside flow collections (`{...}` or `[...]`), quote numeric command arguments (`[sleep, "5"]`), and quote times, dates and strings containing YAML punctuation.
 - Durations are a whole number and one unit, `s`, `m` or `h`: `90m`, not `1h30m`, `1.5m` or `30`.
-- Removed forms fail to load: integer-second durations, `weekly` and `time` as siblings (use `weekly: {days, time}`), `values` next to a task `file` (use `with`), `if`/`switch` (use `when`), `when` on a job (put it on each task), `max` on `while` (use `attempts`).
+- Removed forms fail to load: integer-second durations, `weekly` and `time` as siblings (use `weekly: {days, time}`), task files (`name: path.yaml`, `file`, `with`; write the task inline), `if`/`switch` (use `when`), `when` on a job (put it on each task), `max` on `while` (use `attempts`).
 
 ## Conditions
 
@@ -167,11 +165,6 @@ wait:                                # while: checked before each iteration
 ```
 
 Loops have no `cmd`, `timeout` or `allow_failure` (that's for cmd tasks); a loop uses `on_failure: next` to skip a failing iteration. Nothing runs in parallel. Results set inside loops stay available afterwards.
-
-## Task files
-
-- Task file: `tasks: {login: ../tasks/login.yaml}`; the file holds one task of any kind, no `name`.
-- Reuse a task file with different inputs: `tasks: {as_bob: {file: ../tasks/login.yaml, with: {USER: bob}}}`. Only `file`, `with` and `when` are allowed there; the inputs win over job values while the file runs and their `${...}` is expanded when the task starts, e.g. `with: {USER: '${ITEM}'}`.
 
 ## Triggers
 
@@ -216,4 +209,4 @@ stdout only ever holds results, so `rocky exec job | jq .stdout` is safe.
 
 ## Full documentation
 
-For details beyond this summary, read the page in rocky's `docs/` directory: `projects.md`, `yaml.md`, `tasks.md`, `cmd-tasks.md`, `variables.md`, `conditions.md`, `loops.md`, `files.md`, `triggers.md`, `cli.md`, `run.md` (log events), `schedules.md`, `service.md` (systemd/launchd), `debugging.md`.
+For details beyond this summary, read the page in rocky's `docs/` directory: `projects.md`, `yaml.md`, `tasks.md`, `cmd-tasks.md`, `variables.md`, `conditions.md`, `loops.md`, `triggers.md`, `cli.md`, `run.md` (log events), `schedules.md`, `service.md` (systemd/launchd), `debugging.md`.

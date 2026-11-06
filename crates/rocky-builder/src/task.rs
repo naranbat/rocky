@@ -13,7 +13,7 @@ use crate::legacy;
 use crate::node::{self, Path};
 use crate::run_view;
 use crate::theme;
-use crate::{task_cmd, task_file, task_loop, task_trigger};
+use crate::{task_cmd, task_loop, task_trigger};
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum Kind {
@@ -21,30 +21,19 @@ pub enum Kind {
     ForEach,
     While,
     Trigger,
-    File,
 }
 
 impl Kind {
-    const ALL: [Kind; 5] = [
-        Kind::Cmd,
-        Kind::ForEach,
-        Kind::While,
-        Kind::Trigger,
-        Kind::File,
-    ];
+    const ALL: [Kind; 4] = [Kind::Cmd, Kind::ForEach, Kind::While, Kind::Trigger];
 
-    /// The kind of a task entry: a path string is a task file.
+    /// The kind of a task entry.
     pub fn of(task: &Value) -> Option<Kind> {
-        if task.is_string() {
-            return Some(Kind::File);
-        }
         let map = task.as_mapping()?;
         [
             ("cmd", Kind::Cmd),
             ("for_each", Kind::ForEach),
             ("while", Kind::While),
             ("trigger", Kind::Trigger),
-            ("file", Kind::File),
         ]
         .into_iter()
         .find(|(key, _)| map.contains_key(*key))
@@ -57,7 +46,6 @@ impl Kind {
             Kind::ForEach => "For each",
             Kind::While => "While",
             Kind::Trigger => "Trigger",
-            Kind::File => "Task file",
         }
     }
 
@@ -67,7 +55,6 @@ impl Kind {
             Kind::ForEach => "Repeat do for every list item",
             Kind::While => "Repeat do while a condition holds",
             Kind::Trigger => "Queue a run of another job",
-            Kind::File => "Reuse a YAML file, pass with inputs",
         }
     }
 
@@ -77,7 +64,6 @@ impl Kind {
             Kind::ForEach => theme::FOR_EACH,
             Kind::While => theme::WHILE,
             Kind::Trigger => theme::TRIGGER,
-            Kind::File => theme::FILE,
         }
     }
 
@@ -120,7 +106,6 @@ impl Kind {
                 "trigger",
                 Value::from(jobs.first().cloned().unwrap_or_default()),
             )]),
-            Kind::File => doc::map_of([("file", Value::from("../tasks/task.yaml"))]),
         }
     }
 }
@@ -181,10 +166,6 @@ fn summary(task: &Value) -> String {
             format!("{condition} · {} tasks", count(task))
         }
         Some(Kind::Trigger) => format!("queue {}", text("trigger")),
-        Some(Kind::File) => match task {
-            Value::String(path) => path.clone(),
-            _ => text("file"),
-        },
         None => doc::flow(task),
     }
 }
@@ -310,9 +291,8 @@ pub fn rows(ed: &mut Edit, root: &Value, tasks: &Path, name: &str) -> Vec<Row> {
             Some(Kind::ForEach) => rows.extend(task_loop::for_each(ed, root, &path)),
             Some(Kind::While) => rows.extend(task_loop::while_loop(ed, root, &path)),
             Some(Kind::Trigger) => rows.extend(task_trigger::rows(ed, root, &path)),
-            Some(Kind::File) => rows.extend(task_file::rows(ed, root, &path)),
             None => rows.push(Row::hint(
-                "Unknown task: no cmd, for_each, while, trigger or file. Pick a kind above, or fix it in the file.",
+                "Unknown task: no cmd, for_each, while or trigger. Pick a kind above, or fix it in the file.",
             )),
         }
     }
@@ -359,14 +339,12 @@ fn old_syntax(root: &Value, tasks: &Path, name: &str, task: &Value) -> Vec<Row> 
 mod tests {
     use super::*;
 
-    /// Every task the add-task picker inserts is valid as is (task files aside, which name
-    /// a file that must exist).
+    /// Every task the add-task picker inserts is valid as is.
     #[test]
     fn templates_are_valid_tasks() {
         let jobs = ["main".to_string()];
         let tasks: Vec<(String, Value)> = Kind::ALL
             .into_iter()
-            .filter(|kind| *kind != Kind::File)
             .map(|kind| (kind.label().to_string(), kind.template(&jobs)))
             .collect();
         let mut map = Mapping::new();

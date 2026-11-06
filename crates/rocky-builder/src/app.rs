@@ -90,7 +90,7 @@ pub struct App {
     validate_now: bool,
     show_yaml: bool,
     yaml_scroll: u16,
-    /// Task file previews, re-read after each save or validate.
+    /// The env file's contents, re-read after each save or validate.
     previews: HashMap<PathBuf, String>,
     /// The last save or open message, for the status bar; `Err` in red.
     message: Option<Result<String, String>>,
@@ -226,11 +226,8 @@ impl App {
         let job = self.job().unwrap_or_default().to_string();
         let jobs = doc.job_names();
         let scheduler = self.scheduler.as_ref().map(|(s, _)| s);
-        let jobs_dir = doc.dir().join(rocky_core::project::JOBS_DIR);
         let mut ed = Edit {
             jobs: &jobs,
-            dir: &jobs_dir,
-            previews: &mut self.previews,
             job: &job,
             run: shown(self.run.as_ref(), scheduler, &job),
             problem: self.validation.problem(),
@@ -1375,16 +1372,10 @@ jobs:
     }
 
     /// Covers what the examples don't: while, any, exists, weekly and at schedules,
-    /// defaults, capture_stdout, and task files with `with` and `when`.
+    /// defaults, capture_stdout, and a `when` list.
     #[test]
     fn viewing_every_field_changes_nothing() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::create_dir(dir.path().join("tasks")).unwrap();
-        std::fs::write(
-            dir.path().join("tasks/greet.yaml"),
-            "cmd: [echo, 'hello ${WHO}']\n",
-        )
-        .unwrap();
         write_project(
             dir.path(),
             "\
@@ -1403,10 +1394,8 @@ jobs:
         do:
           pause: {cmd: [sleep, '0']}
       alice:
-        file: ../tasks/greet.yaml
-        with: {WHO: alice}
+        cmd: [echo, 'hello ${BASE}']
         when: [{this: '${tasks.check.ok}', eq: true}, {this: '${tasks.check.stdout}', gt: 1, lt: 300}]
-      bob: ../tasks/greet.yaml
   once:
     schedule: {at: '2030-01-01T09:00:00'}
     tasks:

@@ -137,7 +137,7 @@
       "propertyNames": {
         "pattern": "^(?!tasks$)[A-Za-z_][A-Za-z0-9_]*$"
       },
-      "additionalProperties": { "$ref": "#/$defs/taskSource" }
+      "additionalProperties": { "$ref": "#/$defs/task" }
     },
     "nonEmptyTaskMap": {
       "allOf": [
@@ -145,25 +145,13 @@
         { "minProperties": 1 }
       ]
     },
-    "taskSource": {
+    "task": {
       "oneOf": [
-        { "type": "string", "description": "Path to a task file." },
-        { "$ref": "#/$defs/taskFile" },
         { "$ref": "#/$defs/cmdTask" },
         { "$ref": "#/$defs/forEachTask" },
         { "$ref": "#/$defs/whileTask" },
         { "$ref": "#/$defs/triggerTask" }
       ]
-    },
-    "taskFile": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["file"],
-      "properties": {
-        "file": { "type": "string" },
-        "with": { "$ref": "#/$defs/variables" },
-        "when": { "$ref": "#/$defs/condition" }
-      }
     },
     "command": {
       "type": "array",

@@ -49,9 +49,9 @@ enum Command {
     },
     /// Check the project in the current directory for errors without running it.
     ///
-    /// Loads `rocky.yaml`, every job file in `jobs/` and their task files, and reports whether they are valid. Sends no requests and runs no commands.
+    /// Loads `rocky.yaml`, and every job file in `jobs/`, and reports whether they are valid. Sends no requests and runs no commands.
     Validate,
-    /// Create a starter project, job or task file.
+    /// Create a starter project or job file.
     ///
     /// Never overwrites a file.
     New {
@@ -81,8 +81,6 @@ enum NewKind {
     },
     /// A job file, `jobs/<NAME>.yaml` in the current directory.
     Job { name: String },
-    /// A task file, to list under a job's `tasks` (`name: path`).
-    Task { path: PathBuf },
 }
 
 #[tokio::main]
@@ -149,7 +147,6 @@ async fn main() -> anyhow::Result<()> {
                     new::Kind::Job,
                     PathBuf::from(project::JOBS_DIR).join(format!("{name}.yaml")),
                 ),
-                NewKind::Task { path } => (new::Kind::Task, path),
             };
             let level = match level {
                 Level::Basic => new::Level::Basic,

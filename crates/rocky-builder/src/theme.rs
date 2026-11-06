@@ -15,7 +15,6 @@ pub const CMD: Color = Color::Rgb(0x4c, 0xc2, 0x86);
 pub const FOR_EACH: Color = Color::Rgb(0x63, 0x8f, 0xf0);
 pub const WHILE: Color = Color::Rgb(0x45, 0xbd, 0xcc);
 pub const TRIGGER: Color = Color::Rgb(0xe8, 0x84, 0x4a);
-pub const FILE: Color = Color::Rgb(0x9a, 0x9a, 0x9a);
 
 pub fn text() -> Style {
     Style::new().fg(TEXT)

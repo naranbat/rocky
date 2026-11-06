@@ -8,22 +8,12 @@ use crate::project::{JOBS_DIR, SETTINGS_FILE};
 pub enum Kind {
     Project,
     Job,
-    Task,
 }
 
 const JOB: &str = "\
 tasks:
   hello:
     cmd: [echo, hello]
-";
-
-const TASK_HEADER: &str = "\
-# One task in its own file. Add it to a job's `tasks`: `name: path/to/this.yaml`.
-# To give it inputs of its own: `name: {file: path/to/this.yaml, with: {USER: bob}}`.
-";
-
-const CMD_TASK: &str = "\
-cmd: [echo, hello]
 ";
 
 const FULL_SETTINGS: &str = "\
@@ -59,10 +49,6 @@ schedule:
 const FULL_JOB_NOTE: &str = "\
 # Every field is shown, with every kind of task; delete what you don't need.
 # ${USER} comes from the project's env_file or the environment.
-";
-
-const FULL_TASK_HEADER: &str = "\
-# Every field is shown; delete what you don't need. ${USER} comes from the env_file or the environment.
 ";
 
 const CURL_TASK: &str = "\
@@ -125,11 +111,6 @@ const FULL_CONTROL: &str = "
       status:                           # httpbin picks 200 or 503 at random
         cmd: [curl, -sS, -o, /dev/null, -w, '%{http_code}', 'https://httpbin.org/status/200,503']
 
-  # A task file: one task kept in its own file, relative to this file. Give it inputs of
-  # its own with `with`, read as ${NAME} inside the file; only `file`, `with` and `when` go here.
-  # notify: ../tasks/notify.yaml
-  # notify_bob: {file: ../tasks/notify.yaml, with: {USER: bob}}
-
   # A trigger: queues a run of another job of the project (jobs/report.yaml) and goes on without waiting
   # (`exec` runs it after this job). Nothing is saved as tasks.NAME.
   # report: {trigger: report}
@@ -148,21 +129,12 @@ pub enum Level {
 /// returns a hint on how to use it. For a project, `path` is its directory (see [`project`]).
 /// Never overwrites an existing file.
 pub fn create(kind: Kind, level: Level, path: &Path) -> Result<String, Error> {
-    let full = matches!(level, Level::Full);
     let name = path.file_stem().unwrap_or_default().to_string_lossy();
     let (text, hint) = match kind {
         Kind::Project => return project(level, path, false),
         Kind::Job => (
             job(&name, level),
             format!("run it from the project directory: rocky exec {name}"),
-        ),
-        Kind::Task => (
-            if full {
-                format!("{TASK_HEADER}{FULL_TASK_HEADER}{FULL_CMD_TASK}")
-            } else {
-                format!("{TASK_HEADER}{CMD_TASK}")
-            },
-            format!("add it to a job:\n  tasks:\n    {name}: {}", path.display()),
         ),
     };
     write_new(path, &text)?;
@@ -292,12 +264,6 @@ mod tests {
             matches!(level, Level::Full)
         );
         create(Kind::Job, level, &dir.path().join("jobs/w.yaml")).unwrap();
-        create(Kind::Task, level, &dir.path().join("tasks/cmd.yaml")).unwrap();
-        std::fs::write(
-            dir.path().join("jobs/a.yaml"),
-            "tasks: {sh: ../tasks/cmd.yaml}\n",
-        )
-        .unwrap();
         let mut project = project::load(dir.path()).unwrap();
         for name in ["example", "w"] {
             let job = project.take(name).unwrap();
@@ -307,10 +273,6 @@ mod tests {
                 assert_eq!(job.values["LIMITS"]["retries"], 3);
             }
         }
-        let a = project.take("a").unwrap();
-        assert!(a.tasks[0].cmd.is_some());
-        assert_eq!(a.tasks[0].pipe.is_empty(), matches!(level, Level::Basic));
-        assert_eq!(a.tasks[0].name, "sh");
     }
 
     #[test]

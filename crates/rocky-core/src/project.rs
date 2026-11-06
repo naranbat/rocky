@@ -155,8 +155,7 @@ pub fn job_files(root: &Path) -> Result<Vec<(String, PathBuf)>, Error> {
 }
 
 /// Like [`load`], with the contents of `rocky.yaml` (`None` if there is none) and of each
-/// job file (job name, text) given instead of read from disk; task files are still read
-/// from disk, relative to the job files' places in `root`.
+/// job file (job name, text) given instead of read from disk.
 pub fn load_parts(
     root: &Path,
     settings: Option<&str>,
@@ -258,11 +257,6 @@ fn check_names<'a>(mut names: impl Iterator<Item = &'a String>) -> Result<(), Er
     }
 }
 
-/// Reads and parses a YAML file.
-pub(crate) fn read_yaml<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, Error> {
-    parse_yaml(path, &read_text(path)?)
-}
-
 /// Reads a file to a string.
 fn read_text(path: &Path) -> Result<String, Error> {
     std::fs::read_to_string(path).map_err(|source| Error::Io {
@@ -344,15 +338,13 @@ mod tests {
         std::fs::write(dir.path().join("jobs/sub/x.yaml"), "nope").unwrap();
         std::fs::write(dir.path().join("jobs/notes.txt"), "nope").unwrap();
         std::fs::write(dir.path().join("jobs/echo.yml"), "nope").unwrap();
-        std::fs::create_dir(dir.path().join("tasks")).unwrap();
-        std::fs::write(dir.path().join("tasks/echo.yaml"), "cmd: [echo]\ncwd: w\n").unwrap();
         let mut project = load_in(
             dir.path(),
             Some("env_file: .env\n"),
             &[
                 (
                     "a",
-                    "schedule: {every: 5m}\ntasks:\n  e: ../tasks/echo.yaml\n",
+                    "schedule: {every: 5m}\ntasks:\n  e: {cmd: [echo], cwd: w}\n",
                 ),
                 ("b", ECHO),
             ],
@@ -362,7 +354,7 @@ mod tests {
         assert_eq!(project.env_file, Some(dir.path().join(".env")));
         let a = project.take("a").unwrap();
         assert!(a.schedule.is_some());
-        assert_eq!(a.tasks[0].dir, dir.path().join("jobs/../tasks"));
+        assert_eq!(a.tasks[0].dir, dir.path().join("jobs"));
         let b = project.take("b").unwrap();
         assert_eq!(b.tasks[0].dir, dir.path().join("jobs"));
         assert!(b.schedule.is_none());
@@ -406,16 +398,6 @@ mod tests {
             err.chain().contains("unknown field `jobs`"),
             "{}",
             err.chain()
-        );
-    }
-
-    #[test]
-    fn missing_task_file_names_the_job() {
-        let dir = tempfile::tempdir().unwrap();
-        let err = load_in(dir.path(), None, &[("m", "tasks: {e: nope.yaml}\n")]).unwrap_err();
-        assert!(
-            matches!(&err, Error::Job { name, source } if name == "m" && matches!(**source, Error::Io { .. })),
-            "{err}"
         );
     }
 
@@ -604,18 +586,12 @@ mod tests {
     fn default_cwd_is_relative_to_the_file_with_the_defaults() {
         let dir = tempfile::tempdir().unwrap();
         let jobs = dir.path().join("jobs");
-        let tasks = dir.path().join("tasks");
-        std::fs::create_dir(&tasks).unwrap();
-        std::fs::write(tasks.join("t.yaml"), "cmd: [echo]\n").unwrap();
         let mut project = load_in(
             dir.path(),
             Some("defaults: {cwd: .}\n"),
             &[
-                (
-                    "own",
-                    "defaults: {cwd: work}\ntasks:\n  t: ../tasks/t.yaml\n",
-                ),
-                ("inherit", "tasks:\n  t: ../tasks/t.yaml\n"),
+                ("own", "defaults: {cwd: work}\ntasks:\n  t: {cmd: [echo]}\n"),
+                ("inherit", "tasks:\n  t: {cmd: [echo]}\n"),
                 ("set", "tasks: {t: {cmd: [echo], cwd: mine}}\n"),
             ],
         )
@@ -624,7 +600,7 @@ mod tests {
         let own = task(&mut project, "own");
         assert_eq!(
             (own.cwd, own.cwd_dir, own.dir),
-            (Some("work".into()), jobs.clone(), jobs.join("../tasks"))
+            (Some("work".into()), jobs.clone(), jobs.clone())
         );
         let inherit = task(&mut project, "inherit");
         assert_eq!(

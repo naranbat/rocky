@@ -26,7 +26,6 @@ mod sidebar;
 mod start;
 mod task;
 mod task_cmd;
-mod task_file;
 mod task_loop;
 mod task_trigger;
 mod theme;

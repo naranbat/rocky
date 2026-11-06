@@ -12,7 +12,6 @@ rocky trigger <SOCKET> <JOB>
 rocky validate
 rocky new project [DIR]
 rocky new job <NAME>
-rocky new task <PATH>
 rocky new <KIND> ... --level full
 rocky --help          # or -h, also per subcommand: rocky exec --help
 rocky --version       # or -V
@@ -61,7 +60,7 @@ If nothing listens on `SOCKET`, it fails with ``Error: socket <SOCKET>`` and the
 
 ## `rocky validate`
 
-Loads the project's `rocky.yaml`, job files and task files and runs every [load-time check](projects.md#validation), without running commands. A valid project prints one line and exits `0`; an invalid one prints the load error on stderr and exits `1`.
+Loads the project's `rocky.yaml` and job files and runs every [load-time check](projects.md#validation), without running commands. A valid project prints one line and exits `0`; an invalid one prints the load error on stderr and exits `1`.
 
 ```
 $ rocky validate
@@ -76,14 +75,13 @@ Writes starter files that load as-is, creating missing directories, and prints h
 |---|---|
 | `project [DIR]` | A project in `DIR` (default: the current directory) with one job, `jobs/example.yaml`, that runs `echo hello`: `rocky exec example` there |
 | `job <NAME>` | `jobs/NAME.yaml` in the current directory, a [job](projects.md#job-files) with one `echo hello` task: `rocky exec NAME` |
-| `task <PATH>` | A [task file](files.md) with one `echo hello` cmd task, to list under a job's `tasks`, e.g. `login: ../tasks/login.yaml` |
 
 `--level` sets how much the file shows, for every kind:
 
 | Level | Writes |
 |---|---|
 | `basic` (default) | The smallest file that runs, as in the table above |
-| `full` | Every field, each with a comment. A full project also writes a `rocky.yaml` with `values` and `defaults`. A full job has a `schedule`, `values`, `defaults`, a `curl` request, cmd tasks with `when`, a `for_each` loop and a `while` loop. A full task is a cmd task with all of its fields. Fields that need another file (`env_file`, a task file with or without `with`) or another job (`trigger`) are commented out, so the file still loads and runs as-is. Its tasks use `${USER}` from the environment |
+| `full` | Every field, each with a comment. A full project also writes a `rocky.yaml` with `values` and `defaults`. A full job has a `schedule`, `values`, `defaults`, a `curl` request, cmd tasks with `when`, a `for_each` loop and a `while` loop. Fields that need another file (`env_file`) or another job (`trigger`) are commented out, so the file still loads and runs as-is. Its tasks use `${USER}` from the environment |
 
 ```
 $ rocky new job deploy
@@ -112,4 +110,4 @@ run it from the project directory: rocky exec deploy
 
 Tasks are labelled by their key in error messages, at any depth: a task `notify` inside a loop's `do` is ``task `notify` ``.
 
-> YAML errors in any file (`rocky.yaml`, a job or a task file) are reported as `invalid YAML in <path>`, with the cause on a `Caused by:` line.
+> YAML errors in any file (`rocky.yaml` or a job file) are reported as `invalid YAML in <path>`, with the cause on a `Caused by:` line.

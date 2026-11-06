@@ -1,7 +1,10 @@
-# A report built from a task file and two commands. Paths are relative to this file.
+# A report built from a login and two commands.
 #   rocky exec report
 tasks:
-  login: ../tasks/login.yaml         # a task from its own file
+  login:
+    cmd: [curl, -sS, --fail-with-body, --json, '@-', '${BASE}/anything/login']   # --json sends stdin as the body
+    stdin:
+      token: demo-token                # httpbin echoes it back as stdout.json.token
 
   today:
     cmd: [date, +%Y-%m-%d]
@@ -12,6 +15,7 @@ tasks:
 
   report:
     cmd: [curl, -sS, --fail-with-body, -H, 'Authorization: Bearer ${tasks.login.stdout.json.token}', --json, '@-', '${BASE}/anything/report']
+    timeout: 10s                       # or 5m, 2h
     stdin:
       user: ${tasks.shout.stdout}
       date: ${tasks.today.stdout}
