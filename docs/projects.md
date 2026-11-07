@@ -71,7 +71,7 @@ The project file is required; `rocky.yaml` unless given with `-f`.
 | Field | Notes |
 |---|---|
 | `jobs` | Required. Map of job name → its YAML file, relative to the project file. |
-| `values` | Map of uppercase name → fixed value (any YAML value: string, number, boolean, list or object), read as `${NAME}` by every job. See [Variables](variables.md#values). |
+| `values` | Map of uppercase name → fixed value (any YAML value: string, number, boolean, list, object or `null`), read as `${NAME}` by every job. See [Variables](variables.md#values). |
 | `env_file` | A `.env` file shared by all jobs, relative to the project file. See [Variables](variables.md#env-file). |
 | `defaults` | Fields every cmd task in every job gets unless it sets them. See [Defaults](#defaults). |
 
@@ -80,7 +80,7 @@ The project file is required; `rocky.yaml` unless given with `-f`.
 | Field | Notes |
 |---|---|
 | `schedule` | Optional. When `rocky run` runs this job. See [Schedules](schedules.md). `exec` checks it but doesn't run it. |
-| `values` | Map of uppercase name → fixed value, read as `${NAME}` by this job's tasks; wins over a `rocky.yaml` value of the same name. See [Variables](variables.md#values). |
+| `values` | Map of uppercase name → fixed value (including `null`), read as `${NAME}` by this job's tasks; wins over a `rocky.yaml` value of the same name. See [Variables](variables.md#values). |
 | `defaults` | Fields this job's cmd tasks get unless they set them; win over `rocky.yaml`'s. See [Defaults](#defaults). |
 | `tasks` | Required, and must not be empty. Map of task name → task. Tasks run in the order they are written. See [Tasks](tasks.md). |
 

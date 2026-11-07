@@ -3,6 +3,7 @@
 pub mod command;
 pub mod condition;
 pub mod defaults;
+mod deserialize;
 pub mod env_file;
 pub mod error;
 pub mod exec;

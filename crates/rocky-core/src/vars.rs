@@ -1,7 +1,8 @@
+use serde::Deserializer;
 use serde::de;
-use serde::{Deserialize, Deserializer};
 use serde_json::Value;
 
+use crate::deserialize;
 use crate::error::Error;
 use crate::extract;
 
@@ -42,9 +43,7 @@ fn whole_var(s: &str) -> Option<&str> {
 pub(crate) fn var_path<'de, D: Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<String>, D::Error> {
-    let Some(text) = Option::<String>::deserialize(deserializer)? else {
-        return Ok(None);
-    };
+    let text: String = deserialize::non_null(deserializer)?;
     let path = whole_var(&text).unwrap_or(&text);
     if path.contains("${") {
         return Err(de::Error::custom(format!(

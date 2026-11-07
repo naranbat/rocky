@@ -57,7 +57,7 @@ tasks:
 Example: [`examples/values/`](../examples/values/).
 
 - `values` can go in the project file and in a job file. Tasks nested in loops see their job's values.
-- A value can be a string, number, boolean, list or object, and keeps its JSON type (see [typed values](#typed-values)). Use a dot path to read inside one: `${SITE.name}`.
+- A value can be a string, number, boolean, list, object or `null`, and keeps its JSON type (see [typed values](#typed-values)). Use a dot path to read inside one: `${SITE.name}`.
 - Project and job values are used as written: `${...}` inside a value is not expanded.
 - A job value with the same name as a project value replaces it for that job.
 

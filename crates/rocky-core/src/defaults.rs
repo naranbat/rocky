@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use serde::Deserialize;
 use serde_json::Value;
 
+use crate::deserialize;
 use crate::error::Error;
 use crate::project;
 use crate::task::{self, Retry, Task};
@@ -16,12 +17,14 @@ pub struct Defaults {
     #[serde(default, deserialize_with = "task::duration")]
     pub timeout: Option<u64>,
     /// Relative to `dir`.
+    #[serde(default, deserialize_with = "deserialize::some_non_null")]
     pub cwd: Option<PathBuf>,
     /// Directory of the file these defaults are written in.
     #[serde(skip)]
     pub dir: PathBuf,
     #[serde(default, deserialize_with = "project::unique")]
     pub env: BTreeMap<String, Value>,
+    #[serde(default, deserialize_with = "deserialize::some_non_null")]
     pub retry: Option<Retry>,
 }
 

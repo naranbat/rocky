@@ -5,6 +5,7 @@ use serde::de::{self, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer};
 use serde_json::Value;
 
+use crate::deserialize;
 use crate::error::Error;
 use crate::extract::text;
 use crate::pattern::Pattern;
@@ -36,10 +37,15 @@ struct Fields {
     ne: Option<Value>,
     #[serde(default, deserialize_with = "present")]
     contains: Option<Value>,
+    #[serde(default, deserialize_with = "deserialize::some_non_null")]
     matches: Option<Pattern>,
+    #[serde(default, deserialize_with = "deserialize::some_non_null")]
     exists: Option<bool>,
+    #[serde(default, deserialize_with = "deserialize::some_non_null")]
     all: Option<Vec<Condition>>,
+    #[serde(default, deserialize_with = "deserialize::some_non_null")]
     any: Option<Vec<Condition>>,
+    #[serde(default, deserialize_with = "deserialize::some_non_null")]
     not: Option<Box<Condition>>,
 }
 
@@ -258,13 +264,29 @@ fn as_number(value: &Value) -> Option<f64> {
     }
 }
 
-/// An integer, or a string holding one, kept exact beyond f64's 2^53.
-fn as_integer(value: &Value) -> Option<i128> {
-    match value {
-        Value::Number(n) => n.to_string().parse().ok(),
-        Value::String(s) => s.trim().parse().ok(),
-        _ => None,
+/// An integer, or a string holding one, normalized without a fixed size limit.
+fn as_integer(value: &Value) -> Option<String> {
+    let text = match value {
+        Value::Number(n) => n.to_string(),
+        Value::String(s) => s.trim().to_string(),
+        _ => return None,
+    };
+    let (negative, digits) = match text.strip_prefix('-') {
+        Some(digits) => (true, digits),
+        None => (false, text.strip_prefix('+').unwrap_or(&text)),
+    };
+    if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
     }
+    let digits = digits.trim_start_matches('0');
+    if digits.is_empty() {
+        return Some("0".to_string());
+    }
+    Some(if negative {
+        format!("-{digits}")
+    } else {
+        digits.to_string()
+    })
 }
 
 /// The operator value with its `${VAR}`s expanded.
@@ -394,6 +416,14 @@ mod tests {
         assert!(!loose_eq(
             &big("9007199254740993"),
             &json!("9007199254740992")
+        ));
+        assert!(!loose_eq(
+            &big("10000000000000000000000000000000000000000"),
+            &big("10000000000000000000000000000000000000001")
+        ));
+        assert!(loose_eq(
+            &big("10000000000000000000000000000000000000000"),
+            &json!("10000000000000000000000000000000000000000")
         ));
     }
 
@@ -554,6 +584,8 @@ mod tests {
         assert!(serde_yaml::from_str::<Condition>("{this: N, greater: 1}").is_err());
         assert!(serde_yaml::from_str::<Condition>("{this: N, exists: maybe}").is_err());
         assert!(serde_yaml::from_str::<Condition>("{var: N, eq: 1}").is_err());
+        assert!(serde_yaml::from_str::<Condition>("{this: null, eq: 1}").is_err());
+        assert!(serde_yaml::from_str::<Condition>("{this: N, matches: null}").is_err());
     }
 
     #[test]

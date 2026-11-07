@@ -8,7 +8,7 @@ use serde_json::Value;
 
 use crate::condition::Condition;
 use crate::error::Error;
-use crate::{project, schedule, var_name, vars};
+use crate::{deserialize, project, schedule, var_name, vars};
 
 /// One entry of a job's `tasks`: a cmd task, a loop, or a trigger, each with an optional `when`.
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -29,6 +29,7 @@ pub struct Task {
     pub timeout: Option<u64>,
     /// Directory a `cmd` task runs in, relative to the file that declares this task;
     /// default: the current directory. `${VAR}` is substituted.
+    #[serde(default, deserialize_with = "deserialize::some_non_null")]
     pub cwd: Option<PathBuf>,
     /// Directory of the file that declares this task; `stdout_file` is relative to it.
     #[serde(skip)]
@@ -38,6 +39,7 @@ pub struct Task {
     pub cwd_dir: PathBuf,
     /// A `cmd` command's standard input: a string as-is, anything else as JSON.
     /// `${VAR}` is substituted.
+    #[serde(default, deserialize_with = "deserialize::some")]
     pub stdin: Option<Value>,
     /// Environment variables added to a `cmd` command's inherited environment: a string
     /// as-is, anything else as JSON. `${VAR}` is substituted.
@@ -45,38 +47,53 @@ pub struct Task {
     pub env: BTreeMap<String, Value>,
     /// `false` sends a `cmd` command's stdout to /dev/null instead of keeping it in memory;
     /// the result's `stdout` is then `null`. Default `true`.
+    #[serde(default, deserialize_with = "deserialize::some_non_null")]
     pub capture_stdout: Option<bool>,
     /// A file, relative to the file that declares this task, that a `cmd` command's stdout is
     /// written to instead of being kept; the result's `stdout` is then `null`. `${VAR}` is
     /// substituted.
+    #[serde(default, deserialize_with = "deserialize::some_non_null")]
     pub stdout_file: Option<PathBuf>,
     /// Runs a `cmd` task again until it succeeds or its `until` condition holds.
+    #[serde(default, deserialize_with = "deserialize::some_non_null")]
     pub retry: Option<Retry>,
     /// A non-zero exit or a timeout of this `cmd` task doesn't stop the job.
     #[serde(default)]
     pub allow_failure: bool,
     /// On a loop, what a failing `do` task does: stop the job (the default), or skip the rest of
     /// that iteration.
+    #[serde(default, deserialize_with = "deserialize::some_non_null")]
     pub on_failure: Option<OnFailure>,
     /// The task runs only if this condition holds when it is reached; otherwise it is skipped.
+    #[serde(default, deserialize_with = "deserialize::some_non_null")]
     pub when: Option<Condition>,
     /// Makes this a loop: runs `do` once per element of this list variable.
     #[serde(default, deserialize_with = "vars::var_path")]
     pub for_each: Option<String>,
     /// The variable each element is bound to inside `do` (default `ITEM`).
-    #[serde(rename = "as")]
+    #[serde(
+        default,
+        rename = "as",
+        deserialize_with = "deserialize::some_non_null"
+    )]
     pub item_var: Option<String>,
     /// Makes this a `while` loop: runs `do` again and again while the condition holds.
-    #[serde(rename = "while")]
+    #[serde(
+        default,
+        rename = "while",
+        deserialize_with = "deserialize::some_non_null"
+    )]
     pub repeat: Option<Condition>,
     /// The most iterations a `while` loop may run before it fails.
+    #[serde(default, deserialize_with = "deserialize::some_non_null")]
     pub attempts: Option<u64>,
     /// The old name of `attempts`, read only to point there.
-    #[serde(rename = "max")]
+    #[serde(default, rename = "max", deserialize_with = "deserialize::some")]
     pub old_max: Option<Value>,
     #[serde(default, rename = "do", deserialize_with = "named")]
     pub body: Vec<Task>,
     /// Makes this a trigger: queues a run of this job.
+    #[serde(default, deserialize_with = "deserialize::some_non_null")]
     pub trigger: Option<String>,
 }
 
@@ -99,6 +116,7 @@ pub struct Retry {
     pub attempts: u64,
     #[serde(default, deserialize_with = "duration")]
     pub delay: Option<u64>,
+    #[serde(default, deserialize_with = "deserialize::some_non_null")]
     pub until: Option<Condition>,
 }
 
@@ -118,9 +136,9 @@ impl Retry {
 
 /// Reads an optional command while rejecting YAML scalars that serde would coerce to strings.
 fn command<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<Vec<String>>, D::Error> {
-    Option::<Vec<Value>>::deserialize(deserializer)?
-        .map(strings)
-        .transpose()
+    Vec::<Value>::deserialize(deserializer)
+        .and_then(strings)
+        .map(Some)
 }
 
 /// Reads pipe stages while rejecting YAML scalars that serde would coerce to strings.
@@ -478,6 +496,26 @@ mod tests {
                 "{yaml}: {err}"
             );
         }
+    }
+
+    #[test]
+    fn rejects_null_for_optional_configuration_but_keeps_null_stdin() {
+        for yaml in [
+            "a: {cmd: null}\n",
+            "a: {cmd: [echo], cwd: null}\n",
+            "a: {cmd: [echo], capture_stdout: null}\n",
+            "a: {cmd: [echo], stdout_file: null}\n",
+            "a: {cmd: [echo], retry: null}\n",
+            "a: {cmd: [echo], when: null}\n",
+            "a: {cmd: [echo], for_each: null}\n",
+            "a: {cmd: [echo], trigger: null}\n",
+        ] {
+            assert!(parse_named(yaml).is_err(), "{yaml}");
+        }
+        assert!(parse_named("a: {cmd: [echo], retry: {attempts: 2, attempts: 3}}\n").is_err());
+
+        let tasks = resolve_here("a: {cmd: [cat], stdin: null}\n").unwrap();
+        assert_eq!(tasks[0].stdin, Some(Value::Null));
     }
 
     #[test]

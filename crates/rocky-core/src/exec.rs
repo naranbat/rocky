@@ -1147,6 +1147,11 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(stdout(&outcome), &json!({"n": 5, "s": "x=5"}));
+
+        let outcome = exec(project("tasks:\n  cat: {cmd: [cat], stdin: null}\n"))
+            .await
+            .unwrap();
+        assert_eq!(stdout(&outcome), &Value::Null);
     }
 
     #[tokio::test]

@@ -171,11 +171,19 @@ pub fn project(level: Level, dir: &Path, env_file: bool) -> Result<String, Error
         return Err(Error::Exists(path.clone()));
     }
     write_new(&job_path, &job("example", level))?;
-    write_new(&settings_path, &settings)?;
+    if let Err(err) = write_new(&settings_path, &settings) {
+        let _ = std::fs::remove_file(&job_path);
+        return Err(err);
+    }
     if env_file {
         match write_new(&dir.join(".env"), "") {
             Err(Error::Exists(_)) => {}
-            other => other?,
+            Err(err) => {
+                let _ = std::fs::remove_file(&settings_path);
+                let _ = std::fs::remove_file(&job_path);
+                return Err(err);
+            }
+            Ok(()) => {}
         }
     }
     let created = paths
@@ -319,5 +327,20 @@ mod tests {
         let err = create(Kind::Project, Level::Full, dir.path()).unwrap_err();
         assert!(matches!(err, Error::Exists(_)), "{err}");
         assert!(!dir.path().join("jobs/example.yaml").exists());
+    }
+
+    #[test]
+    fn project_removes_the_job_if_settings_cannot_be_created() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let settings = dir.path().join(SETTINGS_FILE);
+        symlink("missing", &settings).unwrap();
+
+        let err = project(Level::Basic, dir.path(), false).unwrap_err();
+
+        assert!(matches!(err, Error::Exists(path) if path == settings));
+        assert!(!dir.path().join(JOBS_DIR).join("example.yaml").exists());
+        assert!(settings.symlink_metadata().is_ok());
     }
 }

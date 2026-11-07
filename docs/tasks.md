@@ -51,7 +51,7 @@ Each cmd task's result is saved as `tasks.<key>`, and later tasks read it with a
 - **Where it works:** anywhere `${...}` works (see [where `${...}` is expanded](variables.md#where--is-expanded)). In a condition's `this` or `for_each`, the `${}` is optional: `this: tasks.login.exit_code` and `this: ${tasks.login.exit_code}` are the same.
 - **Typed values:** a `stdin` field that is exactly `${tasks...}` keeps its JSON type, so `stdin: ${tasks.fetch.stdout}` writes the whole object as compact JSON, ready for `jq`. See [typed values](variables.md#typed-values).
 - **Every task:** each cmd task is saved under its key. Keys only need to be unique within one map, so a task nested in a loop can share a name with another; the later result replaces the earlier one.
-- **`tasks` is reserved:** a variable named `tasks` fails when the project loads (see [names](variables.md#names)).
+- **`tasks` is reserved as a task key:** no task can be named `tasks`, because Rocky uses that name for task results (see [names](variables.md#names)). YAML `values` and loop `as` names follow the separate uppercase-name rule.
 
 ## Failures and `allow_failure`
 

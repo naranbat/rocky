@@ -122,14 +122,15 @@ For HTTP use `curl -sS --fail-with-body` so 4xx/5xx exit non-zero; `--json '@-'`
 - Expanded in `cmd`/`pipe` arguments, `cwd`, strings in `stdin` and `env` values, and condition operator values (except `matches`). Each `${...}` stays one argument. Project and job `values` are not expanded.
 - Lookup order: loop variables and `tasks.*` → job `values` → project `values` → `env_file` → process environment. Undefined fails the task.
 - `env_file` lines are `KEY=value` strings, for secrets. They only fill `${...}`; a command sees one in its environment only if listed under `env`: `env: {TOKEN: '${API_TOKEN}'}`.
-- A `stdin` field or condition operand that is exactly `${NAME}` keeps its JSON type (number, list, object); anywhere else values render as text.
+- A `stdin` field or condition operand that is exactly `${NAME}` keeps its JSON type (`null`, boolean, number, list or object); anywhere else values render as text.
 - `$${` is a literal `${`. In `sh -c` scripts reading a variable from `env`, write `$NAME`.
-- `values` names and `as` names must be uppercase (`A-Z`, `0-9`, `_`).
+- `values` names and `as` names must start with an uppercase letter or `_`, then contain only uppercase letters, digits and `_` (`[A-Z_][A-Z0-9_]*`).
 
 ## Writing YAML
 
 - Quote `${...}` inside flow collections (`{...}` or `[...]`), quote numeric command arguments (`[sleep, "5"]`), and quote times, dates and strings containing YAML punctuation.
 - Durations are a whole number and one unit, `s`, `m` or `h`: `90m`, not `1h30m`, `1.5m` or `30`.
+- `null` is data in `values`, `stdin`, `env` values and `eq`/`ne`/`contains` operands. Omit optional configuration such as `schedule`, `when`, `cwd` or `retry` instead of writing `null`; explicit `null` there is rejected. `stdin: null` writes the JSON text `null`.
 - Removed forms fail to load: integer-second durations, `weekly` and `time` as siblings (use `weekly: {days, time}`), task files (`name: path.yaml`, `file`, `with`; write the task inline), `if`/`switch` (use `when`), `when` on a job (put it on each task), `max` on `while` (use `attempts`).
 
 ## Conditions
@@ -145,7 +146,7 @@ small:                               # no else: write the opposite condition
   cmd: [echo, small]
 ```
 
-`{this: PATH, OP: value}` with one or more of `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `contains`, `matches` (regex), `exists` (`true`/`false`, can't be combined). Combine with `all: [...]`, `any: [...]`, `not: cond`, or a bare list (= `all`). Numeric strings compare as numbers (`"200"` eq `200`).
+`{this: PATH, OP: value}` with one or more of `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `contains`, `matches` (regex), `exists` (`true`/`false`, can't be combined). Combine with `all: [...]`, `any: [...]`, `not: cond`, or a bare list (= `all`). A numeric string equals the same number (`"200"` eq `200`), but two strings compare as text (`"1.1"` does not eq `"1.10"`).
 
 `this` and `for_each` name one variable: `tasks.x.stdout` and `${tasks.x.stdout}` are the same (inside `{...}`, quote the `${}` form).
 
@@ -206,7 +207,7 @@ rocky trigger /tmp/rocky.sock report              # queue a run of `report`
 - A task exits non-zero without `allow_failure`: its result on stdout, ``Error: task `name` exited with code N`` on stderr, exit `1`.
 - Undefined variable, missing program, missing `cwd`: ``Error: task `name` failed`` with `Caused by:` lines, exit `1`, even with `allow_failure`.
 - Invalid file: load error on stderr, nothing runs, exit `1`. Read the `Caused by:` lines; they name the job and task.
-- Stopped by a signal: `128 + signal` (Ctrl-C is `130`); running commands are killed.
+- Stopped by Ctrl-C (SIGINT), SIGTERM, SIGHUP or SIGQUIT: `128 + signal` (Ctrl-C is `130`); running commands are killed. SIGKILL can't be caught, so it can't trigger cleanup.
 
 stdout only ever holds results, so `rocky exec job | jq .stdout` is safe.
 

@@ -4,6 +4,7 @@ use jiff::civil::{DateTime, Time, Weekday};
 use jiff::{ToSpan, Zoned};
 use serde::Deserialize;
 
+use crate::deserialize;
 use crate::error::Error;
 
 /// When `run` runs a job.
@@ -95,11 +96,17 @@ impl Clock {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawSchedule {
+    #[serde(default, deserialize_with = "deserialize::some_non_null")]
     every: Option<String>,
+    #[serde(default, deserialize_with = "deserialize::some_non_null")]
     delay: Option<String>,
+    #[serde(default, deserialize_with = "deserialize::some_non_null")]
     hourly: Option<i8>,
+    #[serde(default, deserialize_with = "deserialize::some_non_null")]
     daily: Option<String>,
+    #[serde(default, deserialize_with = "deserialize::some_non_null")]
     weekly: Option<RawWeekly>,
+    #[serde(default, deserialize_with = "deserialize::some_non_null")]
     at: Option<String>,
     #[serde(default)]
     run_on_start: bool,
@@ -307,6 +314,7 @@ mod tests {
         }
         assert!(parse("monthly: 1\n").is_err());
         assert!(parse("weekly: [mon]\ntime: \"09:30\"\n").is_err());
+        assert!(parse("daily: null\nrun_on_start: true\n").is_err());
     }
 
     #[test]

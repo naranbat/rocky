@@ -70,6 +70,8 @@ values:
 
 A field that is exactly `${NAME}` keeps the looked-up JSON type where typed substitution is supported; surrounding text makes it a string. See [Typed values](variables.md#typed-values).
 
+`null` is data in `values`, `stdin`, `env` values and `eq`/`ne`/`contains` condition operands. For optional configuration such as `schedule`, `when`, `cwd` or `retry`, omit the field instead of writing `null`; explicit `null` is rejected. A top-level `stdin: null` writes the JSON text `null`.
+
 ## Durations and times
 
 Durations (`timeout`, `retry.delay`, a schedule's `every` and `delay`) are strings made from a whole number and one unit: `s`, `m` or `h`. Write `30s`, `5m`, `2h` or `90m`. Integer seconds (`30`), fractions (`1.5m`), combined units (`1h30m`), milliseconds and other units (`1d`) are not accepted; write `90m` or `24h` instead.

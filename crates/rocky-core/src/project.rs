@@ -8,6 +8,7 @@ use serde::{Deserialize, Deserializer};
 use serde_json::Value;
 
 use crate::defaults::Defaults;
+use crate::deserialize;
 use crate::error::Error;
 use crate::schedule::Schedule;
 use crate::task::{self, Task};
@@ -32,6 +33,7 @@ pub const JOBS_DIR: &str = "jobs";
 struct Settings {
     #[serde(default, deserialize_with = "unique")]
     values: BTreeMap<String, Value>,
+    #[serde(default, deserialize_with = "deserialize::some_non_null")]
     env_file: Option<PathBuf>,
     #[serde(default)]
     defaults: Defaults,
@@ -76,7 +78,7 @@ where
 #[serde(deny_unknown_fields)]
 pub struct Job {
     /// When `rocky run` runs this job.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize::some_non_null")]
     pub schedule: Option<Schedule>,
     /// Static values for `${NAME}` in this job's tasks. Once loaded, the project's `values`
     /// are merged in, with the job's own winning.
@@ -163,26 +165,30 @@ pub fn job_files(root: &Path) -> Result<Vec<(String, PathBuf)>, Error> {
 }
 
 /// Loads a project in `root` from text: the settings of `rocky.yaml` (`None` if there are
-/// none) and each job (job name, text) as if read from `jobs/<name>.yaml`. Used by the builder.
+/// none) and each job (job name, text). A job uses its path from the settings when listed,
+/// or `jobs/<name>.yaml` otherwise. Used by the builder.
 pub fn load_parts(
     root: &Path,
     settings: Option<&str>,
     jobs: &[(String, String)],
 ) -> Result<Project, Error> {
+    let settings: Settings = match settings {
+        Some(text) => parse_yaml(&root.join(SETTINGS_FILE), text)?,
+        None => Settings::default(),
+    };
     if jobs.is_empty() {
         return Err(Error::InvalidProject(format!(
             "no jobs: add {JOBS_DIR}/<name>.yaml"
         )));
     }
-    let settings: Settings = match settings {
-        Some(text) => parse_yaml(&root.join(SETTINGS_FILE), text)?,
-        None => Settings::default(),
-    };
     let jobs_dir = root.join(JOBS_DIR);
     let jobs = jobs
         .iter()
         .map(|(name, text)| {
-            let path = jobs_dir.join(format!("{name}.yaml"));
+            let path = settings.jobs.get(name).map_or_else(
+                || jobs_dir.join(format!("{name}.yaml")),
+                |path| root.join(path),
+            );
             (name.clone(), path, text.clone())
         })
         .collect();
@@ -345,6 +351,23 @@ mod tests {
             matches!(&err, Error::Job { source, .. } if matches!(&**source, Error::Yaml { path, .. } if path.ends_with("jobs/a.yaml"))),
             "{err}"
         );
+    }
+
+    #[test]
+    fn load_parts_uses_the_configured_job_path() {
+        let root = Path::new("project");
+        let settings = "jobs: {a: workflows/nested/a.yaml}\n";
+        let mut project = load_parts(root, Some(settings), &[("a".into(), ECHO.into())]).unwrap();
+        assert_eq!(
+            project.take("a").unwrap().tasks[0].dir,
+            root.join("workflows/nested")
+        );
+    }
+
+    #[test]
+    fn load_parts_reports_invalid_settings_before_no_jobs() {
+        let err = load_parts(Path::new("project"), Some("jobs: [unclosed"), &[]).unwrap_err();
+        assert!(matches!(err, Error::Yaml { .. }), "{err}");
     }
 
     #[test]
@@ -529,6 +552,28 @@ mod tests {
         let err = load_in(dir.path(), None, &[("w", "tasks: {}\n")]).unwrap_err();
         assert!(
             matches!(&err, Error::Job { name, .. } if name == "w"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn null_does_not_stand_in_for_missing_optional_configuration() {
+        let err = load_parts(
+            Path::new("project"),
+            Some("env_file: null\n"),
+            &[("w".into(), ECHO.into())],
+        )
+        .unwrap_err();
+        assert!(matches!(err, Error::Yaml { .. }), "{err}");
+
+        let err = load_parts(
+            Path::new("project"),
+            None,
+            &[("w".into(), format!("schedule: null\n{ECHO}"))],
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, Error::Job { source, .. } if matches!(**source, Error::Yaml { .. })),
             "{err}"
         );
     }
