@@ -6,7 +6,6 @@ use std::ops::Range;
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Borders, Paragraph};
 use serde_yaml::Value;
@@ -205,52 +204,39 @@ impl JobYaml {
             }
         };
         let row = |selected: bool, number: String, name: &str, lines: &Range<usize>| {
-            let bar = if selected {
-                Span::styled("▌", fg(theme::ACCENT))
-            } else {
-                Span::raw(" ")
-            };
             let line = chrome::spread(
                 vec![
-                    bar,
-                    Span::styled(format!(" {number:<3}"), fg(theme::MUTED)),
+                    Span::styled(format!("{number:<3}"), fg(theme::MUTED)),
                     Span::styled(
-                        // Leaves room for the bar, the number and the range.
+                        // Leaves room for the number and the range.
                         theme::fit(name, (width as usize).saturating_sub(16)),
                         theme::bold(theme::TEXT),
                     ),
                 ],
                 vec![Span::styled(format!("{} ", range(lines)), fg(theme::MUTED))],
-                width,
+                width.saturating_sub(2),
             );
-            if selected {
-                line.style(Style::new().bg(theme::SELECTED))
-            } else {
-                line
-            }
+            chrome::row(vec![line], selected, list.width)
         };
         let mut lines = vec![
             Line::default(),
             Line::from(vec![Span::raw("  "), chrome::heading("job settings")]),
-            Line::default(),
-            row(
-                self.part.is_none(),
-                "≡".to_string(),
-                "schedule · values · defaults",
-                &outline.settings,
-            ),
-            Line::default(),
-            Line::from(vec![Span::raw("  "), chrome::heading("tasks")]),
-            Line::default(),
         ];
+        lines.extend(row(
+            self.part.is_none(),
+            "≡".to_string(),
+            "schedule · values · defaults",
+            &outline.settings,
+        ));
+        lines.push(Line::default());
+        lines.push(Line::from(vec![Span::raw("  "), chrome::heading("tasks")]));
         for (n, task) in outline.tasks.iter().enumerate() {
-            lines.push(row(
+            lines.extend(row(
                 self.part == Some(n),
                 (n + 1).to_string(),
                 &task.name,
                 &task.lines,
             ));
-            lines.push(Line::default());
         }
         frame.render_widget(Paragraph::new(lines), list);
         frame.render_widget(

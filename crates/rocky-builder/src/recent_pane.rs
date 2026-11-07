@@ -40,7 +40,7 @@ pub fn draw(frame: &mut Frame, area: Rect, entry: &Entry) {
         Constraint::Length(4),
         Constraint::Length(1),
         Constraint::Min(0),
-        Constraint::Length(3),
+        Constraint::Length(1),
     ])
     .areas(area);
     frame.render_widget(
@@ -90,7 +90,7 @@ pub fn draw(frame: &mut Frame, area: Rect, entry: &Entry) {
     });
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), body);
 
-    let open = chrome::button(frame, button, "⏎ Open", true);
+    let open = chrome::button(frame, button, "↵ Open", true);
     let rest = Rect {
         x: button.x + open + 1,
         width: button.width.saturating_sub(open + 1),
@@ -99,7 +99,7 @@ pub fn draw(frame: &mut Frame, area: Rect, entry: &Entry) {
     let validate = chrome::button(frame, rest, "v Validate", false);
     let hint = Rect {
         x: rest.x + validate,
-        y: rest.y + 1,
+        y: rest.y,
         width: rest.width.saturating_sub(validate),
         height: 1,
     };

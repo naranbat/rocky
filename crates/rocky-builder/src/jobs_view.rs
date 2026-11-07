@@ -164,16 +164,16 @@ fn move_task(editor: &mut Editor, task: usize, up: bool) {
 
 pub fn keys(editor: &Editor) -> Vec<Span<'static>> {
     if editor.new_job.is_some() {
-        return theme::keys(&[("⏎", "add job"), ("esc", "cancel")], &["⏎"]);
+        return theme::keys(&[("↵", "add job"), ("esc", "cancel")], &["↵"]);
     }
     if editor.filtering {
-        return theme::keys(&[("⏎", "keep filter"), ("esc", "clear")], &[]);
+        return theme::keys(&[("↵", "keep filter"), ("esc", "clear")], &[]);
     }
     theme::keys(
         &[
             ("↑↓", "select"),
             ("→", "tasks"),
-            ("⏎", "edit"),
+            ("↵", "edit"),
             ("^S", "save"),
             ("u", "undo"),
             ("/", "filter"),
@@ -207,16 +207,13 @@ fn draw_jobs(editor: &Editor, frame: &mut Frame, area: Rect) {
     let tasks_width = 6;
     let schedule_width = width.saturating_sub(5 + name_width + tasks_width + 1);
     let header = format!(
-        "    {:<name_width$}{:<schedule_width$}{:>tasks_width$}",
+        "     {:<name_width$}{:<schedule_width$}{:>tasks_width$}",
         "JOB", "SCHEDULE", "TASKS"
     );
-    let mut lines = vec![
-        Line::default(),
-        Line::styled(header, fg(theme::MUTED)),
-        Line::default(),
-    ];
+    let mut lines = vec![Line::default(), Line::styled(header, fg(theme::MUTED))];
     let order = order(editor);
-    let rows = (list.height as usize).saturating_sub(3) / 2;
+    // Each row has a blank line above and below it.
+    let rows = (list.height as usize).saturating_sub(2) / 3;
     let at = order.iter().position(|&n| n == editor.job).unwrap_or(0);
     let top = (at + 1).saturating_sub(rows);
     for &n in order.iter().skip(top).take(rows) {
@@ -235,14 +232,8 @@ fn draw_jobs(editor: &Editor, frame: &mut Frame, area: Rect) {
         };
         let schedule = summary.unwrap_or_else(|| "— not scheduled".to_string());
         let selected = n == editor.job;
-        let bar = if selected && editor.task.is_none() {
-            Span::styled("▌", fg(theme::ACCENT))
-        } else {
-            Span::raw(" ")
-        };
         let line = Line::from(vec![
-            bar,
-            Span::styled(format!(" {glyph}  "), fg(color)),
+            Span::styled(format!("{glyph}  "), fg(color)),
             Span::styled(
                 format!("{:<name_width$}", theme::fit(&job.name, name_width - 1)),
                 theme::bold(theme::TEXT),
@@ -259,12 +250,7 @@ fn draw_jobs(editor: &Editor, frame: &mut Frame, area: Rect) {
                 fg(theme::MUTED),
             ),
         ]);
-        lines.push(if selected {
-            line.style(Style::new().bg(theme::SELECTED))
-        } else {
-            line
-        });
-        lines.push(Line::default());
+        lines.extend(chrome::row(vec![line], selected, list.width));
     }
     frame.render_widget(Paragraph::new(lines), list);
 
@@ -393,7 +379,7 @@ fn draw_job(editor: &Editor, frame: &mut Frame, area: Rect) {
             &[
                 ("a", "add task"),
                 ("J K", "move"),
-                ("⏎", "edit task YAML"),
+                ("↵", "edit task YAML"),
                 ("Y", "whole job YAML"),
                 ("d", "debug this job"),
             ],

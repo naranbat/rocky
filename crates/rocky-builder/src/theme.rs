@@ -31,7 +31,7 @@ pub fn bold(color: Color) -> Style {
     fg(color).add_modifier(Modifier::BOLD)
 }
 
-/// A footer key and its label: `[⏎] open`. A `main` key is drawn in the accent color.
+/// A footer key and its label: `[↵] open`. A `main` key is drawn in the accent color.
 pub fn key(key: &str, label: &str, main: bool) -> Vec<Span<'static>> {
     let chip = if main { ACCENT } else { CHIP };
     vec![

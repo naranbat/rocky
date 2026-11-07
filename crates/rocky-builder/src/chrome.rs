@@ -83,32 +83,23 @@ pub fn validity(valid: bool) -> Span<'static> {
     }
 }
 
-/// A button three rows high at the left of `area`: filled with the accent when `main`,
-/// framed otherwise. Returns its width.
+/// A one-row button at the left of `area`: filled with the accent when `main`, with the
+/// panel color otherwise. Returns its width.
 pub fn button(frame: &mut Frame, area: Rect, text: &str, main: bool) -> u16 {
-    let width = (Line::from(text).width() as u16 + 6).min(area.width);
-    let area = Rect {
-        width,
-        height: area.height.min(3),
-        ..area
-    };
-    let (block, style) = if main {
-        (
-            Block::new().style(Style::new().bg(theme::ACCENT)),
-            theme::bold(theme::BG),
-        )
+    let label = format!(" {text} ");
+    let width = (Line::from(label.as_str()).width() as u16).min(area.width);
+    let style = if main {
+        theme::bold(theme::BG).bg(theme::ACCENT)
     } else {
-        (lines(Borders::ALL), fg(theme::TEXT))
+        fg(theme::TEXT).bg(theme::SELECTED)
     };
-    let inner = Rect {
-        y: area.y + 1,
-        height: 1,
-        ..area
-    };
-    frame.render_widget(block, area);
     frame.render_widget(
-        Paragraph::new(Line::styled(text.to_string(), style)).centered(),
-        inner,
+        Paragraph::new(Line::styled(label, style)),
+        Rect {
+            width,
+            height: area.height.min(1),
+            ..area
+        },
     );
     width
 }
@@ -162,4 +153,32 @@ pub fn tabs(
 
 fn chrome_line(width: u16) -> Paragraph<'static> {
     Paragraph::new(Line::styled("─".repeat(width as usize), fg(theme::LINE)))
+}
+
+/// A sidebar row `width` wide: `content` with a blank line above and below. When
+/// `selected`, all of it is highlighted, with the accent bar on the left.
+pub fn row(content: Vec<Line<'static>>, selected: bool, width: u16) -> Vec<Line<'static>> {
+    let pad = || Line::default();
+    std::iter::once(pad())
+        .chain(content)
+        .chain(std::iter::once(pad()))
+        .map(|line| {
+            let bar = if selected {
+                Span::styled("▌ ", fg(theme::ACCENT))
+            } else {
+                Span::raw("  ")
+            };
+            let mut spans = vec![bar];
+            spans.extend(line.spans);
+            // Spaces to the edge, so the highlight covers the whole row.
+            let used = Line::from(spans.clone()).width();
+            spans.push(Span::raw(" ".repeat((width as usize).saturating_sub(used))));
+            let line = Line::from(spans).style(line.style);
+            if selected {
+                line.style(Style::new().bg(theme::SELECTED))
+            } else {
+                line
+            }
+        })
+        .collect()
 }

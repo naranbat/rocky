@@ -150,7 +150,7 @@ impl OpenPane {
             Constraint::Length(1),
             Constraint::Min(0),
             Constraint::Length(1),
-            Constraint::Length(3),
+            Constraint::Length(1),
         ])
         .areas(area);
         frame.render_widget(
@@ -190,10 +190,10 @@ impl OpenPane {
             );
         }
 
-        let width = chrome::button(frame, button, "⏎ Open", true);
+        let width = chrome::button(frame, button, "↵ Open", true);
         let hint_area = Rect {
             x: button.x + width,
-            y: button.y + 1,
+            y: button.y,
             width: button.width.saturating_sub(width),
             height: 1,
         };

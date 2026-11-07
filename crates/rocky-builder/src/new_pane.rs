@@ -72,7 +72,7 @@ impl NewPane {
             Constraint::Length(1),
             Constraint::Length(6),
             Constraint::Min(0),
-            Constraint::Length(3),
+            Constraint::Length(1),
         ])
         .areas(area);
         let text = |area, line: Line<'static>, frame: &mut Frame| {
@@ -161,7 +161,7 @@ impl NewPane {
             tree,
         );
 
-        let width = chrome::button(frame, button, "⏎ Create & open", true);
+        let width = chrome::button(frame, button, "↵ Create & open", true);
         let level = if self.full { " --level full" } else { "" };
         let hint = format!(
             "  $ rocky new project {}{level}",
@@ -169,7 +169,7 @@ impl NewPane {
         );
         let hint_area = Rect {
             x: button.x + width,
-            y: button.y + 1,
+            y: button.y,
             width: button.width.saturating_sub(width),
             height: 1,
         };

@@ -143,12 +143,12 @@ impl Home {
         }
 
         let keys: &[(&str, &str)] = if self.in_pane {
-            &[("⏎", "open"), ("⇥", "complete"), ("esc", "back")]
+            &[("↵", "open"), ("⇥", "complete"), ("esc", "back")]
         } else {
             &[
                 ("↑↓", "select"),
                 ("1-5", "recent"),
-                ("⏎", "open"),
+                ("↵", "open"),
                 ("n", "new"),
                 ("o", "open path"),
                 ("q", "quit"),
@@ -159,26 +159,11 @@ impl Home {
             .iter()
             .map(|message| Span::styled(message.clone(), fg(theme::ERROR)))
             .collect();
-        chrome::bar(frame, footer, theme::keys(keys, &["⏎"]), message);
+        chrome::bar(frame, footer, theme::keys(keys, &["↵"]), message);
     }
 
     fn draw_list(&self, frame: &mut Frame, area: Rect, recent: &Recent) {
         let width = area.width.saturating_sub(4);
-        let row = |selected: bool, line: Line<'static>| {
-            let bar = if selected {
-                Span::styled("▌ ", fg(theme::ACCENT))
-            } else {
-                Span::raw("  ")
-            };
-            let mut spans = vec![bar];
-            spans.extend(line.spans);
-            let line = Line::from(spans);
-            if selected {
-                line.style(Style::new().bg(theme::SELECTED))
-            } else {
-                line
-            }
-        };
         let start = |key: &str, label: &str, command: &str, n: usize| {
             let selected = self.selected == n;
             let chip = if selected {
@@ -186,16 +171,17 @@ impl Home {
             } else {
                 theme::MUTED
             };
-            row(
-                selected,
-                chrome::spread(
+            chrome::row(
+                vec![chrome::spread(
                     vec![
                         Span::styled(format!(" {key} "), Style::new().fg(theme::BG).bg(chip)),
                         Span::styled(format!("  {label}"), theme::bold(theme::TEXT)),
                     ],
                     vec![Span::styled(command.to_string(), fg(theme::MUTED))],
                     width,
-                ),
+                )],
+                selected,
+                area.width,
             )
         };
         let mut lines = vec![
@@ -204,46 +190,41 @@ impl Home {
             Line::styled("  Run jobs on a schedule, from YAML.", fg(theme::MUTED)),
             Line::default(),
             Line::from(vec![Span::raw("  "), chrome::heading("start")]),
-            Line::default(),
-            start("n", "New project", "rocky new project", 0),
-            Line::default(),
-            start("o", "Open project…", "rocky.yaml or -f FILE", 1),
-            Line::default(),
-            Line::default(),
-            row(
-                false,
-                chrome::spread(
-                    vec![chrome::heading("recent")],
-                    vec![chrome::heading("last opened")],
-                    width,
-                ),
-            ),
-            Line::default(),
         ];
+        lines.extend(start("n", "New project", "rocky new project", 0));
+        lines.extend(start("o", "Open project…", "rocky.yaml or -f FILE", 1));
+        lines.push(Line::default());
+        lines.push(chrome::spread(
+            vec![Span::raw("  "), chrome::heading("recent")],
+            vec![chrome::heading("last opened")],
+            width + 2,
+        ));
         let now = Timestamp::now();
         for (n, entry) in recent.entries.iter().take(SHOWN).enumerate() {
             let selected = self.selected == n + 2;
             let (status, color) = recent_pane::status(&entry.summary.status);
-            lines.push(row(
-                selected,
-                chrome::spread(
-                    vec![
-                        Span::styled(format!("{}  ", n + 1), fg(theme::MUTED)),
-                        Span::styled(recent_pane::name(entry), theme::bold(theme::TEXT)),
-                    ],
-                    vec![
-                        Span::styled(status, fg(color)),
-                        Span::styled(format!("{:>12}", ago(entry.opened, now)), fg(theme::MUTED)),
-                    ],
-                    width,
-                ),
-            ));
             let path = theme::fit(&tilde(&entry.path), width.saturating_sub(3) as usize);
-            lines.push(row(
+            lines.extend(chrome::row(
+                vec![
+                    chrome::spread(
+                        vec![
+                            Span::styled(format!("{}  ", n + 1), fg(theme::MUTED)),
+                            Span::styled(recent_pane::name(entry), theme::bold(theme::TEXT)),
+                        ],
+                        vec![
+                            Span::styled(status, fg(color)),
+                            Span::styled(
+                                format!("{:>12}", ago(entry.opened, now)),
+                                fg(theme::MUTED),
+                            ),
+                        ],
+                        width,
+                    ),
+                    Line::styled(format!("   {path}"), fg(theme::MUTED)),
+                ],
                 selected,
-                Line::styled(format!("   {path}"), fg(theme::MUTED)),
+                area.width,
             ));
-            lines.push(Line::default());
         }
         frame.render_widget(Paragraph::new(lines), area);
     }
