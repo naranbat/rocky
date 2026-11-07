@@ -1,37 +1,31 @@
 #![forbid(unsafe_code)]
 
 mod app;
-mod autocomplete;
-mod complete;
-mod condition;
-mod doc;
-mod edit;
-mod form;
+mod chrome;
+mod code;
+mod debug_view;
+mod editor;
+mod external;
+mod file_view;
+mod files;
+mod highlight;
 mod home;
-mod input;
-mod job;
-mod legacy;
-mod new_project;
-mod node;
-mod parts;
-mod project;
+mod home_view;
+mod job_yaml;
+mod jobs_view;
+mod line_input;
+mod new_pane;
+mod open_pane;
+mod outline;
+mod problem;
 mod recent;
+mod recent_pane;
 mod results;
 mod run;
-mod run_view;
 mod schedule;
-mod scheduler;
-mod scope;
-mod sidebar;
-mod start;
-mod task;
-mod task_cmd;
-mod task_loop;
-mod task_trigger;
+mod summary;
+mod textedit;
 mod theme;
-mod validate;
-mod vars;
-mod yaml_view;
 
 use std::path::PathBuf;
 
@@ -41,7 +35,8 @@ use ratatui::crossterm::event::{self, Event, KeyEventKind};
 use crate::app::App;
 use crate::recent::Recent;
 
-/// Opens the builder in the terminal, on the project directory given as the first argument if any.
+/// Opens the builder in the terminal, on the project given as the first argument if any: a
+/// directory with a `rocky.yaml`, or a project file.
 fn main() -> anyhow::Result<()> {
     let path = std::env::args_os().nth(1).map(PathBuf::from);
     let mut app = App::new(path, Recent::load());
@@ -54,6 +49,13 @@ fn main() -> anyhow::Result<()> {
 
 fn run(terminal: &mut DefaultTerminal, app: &mut App) -> anyhow::Result<()> {
     while !app.quit {
+        if let Some((name, text)) = app.take_external() {
+            // The editor gets the terminal until it exits.
+            ratatui::restore();
+            let edited = external::edit(&external::editor(), &name, &text);
+            *terminal = ratatui::init();
+            app.finish_external(edited);
+        }
         let wait = app.tick();
         terminal.draw(|frame| app.draw(frame))?;
         if event::poll(wait)?

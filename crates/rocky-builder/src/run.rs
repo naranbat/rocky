@@ -1,21 +1,26 @@
-//! Runs a job of the unsaved document on a background thread, as `rocky exec` would: the
+//! Runs a job of the unsaved project on a background thread, as `rocky exec` would: the
 //! job, then any jobs its triggers queued. Progress comes back as core's JSON events.
 
-use std::path::Path;
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use rocky_core::exec::{self, Log};
+use rocky_core::project;
 use rocky_core::trigger::Trigger;
 use serde_json::{Value, json};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tokio::sync::oneshot;
 
-use crate::results::{Results, Shown};
+use crate::results::Results;
+
+/// A project's text: its directory, its settings, and each job's (name, text).
+pub struct Texts {
+    pub root: PathBuf,
+    pub settings: Option<String>,
+    pub jobs: Vec<(String, String)>,
+}
 
 pub struct Run {
-    /// The job started, and the task it stops after, if any.
-    pub job: String,
-    pub until: Option<String>,
     pub results: Results,
     started: Instant,
     finished: Option<Duration>,
@@ -25,13 +30,11 @@ pub struct Run {
 }
 
 impl Run {
-    /// Starts running `job` of the project in directory `path`, with `text` as its
-    /// contents. With `until`, the job's tasks after that one don't run.
-    pub fn start(path: &Path, text: &str, job: &str, until: Option<&str>) -> Run {
+    /// Starts running `job` of the project `texts`.
+    pub fn start(texts: Texts, job: &str) -> Run {
         let (sender, events) = unbounded_channel();
         let (stop, stopped) = oneshot::channel();
-        let (path, text) = (path.to_path_buf(), text.to_string());
-        let (name, last) = (job.to_string(), until.map(str::to_string));
+        let job = job.to_string();
         std::thread::spawn(move || {
             let end = match tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -39,7 +42,7 @@ impl Run {
             {
                 Ok(runtime) => runtime.block_on(async {
                     tokio::select! {
-                        end = run(&path, &text, &name, last.as_deref(), &sender) => end,
+                        end = run(&texts, &job, &sender) => end,
                         _ = stopped => Err("stopped".to_string()),
                     }
                 }),
@@ -52,8 +55,6 @@ impl Run {
             let _ = sender.send(event);
         });
         Run {
-            job: job.to_string(),
-            until: until.map(str::to_string),
             results: Results::default(),
             started: Instant::now(),
             finished: None,
@@ -84,50 +85,33 @@ impl Run {
         }
     }
 
-    /// This run, as the editor shows it.
-    pub fn shown(&self) -> Shown<'_> {
-        Shown {
-            results: &self.results,
-            job: &self.job,
-            until: self.until.as_deref(),
-            started: self.started,
-            elapsed: self.elapsed(),
-            by: None,
-        }
-    }
-
     /// How long the run took, or has taken so far.
     pub fn elapsed(&self) -> Duration {
         self.finished.unwrap_or_else(|| self.started.elapsed())
     }
 }
 
-/// Runs `job`, then the jobs its triggers queue (and those they queue), each from `text`.
-/// Returns why the first failing job failed, if one did.
+fn load(texts: &Texts) -> Result<project::Project, String> {
+    project::load_parts(&texts.root, texts.settings.as_deref(), &texts.jobs)
+        .map_err(|error| error.chain())
+}
+
+/// Runs `job`, then the jobs its triggers queue (and those they queue). Returns why the
+/// first failing job failed, if one did.
 async fn run(
-    path: &Path,
-    text: &str,
+    texts: &Texts,
     job: &str,
-    until: Option<&str>,
     sender: &UnboundedSender<Value>,
 ) -> Result<Option<String>, String> {
     let log = Log::Send(sender.clone());
     let (trigger, mut queue) = Trigger::channel();
-    let mut project = crate::parts::load(path, text).map_err(|error| error.chain())?;
-    if let Some(until) = until
-        && let Some(tasks) = project.jobs.get_mut(job).map(|job| &mut job.tasks)
-        && let Some(index) = tasks.iter().position(|task| task.name == until)
-    {
-        tasks.truncate(index + 1);
-    }
-    let outcome = exec::exec(project, job, &log, false, &trigger)
+    let outcome = exec::exec(load(texts)?, job, &log, false, &trigger)
         .await
         .map_err(|error| error.chain())?;
     drop(trigger);
     let mut failed = failure(job, &outcome);
     while let Some(queued) = queue.recv().await {
-        let project = crate::parts::load(path, text).map_err(|error| error.chain())?;
-        let outcome = exec::exec(project, &queued.job, &log, false, &queued.trigger)
+        let outcome = exec::exec(load(texts)?, &queued.job, &log, false, &queued.trigger)
             .await
             .map_err(|error| error.chain())?;
         failed = failed.or_else(|| failure(&queued.job, &outcome));
@@ -153,21 +137,22 @@ mod tests {
         }
     }
 
-    const YAML: &str = "\
-jobs:
-  main:
-    tasks:
-      first: {cmd: [echo, one]}
-      page: {trigger: other}
-      last: {cmd: [echo, two]}
-  other:
-    tasks:
-      only: {cmd: [echo, three]}
-";
+    fn texts(jobs: &[(&str, &str)]) -> Texts {
+        Texts {
+            root: PathBuf::from("."),
+            settings: None,
+            jobs: jobs
+                .iter()
+                .map(|(name, text)| (name.to_string(), text.to_string()))
+                .collect(),
+        }
+    }
 
     #[test]
     fn runs_the_job_then_triggered_jobs() {
-        let mut run = Run::start(Path::new("."), YAML, "main", None);
+        let main = "tasks:\n  first: {cmd: [echo, one]}\n  page: {trigger: other}\n";
+        let other = "tasks:\n  only: {cmd: [echo, three]}\n";
+        let mut run = Run::start(texts(&[("main", main), ("other", other)]), "main");
         wait(&mut run);
         let results = &run.results;
         assert!(matches!(
@@ -176,23 +161,15 @@ jobs:
         ));
         let first = results.task("main", "first").unwrap();
         assert_eq!(first.last.as_ref().unwrap()["result"]["stdout"], "one");
-        assert!(results.task("main", "last").is_some());
         assert!(results.task("other", "only").is_some());
     }
 
     #[test]
-    fn until_stops_after_that_task() {
-        let mut run = Run::start(Path::new("."), YAML, "main", Some("first"));
-        wait(&mut run);
-        assert!(run.results.task("main", "first").is_some());
-        assert!(run.results.task("main", "last").is_none());
-        assert!(run.results.task("other", "only").is_none());
-    }
-
-    #[test]
     fn stop_ends_a_running_job() {
-        let yaml = "jobs:\n  slow:\n    tasks:\n      wait: {cmd: [sleep, '30']}\n";
-        let mut run = Run::start(Path::new("."), yaml, "slow", None);
+        let mut run = Run::start(
+            texts(&[("slow", "tasks:\n  w: {cmd: [sleep, '30']}\n")]),
+            "slow",
+        );
         run.stop();
         wait(&mut run);
         assert!(matches!(&run.results.end, Some(crate::results::End::Error(e)) if e == "stopped"));
