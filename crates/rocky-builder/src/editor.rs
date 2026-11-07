@@ -254,7 +254,11 @@ impl Editor {
             ],
             self.status(),
         );
-        let tabs = Rect { height: 2, ..body };
+        let tabs = Rect {
+            y: body.y + 1,
+            height: 2,
+            ..body
+        };
         let labels = ["1 Jobs", "2 Project", "3 Values", "4 Env file"].map(str::to_string);
         let selected = [Tab::Jobs, Tab::Project, Tab::Values, Tab::Env]
             .iter()
@@ -262,8 +266,8 @@ impl Editor {
             .unwrap_or(0);
         chrome::tabs(frame, tabs, &labels, selected, Vec::new());
         let body = Rect {
-            y: body.y + 2,
-            height: body.height.saturating_sub(2),
+            y: body.y + 3,
+            height: body.height.saturating_sub(3),
             ..body
         };
         let keys = match self.tab {

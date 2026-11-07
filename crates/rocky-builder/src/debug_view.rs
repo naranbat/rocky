@@ -348,7 +348,8 @@ impl Debug {
 
     fn draw_result(&self, frame: &mut Frame, area: Rect) {
         let area = chrome::pad(area, 2, 1);
-        let [head, tabs, _, body, hint] = Layout::vertical([
+        let [head, _, tabs, _, body, hint] = Layout::vertical([
+            Constraint::Length(1),
             Constraint::Length(1),
             Constraint::Length(2),
             Constraint::Length(1),

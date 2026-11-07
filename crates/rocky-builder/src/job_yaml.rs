@@ -260,7 +260,8 @@ impl JobYaml {
         outline: &Outline,
         file: &str,
     ) {
-        let [tabs, _, code_area, status] = Layout::vertical([
+        let [_, tabs, _, code_area, status] = Layout::vertical([
+            Constraint::Length(1),
             Constraint::Length(2),
             Constraint::Length(1),
             Constraint::Min(0),
