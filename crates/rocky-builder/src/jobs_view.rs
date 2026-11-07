@@ -300,7 +300,7 @@ fn draw_job(editor: &Editor, frame: &mut Frame, area: Rect) {
     let [head, body, bottom] = Layout::vertical([
         Constraint::Length(3),
         Constraint::Min(0),
-        Constraint::Length(3),
+        Constraint::Length(2),
     ])
     .areas(area);
     let problem = editor.problem_in(&job.name);
@@ -388,7 +388,7 @@ fn draw_job(editor: &Editor, frame: &mut Frame, area: Rect) {
             ],
             &[],
         )))
-        .block(chrome::lines(Borders::TOP).padding(ratatui::widgets::Padding::new(2, 2, 0, 1))),
+        .block(chrome::lines(Borders::TOP).padding(ratatui::widgets::Padding::horizontal(2))),
         bottom,
     );
 }
