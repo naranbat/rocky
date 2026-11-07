@@ -193,8 +193,11 @@ impl JobYaml {
     }
 
     fn draw_parts(&self, frame: &mut Frame, area: Rect, outline: &Outline) {
-        let [list, bottom] =
-            Layout::vertical([Constraint::Min(0), Constraint::Length(3)]).areas(area);
+        let [list, bottom] = Layout::vertical([
+            Constraint::Min(0),
+            Constraint::Length(chrome::BOTTOM_HEIGHT),
+        ])
+        .areas(area);
         let width = list.width.saturating_sub(2);
         let range = |lines: &Range<usize>| {
             if lines.is_empty() {
@@ -244,7 +247,7 @@ impl JobYaml {
                 Line::from(theme::key("a", "add task below", false)),
                 Line::from(theme::key("J K", "move task", false)),
             ])
-            .block(chrome::lines(Borders::TOP).padding(ratatui::widgets::Padding::horizontal(1))),
+            .block(chrome::bottom()),
             bottom,
         );
     }

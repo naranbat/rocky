@@ -201,7 +201,11 @@ pub fn draw(editor: &Editor, frame: &mut Frame, area: Rect) {
 }
 
 fn draw_jobs(editor: &Editor, frame: &mut Frame, area: Rect) {
-    let [list, bottom] = Layout::vertical([Constraint::Min(0), Constraint::Length(3)]).areas(area);
+    let [list, bottom] = Layout::vertical([
+        Constraint::Min(0),
+        Constraint::Length(chrome::BOTTOM_HEIGHT),
+    ])
+    .areas(area);
     let width = list.width as usize;
     let name_width = 14;
     let tasks_width = 6;
@@ -259,13 +263,13 @@ fn draw_jobs(editor: &Editor, frame: &mut Frame, area: Rect) {
         editor.filtering || !editor.filter.text.is_empty(),
     ) {
         (Some(input), _) => {
-            let mut spans = vec![Span::styled(" + new job → jobs/", fg(theme::MUTED))];
+            let mut spans = vec![Span::styled("+ new job → jobs/", fg(theme::MUTED))];
             spans.extend(input.spans(true, (bottom.width as usize).saturating_sub(24)));
             spans.push(Span::styled(".yaml", fg(theme::MUTED)));
             Line::from(spans)
         }
         (None, true) => {
-            let mut spans = vec![Span::styled(" / ", fg(theme::ACCENT))];
+            let mut spans = vec![Span::styled("/ ", fg(theme::ACCENT))];
             spans.extend(
                 editor
                     .filter
@@ -281,13 +285,12 @@ fn draw_jobs(editor: &Editor, frame: &mut Frame, area: Rect) {
     let scheduled = (0..editor.files.jobs.len())
         .filter(|&n| job_yaml(editor, n).get("schedule").is_some())
         .count();
-    let mut stats = format!(" {} jobs · {scheduled} scheduled", editor.files.jobs.len());
+    let mut stats = format!("{} jobs · {scheduled} scheduled", editor.files.jobs.len());
     if let Some(env) = &editor.files.env {
         stats.push_str(&format!(" · env_file {}", editor.shown_path(&env.path)));
     }
     frame.render_widget(
-        Paragraph::new(vec![first, Line::styled(stats, fg(theme::MUTED))])
-            .block(chrome::lines(Borders::TOP)),
+        Paragraph::new(vec![first, Line::styled(stats, fg(theme::MUTED))]).block(chrome::bottom()),
         bottom,
     );
 }
@@ -297,7 +300,7 @@ fn draw_job(editor: &Editor, frame: &mut Frame, area: Rect) {
     let [head, body, bottom] = Layout::vertical([
         Constraint::Length(3),
         Constraint::Min(0),
-        Constraint::Length(2),
+        Constraint::Length(3),
     ])
     .areas(area);
     let problem = editor.problem_in(&job.name);
@@ -385,7 +388,7 @@ fn draw_job(editor: &Editor, frame: &mut Frame, area: Rect) {
             ],
             &[],
         )))
-        .block(chrome::lines(Borders::TOP).padding(ratatui::widgets::Padding::horizontal(2))),
+        .block(chrome::lines(Borders::TOP).padding(ratatui::widgets::Padding::new(2, 2, 0, 1))),
         bottom,
     );
 }

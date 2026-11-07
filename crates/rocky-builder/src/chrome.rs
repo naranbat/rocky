@@ -182,3 +182,11 @@ pub fn row(content: Vec<Line<'static>>, selected: bool, width: u16) -> Vec<Line<
         })
         .collect()
 }
+
+/// How high a sidebar's bottom section is, for two lines of text.
+pub const BOTTOM_HEIGHT: u16 = 5;
+
+/// A sidebar's bottom section: a line above it, and padding around its text.
+pub fn bottom() -> Block<'static> {
+    lines(Borders::TOP).padding(ratatui::widgets::Padding::new(2, 2, 1, 1))
+}
