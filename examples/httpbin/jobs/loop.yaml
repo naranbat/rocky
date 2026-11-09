@@ -1,18 +1,21 @@
-# Looping: fetch a list, then POST once per element.
+# Looping: fetch a list, then POST once per active element.
+# `when` on the loop is checked once, before it starts; `when` inside `do` is checked per element.
 #   rocky exec loop
 tasks:
   users:
     cmd: [curl, -sS, --fail-with-body, --json, '@-', '${BASE}/anything/users']
     stdin:
       users:
-        - { id: 1, name: alice }
-        - { id: 2, name: bob }
+        - { id: 1, name: alice, active: true }
+        - { id: 2, name: bob, active: false }
 
   notify_all:
+    when: { this: tasks.users.stdout.json.users, exists: true }  # skip the loop if there's no list
     for_each: tasks.users.stdout.json.users   # must be a list
     as: USER                      # optional; defaults to ITEM
     do:
       notify:
+        when: { this: USER.active, eq: true }  # skips bob
         cmd: [curl, -sS, --fail-with-body, --json, '@-', '${BASE}/anything/notify/${USER.id}']
         stdin:
           name: ${USER.name}
